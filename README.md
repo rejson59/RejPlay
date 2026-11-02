@@ -20,8 +20,7 @@ Neutralny, platformowy ekran — klimat horroru pojawia się wyłącznie w kafel
 gry, nigdy w tle całej strony.
 
 - górny pasek: wyszukiwarka (`/` focus), nick, własne **logo SVG** (nie literka
-  „R”), **przełącznik trybu ciemnego**, **przechwytywanie dłoni** i wejście do
-  lobby,
+  „R”), **przełącznik trybu ciemnego**, **śledzenie dłoni** i wejście do lobby,
 - lewy pasek: nawigacja, skrót do samouczka, lista „Boty demonstracyjne”,
 - baner *Demonofobia* z przyciskami `Graj teraz` i `Samouczek`,
 - sekcja **„Ostatnio odwiedzane”** — zapisuje 2 ostatnie pozycje (gra / lobby) w
@@ -59,7 +58,7 @@ na podglądzie. Zmiany widać natychmiast i zapisują się w `localStorage`
 | Grupa | Opcje |
 | --- | --- |
 | Sylwetka i fryzura | **13 gotowych postaci Rocketbox: 9 męskich + 4 żeńskie** (Marek, Tomek, Adam, Bruno, Czesław, Damian, Eryk, Filip, Gustaw, Alicja, Ewa, Nina, Iza) |
-| Odcień skóry | 6 tonów, od bardzo jasnej do ciemnej |
+| Odcień skóry | 6 ciepłych tonów; **domyślnie „Średnia”** (bardzo jasna nie jest już kredowo biała) |
 | Kolor włosów | czarny, ciemny brąz, brąz, blond, rudy, siwy |
 | Ubranie | **8 gotowych strojów z tej samej paczki Rocketbox** |
 
@@ -79,19 +78,29 @@ miejscach: w teksturze głowy (`*_head_color.jpg`) i na kartach alpha
 zostawiając brąz na czubku głowy. Teraz `src/human.ts` buduje maskę fryzury i
 skóry w canvas, normalizuje jasność wypieczongo rysunku kosmyków i przelicza
 całą teksturę głowy pod wybrany odcień — blond jest naprawdę blond, czerń
-naprawdę czarna. Karty alpha są zamieniane na skalę szarości i barwione tym
-samym kolorem. Odcień skóry jest liczony analogicznie, z zachowaniem cieni i
-detali twarzy.
+naprawdę czarna. Skóra zachowuje część oryginalnego, ciepłego rysunku twarzy,
+żeby nie wychodzić na kredowo białą.
 
-### Przechwytywanie dłoni (kamerka, nie tryb kamery w grze)
+### Śledzenie dłoni 1:1 (kamerka, nie tryb kamery w grze)
 
-`Kamerka` w górnym pasku / lobby uruchamia **prawdziwe `getUserMedia` +
-MediaPipe Hands** i rysuje szkielet dłoni na `<canvas>` nad podglądem wideo.
-Rozpoznawane gesty: otwarta dłoń, pięść, kciuk w górę, wskazywanie, „peace” —
-odpowiadają emotom postaci (`machanie`, `kciuk`, `pokazanie`, `peace`, `pięść`)
-z krótkim cooldownem. Nic nie jest wysyłane na serwer: model, WASM i pliki danych
-leżą lokalnie w `public/mediapipe/` i nie ma żadnego CDN. Kamerę można wyłączyć
-przyciskiem, `Esc` lub przy wejściu do gry.
+`Dłonie 1:1` w górnym pasku / lobby uruchamia **`getUserMedia` + MediaPipe
+Hands** i rysuje szkielet obu dłoni na `<canvas>` nad podglądem wideo.
+
+**To nie jest rozpoznawanie gestów ani odtwarzanie animacji.** Model zwraca
+21 punktów 3D na każdą dłoń; `src/hand-pose.ts` liczy z nich **kąty zgięcia 15
+stawów** (5 palców × 3 ogniwa), rozstawienie palców i obrót nadgarstka.
+`src/human.ts` odwzorowuje te kąty bezpośrednio na kości `Bip01_*_Finger*`
+awatarów (oś zgięcia liczona z restowej pozycji kości, więc działa dla wszystkich
+13 rigów), a `src/view-hands.ts` robi to samo na dłoniach first-person w grze.
+Poruszenie jednym palcem przed kamerą porusza tym samym palcem awatara —
+z wygładzaniem, bez cooldownu, bez „wykrytego gestu”. Gdy dłoń znika z kadru,
+kości wracają pod kontrolę animacji idle/chód.
+
+MediaPipe działa na `maxNumHands: 2` i pełnym modelu punktów
+(`modelComplexity: 1`). Nic nie jest wysyłane na serwer: model, WASM i pliki
+danych leżą lokalnie w `public/mediapipe/` i nie ma żadnego CDN. W grze panel
+kamerki się chowa, ale **tracking działa dalej** — to właśnie zasila dłonie
+first-person. Kamerę można wyłączyć przyciskiem lub `Esc` poza grą.
 
 To **nie** jest wirtualny aparat / tryb kamery w grze — tamten (`C`) został
 usunięty na wyraźne życzenie. Jedynym zdjęciem w rozgrywce jest `P`
@@ -106,7 +115,7 @@ dochodzenie. Lobby nie jest osobną grą w katalogu.
 - 5 postaci (Ty + 4 boty demo), lista graczy, demo czatu,
 - `WASD` / strzałki, `Spacja` (skok), przeciąganie myszą (kamera), sterowanie
   dotykowe,
-- `E` lub **Machaj** — emote bez VR, oraz gesty z kamerki.
+- `E` lub **Machaj** — emote bez VR; kamerka natomiast steruje palcami 1:1.
 
 ### Demonofobia — jedyna grywalna gra
 
@@ -120,6 +129,29 @@ został wybrany na wyraźne życzenie, gdy odmówiliśmy użycia chronionej nazw
 
 Pierwszoosobowe dochodzenie w domu przy Wrzosowej 12: cztery pokoje, korytarz,
 latarka, trzy narzędzia i sześć autorskich typów zjaw.
+
+**Realizm sceny i ruchu** (bez żadnych nowych plików graficznych — wszystko jest
+proceduralne):
+
+- tekstury z canvas: deski ze słojami i sękami, tapeta z zaciekami,
+  odparzeniami, pęknięciami i brudem przy podłodze, tkanina, glazura, dywan;
+  każda ma mapę wypukłości (`bumpMap`),
+- meble z zaokrąglonych krawędzi (`RoundedBoxGeometry`) i toczenia
+  (`LatheGeometry`): stół z toczonymi nogami, krzesła z listwami i poduszkami,
+  regał z książkami, fotel, łóżko z kołdrą i poduszkami, szafki, zlew z kranem,
+  czajnik, butelki, wieszak, lustro, zegar, obrazy, lampy, dywany, kurz w
+  powietrzu,
+- statyczna geometria jest łączona wg materiału (`mergeGeometries`), więc
+  kilkaset obiektów nie oznacza kilkuset draw calli,
+- światła: latarka z miękkim stożkiem i cieniami, księżyc, ciepłe lampy,
+  migotanie, mgła, kurz, winyeta i ziarno,
+- **dłonie first-person** z tymi samymi 15 stawami co awatar, renderowane na
+  osobnej scenie z własnym światłem (żeby latarka ich nie wypalała), oraz
+  trzymane narzędzie z żywym ekranem LCD, przyciskami, sondą/anteną/mikrofonem
+  zależnie od wybranego przyrządu,
+- ruch: bezwładność (rozpędzanie i hamowanie), wygładzone rozglądanie, kołysanie
+  głowy przy chodzie, przechył, kroki synchronizowane z krokiem (synteza
+  szumu), delikatne FOV przy biegu, podniesienie narzędzia podczas skanu.
 
 | Element | Opis |
 | --- | --- |
@@ -151,7 +183,7 @@ joystick i przyciski `Skanuj`, `Narzędzie`, `Notatnik`, `Latarka`.
 | `F` | latarka (gra) |
 | `J` / `Tab` | notatnik (gra) |
 | `Shift` | bieg (gra) |
-| `Esc` | zamknięcie kamerki / samouczka / edytora / wyjście z gry / powrót na stronę główną |
+| `Esc` | zamknięcie kamerki i samouczka / edytora (poza grą) · wyjście z gry · powrót na stronę główną |
 
 ---
 
@@ -179,14 +211,17 @@ index.html            strona główna, lobby, gra, edytor, samouczek, logo SVG, 
 src/style.css         jasny/ciemny katalog + ciemne widoki pełnoekranowe
 src/main.ts           stan UI, motyw, samouczek, HUD gry, kamerka, boot
 src/games.ts          jedna gra + lobby, 13 modeli, 8 gotowych strojów, paleta, boty
-src/world.ts          jeden renderer, 3 sceny (home / lobby / gra), kamery, input
+src/world.ts          jeden renderer, 3 sceny (home / lobby / gra) + viewmodel, kamery, input
 src/character.ts      slot gracza: rigowana postać + neutralny zastępnik
-src/human.ts          13 GLB Rocketbox, maski głowy, podmiana tekstur ubioru, animacje
-src/hand-tracking.ts  getUserMedia + MediaPipe Hands, klasyfikacja gestów, szkielet
+src/human.ts          13 GLB Rocketbox, maski głowy, podmiana tekstur ubioru, retarget dłoni
+src/hand-tracking.ts  getUserMedia + MediaPipe Hands: surowy odczyt 21 punktów obu dłoni
+src/hand-pose.ts      21 punktów → 15 kątów stawów, rozstaw, obrót nadgarstka
+src/view-hands.ts     dłonie first-person z 15 przegubami + narzędzie z ekranem LCD
+src/horror-decor.ts   proceduralne tekstury, meble, światła i kurz Demonofobii
+src/horror.ts         Demonofobia: silnik, ruch, nalot, dźwięk, widok first-person
 src/avatar.ts         wspólny interfejs awatara i etykiety
-src/horror.ts         Demonofobia: geometria domu, silnik, nalot, dźwięk
 public/characters/    13 GLB + 2 biblioteki animacji + gotowe tekstury + licencja MIT
-public/mediapipe/     lokalne pliki MediaPipe Hands (WASM, dane, model)
+public/mediapipe/     lokalne pliki MediaPipe Hands (WASM, dane, model, SIMD + fallback)
 public/art/           house.jpg — jedyna okładka, dla jedynej gry
 ```
 
@@ -200,11 +235,12 @@ public/art/           house.jpg — jedyna okładka, dla jedynej gry
   commit Rocketbox `0943055…`. Pełna treść licencji:
   `public/characters/LICENSE-rocketbox-MIT.txt`. Gotowe tekstury strojów są
   częścią tej samej paczki — nie dorabiamy własnych meshów ubrań.
-- **Kamerka / gesty**: `@mediapipe/hands` 0.4.1675469240 (Apache-2.0), pliki
-  skopiowane do `public/mediapipe/` (warianty SIMD i fallback; nota licencyjna
-  w `public/mediapipe/NOTICE.txt`). Żadnych requestów do zewnętrznych CDN.
+- **Kamerka / śledzenie dłoni**: `@mediapipe/hands` 0.4.1675469240 (Apache-2.0),
+  pliki skopiowane do `public/mediapipe/` (warianty SIMD i fallback; nota
+  licencyjna w `public/mediapipe/NOTICE.txt`). Żadnych requestów do CDN.
 - **Grafika**: `public/art/house.jpg` to jedyna wygenerowana ilustracja,
   używana przez kafelek i baner *Demonofobia*. Pozostałe okładki usunięto.
+  Tekstury wnętrza gry powstają w locie w canvas — to nie są pliki obrazów.
 - **Dźwięki** w grze są syntetyzowane w locie (`AudioContext`), bez plików audio.
 - Three.js, Vite i TypeScript — własne licencje open source w `node_modules`.
 
@@ -214,8 +250,9 @@ public/art/           house.jpg — jedyna okładka, dla jedynej gry
 | --- | --- |
 | 13 rigowanych, teksturowanych sylwetek 1,75 m, mapy albedo/normal/alpha | Skanu fotogrametrycznego konkretnej osoby |
 | 8 gotowych, profesjonalnych strojów z tej samej paczki | Systemu warstw ubioru / fizyki tkanin |
-| Animacje motion capture: idle, chód, machanie + 5 emote'ów z gestów | Mimiki twarzy i pełnego trackingu palców |
+| Animacje motion capture: idle, chód, machanie | Mimiki twarzy i trackingu całego ciała |
 | Kolor skóry i włosów liczony na całej głowie (maska fryzury) | Pełnego kreatora twarzy, wagi, wieku |
+| 21 punktów dłoni → 15 stawów na awatarze i w first-person, 2 dłonie naraz | Śledzenia nadgarstka w przestrzeni 3D (jest obrót, nie pozycja) |
 | Jeden wspólny renderer i PBR-owe światła | Metahuman / silnika typu Unreal w przeglądarce |
 
 ---

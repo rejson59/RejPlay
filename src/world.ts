@@ -4,6 +4,7 @@ import { Character, type Appearance } from './character';
 import type { HumanAssets } from './human';
 import { HorrorGame, type HorrorResult, type HorrorState } from './horror';
 import { BOTS, GAMES, PALETTE } from './games';
+import { posesFromHands, type HandPosePair, type TrackedHand } from './hand-pose';
 
 export type Mode = 'home' | 'lobby' | 'game';
 
@@ -161,6 +162,7 @@ export class World {
       onFinish: (result) => options.onHorrorFinish?.(result),
       onPhoto: () => options.onHorrorPhoto?.(),
     });
+    this.horror.setSkinColor(options.appearance.skin);
 
     this.heroAvatar = new Character({
       color: options.color,
@@ -222,6 +224,22 @@ export class World {
   setPlayerAppearance(appearance: Appearance): void {
     this.heroAvatar.setAppearance(appearance);
     this.player.setAppearance(appearance);
+    this.horror.setSkinColor(appearance.skin);
+  }
+
+  /** Kąty palców z kamerki trafiają i na awatary, i na dłonie first-person. */
+  setHandPose(hands: TrackedHand[], aspect: number): void {
+    const pair = posesFromHands(hands, aspect);
+    this.heroAvatar.setHandPose(pair);
+    this.player.setHandPose(pair);
+    this.horror.setHandPose(pair);
+  }
+
+  /** Bezpośredni odczyt (np. testy / inne źródła śledzenia). */
+  setHandPosePair(pair: HandPosePair): void {
+    this.heroAvatar.setHandPose(pair);
+    this.player.setHandPose(pair);
+    this.horror.setHandPose(pair);
   }
 
   /** Zbliżenie podglądu na potrzeby edytora postaci. */
@@ -240,7 +258,7 @@ export class World {
     this.player.wave();
   }
 
-  /** Gesty wykryte w obrazie z kamerki odtwarzają animacje na awatarze. */
+  /** Emote z klawiatury (kamerka nie wyzwala już żadnych animacji). */
   playEmote(clipName: string): void {
     if (this.mode === 'game') return;
     this.heroAvatar.playEmote(clipName);
@@ -256,6 +274,10 @@ export class World {
   capturePhoto(): string {
     if (this.mode === 'game') {
       this.renderer.render(this.gameScene, this.horror.camera);
+      this.renderer.autoClear = false;
+      this.renderer.clearDepth();
+      this.renderer.render(this.horror.viewScene, this.horror.viewCamera);
+      this.renderer.autoClear = true;
     } else {
       this.renderer.render(
         this.mode === 'home' ? this.heroScene : this.lobbyScene,
@@ -652,7 +674,7 @@ export class World {
     const width = Math.max(1, this.container.clientWidth);
     const height = Math.max(1, this.container.clientHeight);
     this.renderer.setSize(width, height, false);
-    for (const camera of [this.heroCamera, this.lobbyCamera, this.horror.camera]) {
+    for (const camera of [this.heroCamera, this.lobbyCamera, this.horror.camera, this.horror.viewCamera]) {
       camera.aspect = width / height;
       camera.updateProjectionMatrix();
     }
@@ -670,6 +692,11 @@ export class World {
     } else if (this.mode === 'game') {
       this.horror.update(dt);
       this.renderer.render(this.gameScene, this.horror.camera);
+      // Viewmodel ma własną scenę i światło; rysujemy go na wierzchu po czystym Z.
+      this.renderer.autoClear = false;
+      this.renderer.clearDepth();
+      this.renderer.render(this.horror.viewScene, this.horror.viewCamera);
+      this.renderer.autoClear = true;
     } else {
       this.updateLobby(dt);
       this.renderer.render(this.lobbyScene, this.lobbyCamera);

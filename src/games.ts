@@ -70,12 +70,12 @@ export const CHARACTER_MODELS: CharacterModel[] = [
 ];
 
 export const SKIN_TONES = [
-  { name: 'Bardzo jasna', value: '#fff1e4' },
-  { name: 'Jasna', value: '#f3ddc3' },
-  { name: 'Średnia', value: '#e0bd97' },
-  { name: 'Oliwkowa', value: '#c59a70' },
-  { name: 'Brązowa', value: '#a57149' },
-  { name: 'Ciemna', value: '#7c4d31' },
+  { name: 'Bardzo jasna', value: '#f2d9bd' },
+  { name: 'Jasna', value: '#e6c39f' },
+  { name: 'Średnia', value: '#d3a377' },
+  { name: 'Oliwkowa', value: '#bf9169' },
+  { name: 'Brązowa', value: '#9c6a45' },
+  { name: 'Ciemna', value: '#714630' },
 ];
 
 export const HAIR_COLORS = [

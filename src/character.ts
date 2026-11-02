@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { createLabel, scaleLabelToDistance, type Avatar, type LabelHandle } from './avatar';
 import { HumanAvatar, type HumanAssets } from './human';
+import type { HandPosePair } from './hand-pose';
 
 /** Wygląd wybierany w edytorze postaci. */
 export interface Appearance {
@@ -12,7 +13,7 @@ export interface Appearance {
 
 export const DEFAULT_APPEARANCE: Appearance = {
   model: 0,
-  skin: '#f3ddc3',
+  skin: '#d3a377',
   hair: '#4b3020',
   outfit: 'casual',
 };
@@ -75,6 +76,10 @@ class PlaceholderAvatar implements Avatar {
 
   setAppearance(_appearance: Appearance): void {
     // Placeholder nie ma tekstur ani garderoby do zmiany.
+  }
+
+  setHandPose(_pair: HandPosePair): void {
+    // Placeholder nie ma kości palców.
   }
 
   playEmote(_clipName: string): void {
@@ -141,6 +146,10 @@ export class Character implements Avatar {
     } else {
       this.human.setAppearance(appearance);
     }
+  }
+
+  setHandPose(pair: HandPosePair): void {
+    this.human.setHandPose(pair);
   }
 
   setColor(hex: string): void {

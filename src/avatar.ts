@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import type { HandPosePair } from './hand-pose';
 
 /** Pomocnicze etykiety 3D (nick gracza, nazwa świata przy bramie). */
 
@@ -98,4 +99,5 @@ export interface Avatar {
   dispose(): void;
   isWaving(): boolean;
   setAppearance(appearance: { model: number; skin: string; hair: string; outfit: string }): void;
+  setHandPose(pair: HandPosePair): void;
 }

@@ -2505,7 +2505,7 @@ body[data-theme='dark'] .home .btn--ghost:hover { border-color: var(--accent); }
 html[data-theme='light'] .boot { background: #f1f0ec; color: #485253; }
 html[data-theme='dark'] .boot { background: #111719; color: #b9c1bd; }
 
-/* ---------------------------------------------------------- przełącznik gestów */
+/* ------------------------------------------------------ przełącznik kamerki */
 
 .icon-toggle {
   display: inline-flex;
@@ -2576,6 +2576,10 @@ html[data-theme='dark'] .boot { background: #111719; color: #b9c1bd; }
   line-height: 1;
 }
 .hand-panel__close:hover { border-color: var(--accent); color: var(--text); }
+/* W grze panel znika, ale getUserMedia działa dalej — dłonie first-person
+   mają skąd brać kąty palców. */
+body.in-game .hand-panel { display: none; }
+
 .hand-panel__view {
   position: relative;
   aspect-ratio: 4 / 3;
@@ -2605,7 +2609,7 @@ html[data-theme='dark'] .boot { background: #111719; color: #b9c1bd; }
 }
 .hand-panel.is-on .hand-panel__placeholder { display: none; }
 .hand-panel__readout { display: flex; flex-direction: column; gap: 3px; margin: 11px 0 9px; }
-.hand-panel__gesture { color: var(--accent); font-family: var(--display); font-size: 19px; }
+.hand-panel__value { color: var(--accent); font-family: var(--display); font-size: 19px; }
 .hand-panel__status { color: var(--muted); font-size: 11px; line-height: 1.5; }
 .hand-panel__status.is-error { color: #e79b88; }
 .hand-panel__legend {

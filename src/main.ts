@@ -14,7 +14,7 @@ import { DEFAULT_APPEARANCE, type Appearance } from './character';
 import { loadHumanAssets, type HumanAssets } from './human';
 import type { HorrorResult, HorrorState } from './horror';
 import { World } from './world';
-import { HandTracker, type Gesture } from './hand-tracking';
+import { HandTracker } from './hand-tracking';
 
 const $ = <T extends HTMLElement = HTMLElement>(selector: string): T => {
   const element = document.querySelector(selector);
@@ -141,7 +141,7 @@ const tutorialNext = $<HTMLButtonElement>('#tutorial-next');
 const handPanel = $('#hand-panel');
 const handVideo = $<HTMLVideoElement>('#hand-video');
 const handCanvas = $<HTMLCanvasElement>('#hand-canvas');
-const handGesture = $('#hand-gesture');
+const handReadout = $('#hand-readout');
 const handStatus = $('#hand-status');
 const handToggles = document.querySelectorAll<HTMLElement>('[data-hand-toggle]');
 
@@ -301,27 +301,28 @@ function applyTheme(theme: 'light' | 'dark'): void {
   if (meta) meta.content = dark ? '#12171a' : '#f1f0ec';
 }
 
-// ------------------------------------------------------- gesty dłoni / kamerka
+// ----------------------------------------------------- śledzenie dłoni / kamerka
 
 const handTracker = new HandTracker({
   video: handVideo,
   canvas: handCanvas,
-  onGesture: (gesture: Gesture) => {
-    handGesture.textContent = gesture.label;
+  onFrame: (hands, aspect) => {
+    // Surowy odczyt 21 punktów na dłoń → kąty 15 stawów → kości awatara
+    // i dłonie first-person w grze. Zero klasyfikacji gestów, zero animacji
+    // wyzwalanych „rozpoznanym układem palców”.
+    world.setHandPose(hands, aspect);
+    handReadout.textContent =
+      hands.length === 0
+        ? 'Pokaż dłonie w kadrze'
+        : hands.length === 1
+          ? '1 dłoń · 15 stawów 1:1'
+          : '2 dłonie · 30 stawów 1:1';
   },
   onStatus: (message, kind) => {
     handStatus.textContent = message;
     handStatus.classList.toggle('is-error', kind === 'error');
   },
 });
-
-handTracker.onEmote = (gesture: Gesture) => {
-  world.playEmote(gesture.clip);
-  showToast(
-    lobby.classList.contains('is-active') ? lobbyToast : globalToast,
-    `${state.nick}: ${gesture.label}`,
-  );
-};
 
 function syncHandButtons(): void {
   const on = handTracker.active;
@@ -331,14 +332,14 @@ function syncHandButtons(): void {
 async function openHands(): Promise<void> {
   handPanel.classList.add('is-active');
   handPanel.setAttribute('aria-hidden', 'false');
-  handGesture.textContent = 'Uruchamianie kamerki…';
+  handReadout.textContent = 'Uruchamianie kamerki…';
   handStatus.classList.remove('is-error');
   try {
     await handTracker.start();
     handPanel.classList.add('is-on');
   } catch (error) {
     handPanel.classList.remove('is-on');
-    handGesture.textContent = 'Kamerka niedostępna';
+    handReadout.textContent = 'Kamerka niedostępna';
     handStatus.textContent = error instanceof Error ? error.message : String(error);
     handStatus.classList.add('is-error');
   }
@@ -349,7 +350,7 @@ function closeHands(): void {
   handTracker.stop();
   handPanel.classList.remove('is-active', 'is-on');
   handPanel.setAttribute('aria-hidden', 'true');
-  handGesture.textContent = 'Kamerka wyłączona';
+  handReadout.textContent = 'Kamerka wyłączona';
   handStatus.textContent = 'Obraz nie opuszcza przeglądarki.';
   handStatus.classList.remove('is-error');
   syncHandButtons();
@@ -547,7 +548,7 @@ function enterLobby(): void {
   renderPlayerList();
   seedChat();
   recordVisit('plaza');
-  showToast(lobbyToast, `${LOBBY_NAME} · WASD = ruch, E = machnięcie, kamerka = gesty dłoni`);
+  showToast(lobbyToast, `${LOBBY_NAME} · WASD = ruch, E = machnięcie, kamerka = ruchy palców 1:1`);
 }
 
 function goHome(): void {
@@ -810,7 +811,12 @@ function closeTutorial(): void {
 
 function openGame(from: 'home' | 'lobby'): void {
   closeEditor();
-  if (handTracker.active) closeHands();
+  // Kamerka zostaje włączona: panel chowa się (CSS), a odczyt palców nadal
+  // steruje dłońmi first-person. Wyłączenie trackingu zabiłoby 1:1 w grze.
+  if (handTracker.active) {
+    handPanel.setAttribute('aria-hidden', 'true');
+    showToast(gameToast, 'Kamerka działa — palce sterują dłońmi w grze 1:1.');
+  }
   gameReturn = from;
   roundActive = false;
   lobby.classList.remove('is-active');
@@ -856,6 +862,7 @@ function exitGame(): void {
   gameJournal.hidden = true;
   gameResult.hidden = true;
   gameIntro.hidden = true;
+  handPanel.setAttribute('aria-hidden', handTracker.active ? 'false' : 'true');
   if (gameReturn === 'lobby') {
     lobby.classList.add('is-active');
     lobby.setAttribute('aria-hidden', 'false');
@@ -1029,7 +1036,11 @@ gameResult.addEventListener('click', (event) => {
 });
 
 window.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape' && handPanel.classList.contains('is-active')) {
+  if (
+    event.key === 'Escape' &&
+    handPanel.classList.contains('is-active') &&
+    !game.classList.contains('is-active')
+  ) {
     closeHands();
     return;
   }
@@ -1166,6 +1177,10 @@ async function boot(): Promise<void> {
     onHorrorPhoto: captureGamePhoto,
   });
   wireWorld();
+  // Tylko dev: umożliwia testom wstrzyknąć surowy odczyt dłoni bez kamery.
+  if (import.meta.env.DEV) {
+    (window as unknown as { __rejplay?: { world: typeof world } }).__rejplay = { world };
+  }
 
   nickInput.value = state.nick;
   $('#hub-name').textContent = LOBBY_NAME;

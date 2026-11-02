@@ -1,32 +1,13 @@
 /**
  * Przechwytywanie dłoni z kamerki (MediaPipe Hands, assets lokalne).
  *
- * To NIE jest wirtualny tryb kamery/aparatu: obraz z kamery służy wyłącznie do
- * wykrycia 21 punktów dłoni i rozpoznania gestu, który odtwarza animację na
- * awatarze. Nic nie jest nagrywane ani wysyłane — `getUserMedia` działa
- * lokalnie w przeglądarce, a pliki modelu leżą w `public/mediapipe/`.
+ * To NIE jest wirtualny tryb kamery/aparatu i NIE jest to klasyfikator gestów.
+ * Kamerka dostarcza 21 punktów 3D na każdą dłoń; te punkty trafiają bezpośrednio
+ * na kości palców awatara (src/hand-pose.ts). Nic nie jest nagrywane ani
+ * wysyłane — `getUserMedia` działa lokalnie, model leży w public/mediapipe/.
  */
 
-export interface NormalizedLandmark {
-  x: number;
-  y: number;
-  z: number;
-}
-
-export interface Gesture {
-  id: 'none' | 'open' | 'fist' | 'point' | 'peace' | 'thumb';
-  label: string;
-  clip: string;
-}
-
-const GESTURES: Record<Gesture['id'], Gesture> = {
-  none: { id: 'none', label: 'Pokaż dłoń', clip: '' },
-  open: { id: 'open', label: 'Otwarta dłoń · machnięcie', clip: 'wave' },
-  fist: { id: 'fist', label: 'Pięść · stuknięcie', clip: 'knock' },
-  point: { id: 'point', label: 'Wskazanie · sięgnięcie', clip: 'door_try' },
-  peace: { id: 'peace', label: 'Dwa palce · rozmowa', clip: 'talk-loop' },
-  thumb: { id: 'thumb', label: 'Kciuk w górę · rozejrzenie', clip: 'idle_look-loop' },
-};
+import type { NormalizedLandmark, TrackedHand } from './hand-pose';
 
 const CONNECTIONS: Array<[number, number]> = [
   [0, 1], [1, 2], [2, 3], [3, 4],
@@ -36,42 +17,17 @@ const CONNECTIONS: Array<[number, number]> = [
   [13, 17], [0, 17], [17, 18], [18, 19], [19, 20],
 ];
 
-function distance(a: NormalizedLandmark, b: NormalizedLandmark): number {
-  return Math.hypot(a.x - b.x, a.y - b.y);
-}
+const HAND_COLORS = ['rgba(200, 160, 106, 0.9)', 'rgba(126, 174, 178, 0.9)'];
 
-/**
- * Klasyfikacja oparta na odległości końców palców od nadgarstka — działa
- * niezależnie od obrotu i odbicia obrazu z kamerki. Eksportowana osobno,
- * żeby można było przetestować ją bez kamery.
- */
-export function classifyGesture(landmarks: NormalizedLandmark[]): Gesture {
-  if (!landmarks || landmarks.length < 21) return GESTURES.none;
-  const wrist = landmarks[0];
-  const fingers = [
-    { tip: 8, pip: 6 },
-    { tip: 12, pip: 10 },
-    { tip: 16, pip: 14 },
-    { tip: 20, pip: 18 },
-  ];
-  const extended = fingers.map(
-    (finger) =>
-      distance(landmarks[finger.tip], wrist) > distance(landmarks[finger.pip], wrist) + 0.025,
-  );
-  const thumb =
-    distance(landmarks[4], landmarks[17]) > distance(landmarks[3], landmarks[17]) + 0.018;
-  const count = extended.filter(Boolean).length;
-
-  if (count === 4 && thumb) return GESTURES.open;
-  if (count === 0 && thumb) return GESTURES.thumb;
-  if (count === 0) return GESTURES.fist;
-  if (count === 1 && extended[0]) return GESTURES.point;
-  if (count === 2 && extended[0] && extended[1]) return GESTURES.peace;
-  return GESTURES.none;
+interface Handedness {
+  label?: string;
+  score?: number;
+  index?: number;
 }
 
 interface HandsResults {
   multiHandLandmarks?: NormalizedLandmark[][];
+  multiHandedness?: Handedness[];
 }
 
 interface HandsSolution {
@@ -108,35 +64,30 @@ async function loadHands(): Promise<HandsConstructor> {
 export interface HandTrackerOptions {
   video: HTMLVideoElement;
   canvas: HTMLCanvasElement;
-  onGesture?: (gesture: Gesture) => void;
+  /** Surowy odczyt obu dłoni + proporcje kadru (do poprawienia skali z). */
+  onFrame?: (hands: TrackedHand[], aspect: number) => void;
   onStatus?: (message: string, kind: 'info' | 'error') => void;
-  /** Minimalny odstęp między dwiema animacjami wywołanymi gestem (ms). */
-  cooldownMs?: number;
 }
 
 export class HandTracker {
   private readonly video: HTMLVideoElement;
   private readonly canvas: HTMLCanvasElement;
   private readonly context: CanvasRenderingContext2D;
-  private readonly onGesture: HandTrackerOptions['onGesture'];
+  private readonly onFrame: HandTrackerOptions['onFrame'];
   private readonly onStatus: HandTrackerOptions['onStatus'];
-  private readonly cooldownMs: number;
 
   private hands: HandsSolution | null = null;
   private stream: MediaStream | null = null;
   private frame = 0;
   private sending = false;
   private running = false;
-  private lastGestureId: Gesture['id'] = 'none';
-  private lastEmoteAt = 0;
 
   constructor(options: HandTrackerOptions) {
     this.video = options.video;
     this.canvas = options.canvas;
     this.context = options.canvas.getContext('2d')!;
-    this.onGesture = options.onGesture;
+    this.onFrame = options.onFrame;
     this.onStatus = options.onStatus;
-    this.cooldownMs = options.cooldownMs ?? 1400;
   }
 
   get active(): boolean {
@@ -166,16 +117,15 @@ export class HandTracker {
     const Hands = await loadHands();
     const hands = new Hands({ locateFile: (file) => `/mediapipe/${file}` });
     hands.setOptions({
-      maxNumHands: 1,
-      modelComplexity: 0,
+      maxNumHands: 2,
+      modelComplexity: 1,
       minDetectionConfidence: 0.6,
-      minTrackingConfidence: 0.55,
+      minTrackingConfidence: 0.6,
     });
     hands.onResults((results) => this.handleResults(results));
     this.hands = hands;
     this.running = true;
-    this.lastGestureId = 'none';
-    this.status('Kamerka działa. Pokaż dłoń w kadrze.');
+    this.status('Kamerka działa. Pokaż dłonie w kadrze — palce odwzorowują się 1:1.');
     this.frame = requestAnimationFrame(() => void this.tick());
   }
 
@@ -196,47 +146,40 @@ export class HandTracker {
 
   private handleResults(results: HandsResults): void {
     const ctx = this.context;
-    ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
-    const hand = results.multiHandLandmarks?.[0];
-    if (!hand) {
-      this.lastGestureId = 'none';
-      this.onGesture?.(GESTURES.none);
-      return;
-    }
-
     const w = this.canvas.width;
     const h = this.canvas.height;
-    ctx.lineWidth = 2;
-    ctx.strokeStyle = 'rgba(200, 160, 106, 0.85)';
-    for (const [a, b] of CONNECTIONS) {
-      ctx.beginPath();
-      ctx.moveTo(hand[a].x * w, hand[a].y * h);
-      ctx.lineTo(hand[b].x * w, hand[b].y * h);
-      ctx.stroke();
-    }
-    ctx.fillStyle = '#e4c99e';
-    for (const point of hand) {
-      ctx.beginPath();
-      ctx.arc(point.x * w, point.y * h, 3.2, 0, Math.PI * 2);
-      ctx.fill();
-    }
+    ctx.clearRect(0, 0, w, h);
+    const aspect = w / Math.max(h, 1);
+    const landmarks = results.multiHandLandmarks ?? [];
+    const tracked: TrackedHand[] = [];
 
-    const gesture = classifyGesture(hand);
-    this.onGesture?.(gesture);
-    const now = performance.now();
-    if (
-      gesture.id !== 'none' &&
-      gesture.id !== this.lastGestureId &&
-      now - this.lastEmoteAt > this.cooldownMs
-    ) {
-      this.lastEmoteAt = now;
-      this.onEmote?.(gesture);
-    }
-    this.lastGestureId = gesture.id;
+    landmarks.forEach((hand, i) => {
+      const color = HAND_COLORS[i % HAND_COLORS.length];
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = color;
+      for (const [a, b] of CONNECTIONS) {
+        ctx.beginPath();
+        ctx.moveTo(hand[a].x * w, hand[a].y * h);
+        ctx.lineTo(hand[b].x * w, hand[b].y * h);
+        ctx.stroke();
+      }
+      ctx.fillStyle = i === 0 ? '#e4c99e' : '#a8d0d2';
+      for (let p = 0; p < hand.length; p += 1) {
+        ctx.beginPath();
+        // Koniuszki palców wyróżnione — to je śledzimy najdokładniej.
+        ctx.arc(hand[p].x * w, hand[p].y * h, p % 4 === 0 && p > 0 ? 4.2 : 2.6, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      const raw = results.multiHandedness?.[i];
+      tracked.push({
+        label: raw?.label === 'Right' ? 'Right' : 'Left',
+        score: raw?.score ?? 1,
+        landmarks: hand,
+      });
+    });
+
+    this.onFrame?.(tracked, aspect);
   }
-
-  /** Ustawiane z zewnątrz: wywołanie animacji tylko przy zmianie gestu. */
-  onEmote?: (gesture: Gesture) => void;
 
   stop(): void {
     this.running = false;
@@ -247,7 +190,7 @@ export class HandTracker {
     if (this.hands) void this.hands.close().catch(() => undefined);
     this.hands = null;
     this.sending = false;
-    this.lastGestureId = 'none';
     this.context.clearRect(0, 0, this.canvas.width, this.canvas.height);
+    this.onFrame?.([], this.canvas.width / Math.max(this.canvas.height, 1));
   }
 }

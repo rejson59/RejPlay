@@ -9,6 +9,11 @@ import {
 } from './avatar';
 import type { Appearance } from './character';
 import { CHARACTER_MODELS, getOutfit, OUTFITS } from './games';
+import {
+  blendPose,
+  neutralHandPosePair,
+  type HandPosePair,
+} from './hand-pose';
 
 /**
  * Realistyczne postacie: Microsoft Rocketbox (MIT), przekonwertowane do glTF.
@@ -279,11 +284,12 @@ export async function loadHumanAssets(): Promise<HumanAssets> {
       const b = base.data[i + 2];
       const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
       if (base.skin[p] > 0) {
-        // Zachowujemy rysunek twarzy, ale średnia jasność odpowiada wybranemu odcieniowi.
-        const f = Math.max(0.5, Math.min(1.4, 0.3 + 0.7 * (luminance / base.skinLuma)));
-        output.data[i] = clamp255(sr * f);
-        output.data[i + 1] = clamp255(sg * f);
-        output.data[i + 2] = clamp255(sb * f);
+        // Zachowujemy rysunek twarzy i ciepły odcień oryginału: bez domieszki
+        // skóra wychodziła kredowo-biała niezależnie od wybranego koloru.
+        const f = Math.max(0.5, Math.min(1.16, 0.3 + 0.7 * (luminance / base.skinLuma)));
+        output.data[i] = clamp255(0.84 * sr * f + 0.16 * r);
+        output.data[i + 1] = clamp255(0.84 * sg * f + 0.16 * g);
+        output.data[i + 2] = clamp255(0.84 * sb * f + 0.16 * b);
       } else if (base.hair[p] > 0) {
         // Bez normalizacji ciemna, wypieczona fryzura zawsze dawała brąz,
         // nawet przy wybranym blondzie. Teraz kolor jest kolorem bazowym.
@@ -317,6 +323,13 @@ export async function loadHumanAssets(): Promise<HumanAssets> {
   };
 }
 
+interface FingerRig {
+  bone: THREE.Object3D;
+  rest: THREE.Quaternion;
+  curlAxis: THREE.Vector3;
+  normalAxis: THREE.Vector3;
+}
+
 type State = 'idle' | 'walk' | 'emote';
 
 export interface HumanAvatarOptions {
@@ -347,6 +360,10 @@ export class HumanAvatar implements Avatar {
   private lastElapsed = 0;
   private waveStart = -100;
   private waveDuration = 2.8;
+  private handTargets: HandPosePair = neutralHandPosePair();
+  private handCurrent: HandPosePair = neutralHandPosePair();
+  private readonly handRigs: Record<'L' | 'R', FingerRig[]> = { L: [], R: [] };
+  private handOverride = false;
 
   constructor(assets: HumanAssets, templateIndex: number, options: HumanAvatarOptions) {
     this.assets = assets;
@@ -381,6 +398,7 @@ export class HumanAvatar implements Avatar {
     this.waveDuration = this.currentEmote.getClip().duration;
 
     this.setAppearance(options.appearance);
+    this.buildHandRig();
 
     this.accentMaterial = new THREE.MeshStandardMaterial({
       color: options.color,
@@ -425,6 +443,98 @@ export class HumanAvatar implements Avatar {
     this.currentEmote = action;
     this.waveDuration = action.getClip().duration;
     this.waveStart = this.lastElapsed;
+  }
+
+  /**
+   * Mapujemy 15 stawów każdej dłoni na kości Rocketbox. Oś zgięcia liczymy
+   * z restowej pozycji palca i normalnej dłoni, więc działa dla każdego z 13
+   * modeli (różne rigi, różne długości palców) bez ręcznego kalibrowania.
+   */
+  private buildHandRig(): void {
+    this.model.updateMatrixWorld(true);
+    const wristPos = new THREE.Vector3();
+    const indexPos = new THREE.Vector3();
+    const pinkyPos = new THREE.Vector3();
+
+    for (const side of ['L', 'R'] as const) {
+      // GLTFLoader zamienia spacje w nazwach węzłów na podkreślenia —
+      // obsługujemy obie formy, żeby rig działał niezależnie od eksportera.
+      const find = (name: string): THREE.Object3D | undefined =>
+        this.model.getObjectByName(`Bip01 ${side} ${name}`) ??
+        this.model.getObjectByName(`Bip01_${side}_${name}`);
+      const wrist = find('Hand');
+      const indexBase = find('Finger1');
+      const pinkyBase = find('Finger4');
+      if (!wrist || !indexBase || !pinkyBase) continue;
+
+      wrist.getWorldPosition(wristPos);
+      indexBase.getWorldPosition(indexPos);
+      pinkyBase.getWorldPosition(pinkyPos);
+      const normal = new THREE.Vector3()
+        .crossVectors(indexPos.clone().sub(wristPos), pinkyPos.clone().sub(wristPos))
+        .normalize();
+      if (normal.lengthSq() < 0.5) normal.set(0, 1, 0);
+
+      for (let f = 0; f < 5; f += 1) {
+        for (let j = 0; j < 3; j += 1) {
+          const suffix = j === 0 ? '' : String(j);
+          const bone = find(`Finger${f}${suffix}`);
+          if (!bone) continue;
+          const worldQuat = bone.getWorldQuaternion(new THREE.Quaternion());
+          const inverse = worldQuat.clone().invert();
+          const direction = new THREE.Vector3(1, 0, 0).applyQuaternion(worldQuat).normalize();
+          const curlAxis = new THREE.Vector3()
+            .crossVectors(direction, normal)
+            .normalize()
+            .applyQuaternion(inverse);
+          const normalAxis = normal.clone().applyQuaternion(inverse);
+          this.handRigs[side].push({
+            bone,
+            rest: bone.quaternion.clone(),
+            curlAxis,
+            normalAxis,
+          });
+        }
+      }
+    }
+  }
+
+  /** Surowy odczyt obu dłoni z kamerki (kąty, nie gesty). */
+  setHandPose(pair: HandPosePair): void {
+    this.handTargets = pair;
+  }
+
+  private applyHandPose(dt: number): void {
+    const active = this.handTargets.L.present || this.handTargets.R.present;
+    if (!active) {
+      // Bez dłoni w kadrze kości wracają pod kontrolę animacji idle/walk/emote.
+      this.handOverride = false;
+      return;
+    }
+    const k = 1 - Math.exp(-dt * 18);
+    blendPose(this.handCurrent.L, this.handTargets.L, k);
+    blendPose(this.handCurrent.R, this.handTargets.R, k);
+    this.handOverride = true;
+
+    for (const side of ['L', 'R'] as const) {
+      const pose = this.handCurrent[side];
+      const rigs = this.handRigs[side];
+      for (let f = 0; f < 5; f += 1) {
+        for (let j = 0; j < 3; j += 1) {
+          const rig = rigs[f * 3 + j];
+          if (!rig) continue;
+          const curl = rig.rest.clone().multiply(
+            new THREE.Quaternion().setFromAxisAngle(rig.curlAxis, pose.curl[f][j]),
+          );
+          if (j === 0) {
+            curl.multiply(
+              new THREE.Quaternion().setFromAxisAngle(rig.normalAxis, -pose.spread[f] * 0.7),
+            );
+          }
+          rig.bone.quaternion.copy(curl);
+        }
+      }
+    }
   }
 
   setColor(hex: string): void {
@@ -495,6 +605,7 @@ export class HumanAvatar implements Avatar {
       action.setEffectiveWeight(action === this.currentEmote ? this.weights.emote : 0);
     }
     this.mixer.update(dt);
+    this.applyHandPose(dt);
   }
 
   dispose(): void {

@@ -1,4 +1,7 @@
 import * as THREE from 'three';
+import { buildDecor, type Decor } from './horror-decor';
+import { ToolViewmodel, ViewHand } from './view-hands';
+import { neutralHandPosePair, type HandPosePair } from './hand-pose';
 
 /**
  * „Demonofobia” — autorska, pierwszoosobowa gra dochodzeniowa.
@@ -121,74 +124,13 @@ interface Box {
   maxZ: number;
 }
 
-// ------------------------------------------------------------- tekstury (canvas)
-
-function planksTexture(): THREE.CanvasTexture {
-  const canvas = document.createElement('canvas');
-  canvas.width = canvas.height = 512;
-  const ctx = canvas.getContext('2d')!;
-  ctx.fillStyle = '#3a3028';
-  ctx.fillRect(0, 0, 512, 512);
-  for (let row = 0; row < 8; row++) {
-    const y = row * 64;
-    const shade = 42 + Math.floor(Math.random() * 22);
-    ctx.fillStyle = `rgb(${shade + 16}, ${shade + 5}, ${shade - 8})`;
-    ctx.fillRect(0, y + 2, 512, 60);
-    ctx.strokeStyle = 'rgba(0,0,0,0.55)';
-    ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(512, y); ctx.stroke();
-    for (let i = 0; i < 24; i++) {
-      ctx.strokeStyle = `rgba(0,0,0,${0.05 + Math.random() * 0.09})`;
-      ctx.lineWidth = 1;
-      const gy = y + 6 + Math.random() * 52;
-      ctx.beginPath();
-      ctx.moveTo(Math.random() * 512, gy);
-      ctx.lineTo(Math.random() * 512, gy + (Math.random() - 0.5) * 4);
-      ctx.stroke();
-    }
-  }
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
-  texture.repeat.set(4, 4);
-  return texture;
-}
-
-function wallpaperTexture(): THREE.CanvasTexture {
-  const canvas = document.createElement('canvas');
-  canvas.width = canvas.height = 256;
-  const ctx = canvas.getContext('2d')!;
-  ctx.fillStyle = '#6c6559';
-  ctx.fillRect(0, 0, 256, 256);
-  ctx.strokeStyle = 'rgba(40,35,30,0.28)';
-  ctx.lineWidth = 3;
-  for (let x = 0; x < 256; x += 32) {
-    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, 256); ctx.stroke();
-  }
-  for (let i = 0; i < 2200; i++) {
-    ctx.fillStyle = Math.random() > 0.5 ? 'rgba(255,255,255,0.035)' : 'rgba(0,0,0,0.09)';
-    ctx.fillRect(Math.random() * 256, Math.random() * 256, 2, 2);
-  }
-  // Zacieki i ubytki tapety.
-  for (let i = 0; i < 9; i++) {
-    ctx.fillStyle = 'rgba(28,24,22,0.16)';
-    const x = Math.random() * 256;
-    const y = Math.random() * 180;
-    ctx.beginPath();
-    ctx.ellipse(x, y, 8 + Math.random() * 22, 20 + Math.random() * 60, 0, 0, Math.PI * 2);
-    ctx.fill();
-  }
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
-  texture.repeat.set(3, 1);
-  return texture;
-}
-
 // ------------------------------------------------------------------- silnik gry
 
 export class HorrorGame {
   readonly camera = new THREE.PerspectiveCamera(74, 1, 0.05, 70);
+  /** Osobna scena dłoni first-person: własne światło, bez prześwietlenia latarką. */
+  readonly viewScene = new THREE.Scene();
+  readonly viewCamera = new THREE.PerspectiveCamera(60, 1, 0.01, 5);
 
   private readonly scene: THREE.Scene;
   private readonly canvas: HTMLCanvasElement;
@@ -204,9 +146,23 @@ export class HorrorGame {
   private readonly flashlight: THREE.SpotLight;
   private readonly apparition = new THREE.Group();
   private readonly statuses = new Map<string, 'unknown' | 'found' | 'absent'>();
+  private decor: Decor | null = null;
+  private readonly handPoses: HandPosePair = neutralHandPosePair();
+  private leftHand!: ViewHand;
+  private rightHand!: ViewHand;
+  private toolView!: ToolViewmodel;
+  private readonly leftHolder = new THREE.Group();
+  private readonly rightHolder = new THREE.Group();
+  private skin = '#d3a377';
+  private readonly velocity = new THREE.Vector3();
+  private screenTimer = 0;
+  private lastStep = 0;
+  private lastToolIndex = -1;
 
   private yaw = 0;
   private pitch = 0;
+  private yawTarget = 0;
+  private pitchTarget = 0;
   private toolIndex = 0;
   private reading = 0;
   private scan = 0;
@@ -246,19 +202,30 @@ export class HorrorGame {
     this.scene.background = new THREE.Color(0x0a0d0f);
     this.scene.fog = new THREE.FogExp2(0x0a0d0f, 0.03);
 
-    this.scene.add(new THREE.AmbientLight(0x8d9aa6, 0.55));
-    const moon = new THREE.DirectionalLight(0x6f88a0, 0.5);
-    moon.position.set(-6, 9, -4);
+    // Światło księżyca rzuca prawdziwe cienie mebli, latarka ma miękki stożek.
+    this.scene.add(new THREE.AmbientLight(0x8d9aa6, 0.34));
+    this.scene.add(new THREE.HemisphereLight(0x71879a, 0x24201c, 0.34));
+    const moon = new THREE.DirectionalLight(0x7d95ad, 0.62);
+    moon.position.set(-6, 10, -4);
+    // Księżycowe światło jest statyczne, więc nie dokładamy drugiej mapy cieni.
+    moon.castShadow = false;
     this.scene.add(moon);
 
     this.flashlight = new THREE.SpotLight(0xffe4bd, 62, 19, 0.56, 0.65, 1.3);
     this.flashlight.position.set(0.16, -0.14, 0);
     this.flashlight.target.position.set(0, -0.06, -1);
+    this.flashlight.castShadow = true;
+    this.flashlight.shadow.mapSize.set(512, 512);
+    this.flashlight.shadow.camera.near = 0.2;
+    this.flashlight.shadow.camera.far = 19;
+    this.flashlight.shadow.bias = -0.0008;
+    this.flashlight.shadow.normalBias = 0.02;
     this.camera.add(this.flashlight, this.flashlight.target);
     this.scene.add(this.camera);
 
     this.buildHouse();
     this.buildApparition();
+    this.buildViewmodel();
     this.bindInput();
     this.emit();
   }
@@ -266,44 +233,9 @@ export class HorrorGame {
   // ------------------------------------------------------------------- scena 3D
 
   private buildHouse(): void {
-    const floorTexture = planksTexture();
-    const floor = new THREE.Mesh(
-      new THREE.PlaneGeometry(18, 18),
-      new THREE.MeshStandardMaterial({ map: floorTexture, color: 0x9a9188, roughness: 0.95 }),
-    );
-    floor.rotation.x = -Math.PI / 2;
-    floor.receiveShadow = true;
-    this.scene.add(floor);
-
-    const ceiling = new THREE.Mesh(
-      new THREE.PlaneGeometry(18, 18),
-      new THREE.MeshStandardMaterial({ color: 0x24211e, roughness: 1, side: THREE.DoubleSide }),
-    );
-    ceiling.rotation.x = Math.PI / 2;
-    ceiling.position.y = 3.2;
-    this.scene.add(ceiling);
-
-    const wallTexture = wallpaperTexture();
-    const wallMaterial = new THREE.MeshStandardMaterial({
-      map: wallTexture,
-      color: 0xa39c8f,
-      roughness: 0.96,
-    });
-    const trimMaterial = new THREE.MeshStandardMaterial({ color: 0x3a332c, roughness: 0.9 });
-
+    // Kolizje zostają w prostych prostokątach, a wygląd ścian, podłóg i
+    // wyposażenia buduje osobny moduł z proceduralnymi teksturami.
     for (const [x1, z1, x2, z2] of WALL_SEGMENTS) {
-      const length = Math.hypot(x2 - x1, z2 - z1);
-      const wall = new THREE.Mesh(new THREE.BoxGeometry(length, 3.2, 0.16), wallMaterial);
-      wall.position.set((x1 + x2) / 2, 1.6, (z1 + z2) / 2);
-      wall.rotation.y = -Math.atan2(z2 - z1, x2 - x1);
-      wall.receiveShadow = true;
-      this.scene.add(wall);
-
-      const trim = new THREE.Mesh(new THREE.BoxGeometry(length, 0.14, 0.2), trimMaterial);
-      trim.position.set((x1 + x2) / 2, 0.12, (z1 + z2) / 2);
-      trim.rotation.y = wall.rotation.y;
-      this.scene.add(trim);
-
       this.walls.push({
         minX: Math.min(x1, x2) - 0.08,
         maxX: Math.max(x1, x2) + 0.08,
@@ -311,76 +243,53 @@ export class HorrorGame {
         maxZ: Math.max(z1, z2) + 0.08,
       });
     }
-
-    // Zimne światło w oknach — jedyne źródła poza latarką.
-    const windowMaterial = new THREE.MeshBasicMaterial({ color: 0x2b4252 });
-    const windows: Array<[number, number, number]> = [
-      [-9, 1.8, -4.5], [9, 1.8, 4.5], [-4.5, 1.8, -9],
-    ];
-    for (const [x, y, z] of windows) {
-      const pane = new THREE.Mesh(new THREE.PlaneGeometry(1.25, 1.15), windowMaterial);
-      pane.position.set(x === -4.5 ? x : x + (x < 0 ? 0.09 : -0.09), y, z + (z === -9 ? 0.09 : 0));
-      pane.rotation.y = x === -4.5 ? 0 : Math.PI / 2;
-      this.scene.add(pane);
-      const light = new THREE.PointLight(0x7191a8, 3.2, 7, 2);
-      light.position.set(x + (x < 0 ? 0.6 : -0.6), y, z + (z < 0 ? 0.6 : 0));
-      this.scene.add(light);
-    }
-
-    this.addFurniture();
+    this.decor = buildDecor(this.scene, WALL_SEGMENTS);
   }
 
-  private addFurniture(): void {
-    const wood = new THREE.MeshStandardMaterial({ color: 0x4a3b2e, roughness: 0.9 });
-    const dark = new THREE.MeshStandardMaterial({ color: 0x2e2b29, roughness: 0.92 });
-    const cloth = new THREE.MeshStandardMaterial({ color: 0x5b5449, roughness: 1 });
-    const metal = new THREE.MeshStandardMaterial({ color: 0x555a5c, roughness: 0.6, metalness: 0.35 });
+  /** Dłonie first-person: te same kąty palców co na awatarze w lobby. */
+  private buildViewmodel(): void {
+    this.leftHand = new ViewHand('L', this.skin);
+    this.rightHand = new ViewHand('R', this.skin);
+    this.toolView = new ToolViewmodel();
 
-    const box = (w: number, h: number, d: number, x: number, y: number, z: number, mat: THREE.Material): void => {
-      const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
-      mesh.position.set(x, y, z);
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
-      this.scene.add(mesh);
-    };
+    // Renderowane po scenie gry z wyczyszczonym Z, z własnym, łagodnym
+    // oświetleniem — latarka (62 cd) nie wypala dłoni na biało.
+    this.viewScene.background = null;
+    this.viewCamera.position.set(0, 0, 0);
+    this.viewScene.add(this.viewCamera);
+    this.viewScene.add(new THREE.AmbientLight(0xb9c3c9, 0.9));
+    const key = new THREE.DirectionalLight(0xffe2be, 1.2);
+    key.position.set(1.2, 2.2, 2.5);
+    this.viewScene.add(key);
+    const fill = new THREE.DirectionalLight(0x7f9fb2, 0.45);
+    fill.position.set(-2, -0.5, 1.5);
+    this.viewScene.add(fill);
 
-    // Salon (lewy tył): stół, krzesła, regał.
-    box(2.3, 0.12, 1.2, -5.0, 0.78, -5.4, wood);
-    for (const dx of [-0.95, 0.95]) {
-      for (const dz of [-0.45, 0.45]) box(0.12, 0.75, 0.12, -5.0 + dx, 0.38, -5.4 + dz, wood);
-    }
-    box(0.5, 0.08, 0.5, -5.9, 0.44, -3.4, cloth);
-    box(0.5, 0.45, 0.5, -5.9, 0.23, -3.4, wood);
-    box(2.0, 2.1, 0.35, -8.5, 1.05, -6.6, wood);
-    for (let i = 0; i < 4; i++) box(1.9, 0.06, 0.3, -8.5, 0.4 + i * 0.5, -6.4, dark);
+    this.leftHolder.position.set(-0.36, -0.42, -0.62);
+    this.leftHolder.rotation.set(-0.12, 0.16, 0.1);
+    this.rightHolder.position.set(0.36, -0.42, -0.62);
+    this.rightHolder.rotation.set(-0.12, -0.16, -0.1);
+    this.leftHolder.scale.setScalar(0.72);
+    this.rightHolder.scale.setScalar(0.72);
+    this.leftHolder.add(this.leftHand.root);
+    this.rightHolder.add(this.rightHand.root);
+    this.toolView.root.position.set(0, 0.07, 0.065);
+    this.toolView.root.rotation.set(0.04, 0.05, -0.1);
+    this.rightHolder.add(this.toolView.root);
+    this.viewCamera.add(this.leftHolder, this.rightHolder);
+  }
 
-    // Sypialnia (prawy tył): łóżko i szafka.
-    box(2.2, 0.35, 1.5, 5.4, 0.3, -6.2, wood);
-    box(2.1, 0.18, 1.4, 5.4, 0.56, -6.2, cloth);
-    box(0.6, 0.7, 0.5, 7.7, 0.35, -7.4, wood);
-    box(1.6, 0.04, 1.2, 5.4, 0.02, -4.0, cloth);
+  /** Kolor skóry dłoni first-person zgodny z wybranym w edytorze. */
+  setSkinColor(hex: string): void {
+    this.skin = hex;
+    this.leftHand.setSkin(hex);
+    this.rightHand.setSkin(hex);
+  }
 
-    // Kuchnia (lewy przód): blat i skrzynie.
-    box(3.4, 0.9, 0.6, -5.6, 0.45, 8.3, wood);
-    box(3.5, 0.08, 0.7, -5.6, 0.94, 8.3, metal);
-    box(0.8, 0.8, 0.8, -2.7, 0.4, 6.9, wood);
-    box(0.7, 0.65, 0.7, -2.7, 1.12, 6.9, wood);
-
-    // Przedpokój / prawy przód: wieszak i dywan.
-    box(0.14, 2.0, 0.14, 7.6, 1.0, 6.8, wood);
-    box(1.5, 0.08, 0.14, 7.6, 1.95, 6.8, wood);
-    box(2.4, 0.03, 1.5, 4.6, 0.02, 5.4, cloth);
-
-    // Lampa naftowa na stole — mały, ciepły punkt w ciemności.
-    const lamp = new THREE.Mesh(
-      new THREE.SphereGeometry(0.11, 16, 12),
-      new THREE.MeshStandardMaterial({ color: 0xffc07a, emissive: 0xffa347, emissiveIntensity: 0.8 }),
-    );
-    lamp.position.set(-5.0, 1.0, -5.4);
-    this.scene.add(lamp);
-    const lampLight = new THREE.PointLight(0xffb469, 5, 5, 2);
-    lampLight.position.copy(lamp.position);
-    this.scene.add(lampLight);
+  /** Surowy odczyt stawów obu dłoni z kamery (bez gestów, bez animacji). */
+  setHandPose(pair: HandPosePair): void {
+    this.handPoses.L = pair.L;
+    this.handPoses.R = pair.R;
   }
 
   private buildApparition(): void {
@@ -468,8 +377,8 @@ export class HorrorGame {
 
   look(dx: number, dy: number): void {
     if (!this.active || this.journal || this.result) return;
-    this.yaw -= dx * 0.0022;
-    this.pitch = THREE.MathUtils.clamp(this.pitch - dy * 0.0022, -1.2, 1.2);
+    this.yawTarget -= dx * 0.0022;
+    this.pitchTarget = THREE.MathUtils.clamp(this.pitchTarget - dy * 0.0022, -1.2, 1.2);
   }
 
   setJoystick(x: number, y: number): void {
@@ -503,6 +412,11 @@ export class HorrorGame {
     this.position.set(0, 1.65, 7.0);
     this.yaw = 0;
     this.pitch = 0;
+    this.yawTarget = 0;
+    this.pitchTarget = 0;
+    this.velocity.set(0, 0, 0);
+    this.bob = 0;
+    this.lastStep = 0;
     this.toolIndex = 0;
     this.reading = 0;
     this.scan = 0;
@@ -548,6 +462,7 @@ export class HorrorGame {
   selectTool(index: number): void {
     if (!this.active || this.result || this.journal) return;
     this.toolIndex = THREE.MathUtils.clamp(index, 0, TOOLS.length - 1);
+    this.toolView.setTool(this.toolIndex);
     this.scan = 0;
     this.hint = `${TOOLS[this.toolIndex].name} w dłoni. Przytrzymaj E, żeby skanować.`;
     this.beep(520, 0.06, 0.025);
@@ -682,6 +597,12 @@ export class HorrorGame {
   }
 
   private updateMovement(dt: number): void {
+    // Rozglądanie z lekkim opóźnieniem: kamera nie „skacze” przy każdym
+    // ruchu myszy, tylko dogania cel (jak głowa przy prawdziwym chodzie).
+    const lookK = 1 - Math.exp(-dt * 18);
+    this.yaw += (this.yawTarget - this.yaw) * lookK;
+    this.pitch += (this.pitchTarget - this.pitch) * lookK;
+
     let ix = this.joystick.x;
     let iy = this.joystick.y;
     if (this.keys.has('KeyW') || this.keys.has('ArrowUp')) iy += 1;
@@ -690,24 +611,74 @@ export class HorrorGame {
     if (this.keys.has('KeyA') || this.keys.has('ArrowLeft')) ix -= 1;
     const magnitude = Math.hypot(ix, iy);
     if (magnitude > 1) { ix /= magnitude; iy /= magnitude; }
-    this.moving = magnitude > 0.02;
 
     const sprint = this.keys.has('ShiftLeft') || this.keys.has('ShiftRight');
-    const speed = (sprint ? 3.9 : 2.45) * dt;
+    const speed = sprint ? 3.9 : 2.45;
     const forward = new THREE.Vector3(-Math.sin(this.yaw), 0, -Math.cos(this.yaw));
     const right = new THREE.Vector3(Math.cos(this.yaw), 0, -Math.sin(this.yaw));
-    const dx = (forward.x * iy + right.x * ix) * speed;
-    const dz = (forward.z * iy + right.z * ix) * speed;
+    const wishX = (forward.x * iy + right.x * ix) * speed;
+    const wishZ = (forward.z * iy + right.z * ix) * speed;
+    // Bezwładność: rozpędzanie i hamowanie mają różne czasy, bez „ślizgu”.
+    const accel = magnitude > 0.02 ? 8.5 : 12;
+    const k = 1 - Math.exp(-dt * accel);
+    this.velocity.x += (wishX - this.velocity.x) * k;
+    this.velocity.z += (wishZ - this.velocity.z) * k;
+    if (Math.abs(this.velocity.x) < 0.01) this.velocity.x = 0;
+    if (Math.abs(this.velocity.z) < 0.01) this.velocity.z = 0;
 
+    const dx = this.velocity.x * dt;
+    const dz = this.velocity.z * dt;
     if (!this.blocked(this.position.x + dx, this.position.z)) this.position.x += dx;
+    else this.velocity.x *= 0.35;
     if (!this.blocked(this.position.x, this.position.z + dz)) this.position.z += dz;
+    else this.velocity.z *= 0.35;
 
-    if (this.moving) this.bob += dt * (sprint ? 13 : 9);
-    const bobY = this.moving ? Math.sin(this.bob) * 0.035 : 0;
-    this.camera.position.set(this.position.x, this.position.y + bobY, this.position.z);
+    this.moving = Math.hypot(this.velocity.x, this.velocity.z) > 0.22;
+    const stride = sprint ? 12.4 : 9.1;
+    if (this.moving) {
+      this.bob += dt * stride;
+      const step = Math.floor(this.bob / Math.PI);
+      if (step !== this.lastStep) {
+        this.lastStep = step;
+        this.step(sprint);
+      }
+    } else {
+      this.bob += dt * 1.4;
+    }
+
+    // Kołysanie: pion, delikatny ruch na boki i przechył przy skręcie.
+    const bobY = this.moving ? Math.sin(this.bob * 2) * 0.028 : Math.sin(this.bob) * 0.005;
+    const sway = this.moving ? Math.sin(this.bob) * 0.014 : 0;
+    this.camera.position.set(
+      this.position.x + right.x * sway,
+      this.position.y + bobY,
+      this.position.z + right.z * sway,
+    );
     this.camera.rotation.y = this.yaw;
     this.camera.rotation.x = this.pitch;
-    this.camera.rotation.z = this.moving ? Math.sin(this.bob * 0.5) * 0.006 : 0;
+    this.camera.rotation.z = this.moving ? Math.sin(this.bob) * 0.009 : Math.sin(this.bob * 0.7) * 0.0015;
+
+    const targetFov = sprint ? 78 : 74;
+    if (Math.abs(this.camera.fov - targetFov) > 0.01) {
+      this.camera.fov += (targetFov - this.camera.fov) * (1 - Math.exp(-dt * 4));
+      this.camera.updateProjectionMatrix();
+    }
+  }
+
+  /** Dłonie i narzędzie reagują na ruch, skan i odczyt z kamerki. */
+  private updateViewmodel(realDt: number): void {
+    const sway = this.moving ? Math.sin(this.bob) : Math.sin(this.elapsed * 1.3) * 0.12;
+    this.leftHand.apply(this.handPoses.L, realDt, sway);
+    this.rightHand.apply(this.handPoses.R, realDt, -sway);
+    this.leftHolder.position.y = -0.42 + (this.moving ? Math.sin(this.bob * 2) * 0.012 : 0);
+    this.rightHolder.position.y = -0.42 + (this.moving ? Math.sin(this.bob * 2 + 0.7) * 0.012 : 0);
+    this.toolView.root.position.y = 0.07 + this.scan * 0.06 + Math.sin(this.elapsed * 2) * 0.003;
+    this.toolView.root.rotation.z = -0.22 + sway * 0.035;
+    this.screenTimer -= realDt;
+    if (this.screenTimer <= 0) {
+      this.screenTimer = 0.12;
+      this.toolView.setReading(this.reading);
+    }
   }
 
   private updateScan(dt: number): void {
@@ -823,6 +794,8 @@ export class HorrorGame {
     this.updateMovement(dt);
     this.updateScan(realDt);
     this.updateEvents(realDt);
+    this.decor?.update(realDt, this.elapsed, this.flicker);
+    this.updateViewmodel(realDt);
 
     if (this.hunting) {
       // Sylwetka podąża korytarzem, ale zatrzymuje się ~1,6 m od gracza.
@@ -879,6 +852,33 @@ export class HorrorGame {
       oscillator.connect(volume).connect(audio.destination);
       oscillator.start();
       oscillator.stop(audio.currentTime + duration + 0.02);
+    } catch {
+      // Brak zgody na dźwięk nie przerywa rozgrywki.
+    }
+  }
+
+  /** Krok na drewnianej podłodze: krótki, przefiltrowany szum. */
+  private step(sprint: boolean): void {
+    const audio = this.audio;
+    if (!audio) return;
+    try {
+      const length = Math.floor(audio.sampleRate * (sprint ? 0.1 : 0.13));
+      const buffer = audio.createBuffer(1, length, audio.sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let i = 0; i < length; i += 1) {
+        const decay = Math.pow(1 - i / length, 4);
+        data[i] = (Math.random() * 2 - 1) * decay;
+      }
+      const source = audio.createBufferSource();
+      const filter = audio.createBiquadFilter();
+      filter.type = 'bandpass';
+      filter.frequency.value = 150 + Math.random() * 90;
+      filter.Q.value = 0.8;
+      const volume = audio.createGain();
+      volume.gain.value = sprint ? 0.085 : 0.055;
+      source.buffer = buffer;
+      source.connect(filter).connect(volume).connect(audio.destination);
+      source.start();
     } catch {
       // Brak zgody na dźwięk nie przerywa rozgrywki.
     }
