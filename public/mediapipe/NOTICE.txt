@@ -1,0 +1,12 @@
+MediaPipe Hands — pliki runtime'u (WASM, dane, model, loader) skopiowane z
+pakietu npm @mediapipe/hands@0.4.1675469240.
+
+Licencja: Apache License, Version 2.0
+Copyright (c) Google LLC / MediaPipe authors.
+
+Pełna treść licencji: https://www.apache.org/licenses/LICENSE-2.0
+Źródło: https://www.npmjs.com/package/@mediapipe/hands
+
+Aplikacja ładuje te pliki lokalnie z /mediapipe/ (brak zewnętrznego CDN).
+Obraz z kamery jest przetwarzany wyłącznie w przeglądarce i nigdzie nie jest
+wysyłany.
