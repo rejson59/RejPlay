@@ -1,57 +1,318 @@
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
-import { neutralHandPose, type HandPose } from './hand-pose';
+import { clone as cloneSkeleton } from 'three/addons/utils/SkeletonUtils.js';
+import { getOutfit, outfitBody } from './games';
+import type { HumanAssets, HumanTemplate } from './human';
+import type { Appearance } from './character';
+import {
+  blendPose,
+  neutralHandPose,
+  type HandPose,
+} from './hand-pose';
 
 /**
- * Dłonie first-person. Nie są to „klocki”: każdy palec ma trzy zaokrąglone
- * ogniwa na własnym przegubie, dokładnie jak szkielet awatara. Te same kąty
- * z src/hand-pose.ts sterują i awatarem w lobby, i tym widokiem w grze.
+ * Dłonie first-person to PRAWDZIWE dłonie wybranego awatara.
  *
- * Układ lokalny: palce wskazują +Y (w górę ekranu), wnętrze dłoni to +Z
- * (w stronę kamery), rozstaw idzie po X. Zgięcie = obrót wokół +X, więc
- * koniuszki wędrują w stronę widza — dokładnie tak, jak przy zaciskaniu pięści.
+ * Nie budujemy tu żadnego osobnego „viewmodelu” z kapsułek. Bierzemy oryginalny,
+ * rigowany i teksturowany szkielet Rocketbox, wycinamy z niego tylko trójkąty
+ * przypisane do kości przedramienia/nadgarstka/palców i wstawiamy ten sam
+ * SkinnedMesh przed kamerę. Skóra, paznokcie, rękawy i proporcje palców są
+ * więc identyczne z postacią w lobby — zmieniają się razem z edytorem.
+ *
+ * Te same 15 kątów z src/hand-pose.ts steruje palcami awatara i tym widokiem.
  */
 
-const FINGER_LENGTHS = [0.046, 0.036, 0.027];
-const THUMB_LENGTHS = [0.043, 0.034, 0.024];
+const V = (x: number, y: number, z: number): THREE.Vector3 => new THREE.Vector3(x, y, z);
 
-function segment(radius: number, length: number, material: THREE.Material): THREE.Mesh {
-  const mesh = new THREE.Mesh(new THREE.CapsuleGeometry(radius, length, 4, 10), material);
-  mesh.position.y = length / 2;
-  mesh.castShadow = true;
-  return mesh;
+function findBone(root: THREE.Object3D, side: 'L' | 'R', name: string): THREE.Object3D | undefined {
+  return (
+    root.getObjectByName(`Bip01 ${side} ${name}`) ??
+    root.getObjectByName(`Bip01_${side}_${name}`)
+  );
 }
 
-export class ViewHand {
+interface FingerRig {
+  bone: THREE.Object3D;
+  rest: THREE.Quaternion;
+  curlAxis: THREE.Vector3;
+  normalAxis: THREE.Vector3;
+}
+
+function buildFingerRig(model: THREE.Object3D, side: 'L' | 'R'): FingerRig[] {
+  model.updateMatrixWorld(true);
+  const wrist = findBone(model, side, 'Hand');
+  const indexBase = findBone(model, side, 'Finger1');
+  const pinkyBase = findBone(model, side, 'Finger4');
+  if (!wrist || !indexBase || !pinkyBase) return [];
+
+  const wristPos = wrist.getWorldPosition(V(0, 0, 0));
+  const normal = new THREE.Vector3()
+    .crossVectors(
+      indexBase.getWorldPosition(V(0, 0, 0)).sub(wristPos),
+      pinkyBase.getWorldPosition(V(0, 0, 0)).sub(wristPos),
+    )
+    .normalize();
+  if (normal.lengthSq() < 0.5) normal.set(0, 1, 0);
+
+  const rigs: FingerRig[] = [];
+  for (let f = 0; f < 5; f += 1) {
+    for (let j = 0; j < 3; j += 1) {
+      const bone = findBone(model, side, `Finger${f}${j === 0 ? '' : j}`);
+      if (!bone) {
+        rigs.push(null as unknown as FingerRig);
+        continue;
+      }
+      const worldQuat = bone.getWorldQuaternion(new THREE.Quaternion());
+      const inverse = worldQuat.clone().invert();
+      const direction = V(1, 0, 0).applyQuaternion(worldQuat).normalize();
+      const curlAxis = new THREE.Vector3()
+        .crossVectors(direction, normal)
+        .normalize()
+        .applyQuaternion(inverse);
+      rigs.push({
+        bone,
+        rest: bone.quaternion.clone(),
+        curlAxis,
+        normalAxis: normal.clone().applyQuaternion(inverse),
+      });
+    }
+  }
+  return rigs;
+}
+
+/** Zostawiamy tylko trójkąty, których wierzchołki są skinowane do dłoni. */
+function cropHandGeometry(mesh: THREE.SkinnedMesh, side: 'L' | 'R'): THREE.BufferGeometry | null {
+  const geometry = mesh.geometry;
+  const skinIndex = geometry.getAttribute('skinIndex');
+  const skinWeight = geometry.getAttribute('skinWeight');
+  const index = geometry.getIndex();
+  if (!skinIndex || !skinWeight) return null;
+
+  const prefix = `Bip01_${side}_`;
+  const wanted = new Set<number>();
+  mesh.skeleton.bones.forEach((bone, i) => {
+    const name = bone.name.replace(/\s+/g, '_');
+    if (!name.startsWith(prefix)) return;
+    const tail = name.slice(prefix.length);
+    if (tail === 'Hand' || tail === 'Forearm' || tail.startsWith('Finger')) wanted.add(i);
+  });
+  if (!wanted.size) return null;
+
+  const vertexCount = skinIndex.count;
+  const triangleCount = Math.floor((index ? index.count : vertexCount) / 3);
+  const kept: number[] = [];
+  const vertexOf = (n: number): number => (index ? index.getX(n) : n);
+  for (let t = 0; t < triangleCount; t += 1) {
+    const a = vertexOf(t * 3);
+    const b = vertexOf(t * 3 + 1);
+    const c = vertexOf(t * 3 + 2);
+    let keep = false;
+    for (const v of [a, b, c]) {
+      let best = -1;
+      let bestWeight = 0;
+      for (let k = 0; k < 4; k += 1) {
+        const w = skinWeight.getComponent(v, k);
+        if (w > bestWeight) {
+          bestWeight = w;
+          best = skinIndex.getComponent(v, k);
+        }
+      }
+      if (wanted.has(best)) {
+        keep = true;
+        break;
+      }
+    }
+    if (keep) kept.push(a, b, c);
+  }
+  if (!kept.length) return null;
+  const cropped = geometry.clone();
+  cropped.setIndex(kept);
+  cropped.computeBoundingSphere();
+  return cropped;
+}
+
+export interface AvatarViewHandOptions {
+  template: HumanTemplate;
+  female: boolean;
+  side: 'L' | 'R';
+  assets: HumanAssets;
+  appearance: Appearance;
+  /** Pozycja bazowa w przestrzeni kamery. */
+  base: THREE.Vector3;
+}
+
+export class AvatarViewHand {
   readonly root = new THREE.Group();
 
+  private readonly base: THREE.Vector3;
+  private readonly side: 'L' | 'R';
+  private readonly assets: HumanAssets;
+  private readonly pose: HandPose = neutralHandPose();
+  private model: THREE.Group | null = null;
+  private rigs: FingerRig[] = [];
+  private material: THREE.MeshStandardMaterial | null = null;
+
+  constructor(private options: AvatarViewHandOptions) {
+    this.base = options.base.clone();
+    this.side = options.side;
+    this.assets = options.assets;
+    this.root.position.copy(this.base);
+    this.rebuild();
+  }
+
+  private rebuild(): void {
+    const { template, female, assets, appearance, side } = this.options;
+    const clone = cloneSkeleton(template.scene) as THREE.Group;
+    let body: THREE.SkinnedMesh | null = null;
+    clone.traverse((object) => {
+      if (!(object instanceof THREE.SkinnedMesh)) return;
+      const label = (object.material as THREE.Material).name.toLowerCase();
+      if (label.includes('body')) body = object;
+      else object.visible = false;
+    });
+    if (!body) return;
+
+    const skinned = body as THREE.SkinnedMesh;
+    const cropped = cropHandGeometry(skinned, side);
+    if (!cropped) return;
+
+    const material = (skinned.material as THREE.MeshStandardMaterial).clone();
+    material.map = assets.bodyTexture(outfitBody(getOutfit(appearance.outfit), female), appearance.skin);
+    material.normalMap = assets.bodyNormal(outfitBody(getOutfit(appearance.outfit), female));
+    material.normalScale.set(0.4, 0.4);
+    material.color.set(0xffffff);
+    material.side = THREE.DoubleSide;
+    material.roughness = 0.78;
+    material.needsUpdate = true;
+    skinned.material = material;
+    skinned.geometry = cropped;
+    skinned.frustumCulled = false;
+    this.material = material;
+
+    // Obracamy CAŁY wycinek szkieletu (nie pojedyncze kości), żeby palce
+    // wskazywały w górę ekranu, a wnętrze dłoni było zwrócone do kamery.
+    // Anatomia przedramienia pozostaje nienaruszona.
+    clone.position.set(0, 0, 0);
+    clone.quaternion.identity();
+    clone.scale.setScalar(1);
+    clone.updateMatrixWorld(true);
+    const wrist = findBone(clone, side, 'Hand');
+    const middle = findBone(clone, side, 'Finger2');
+    const indexBase = findBone(clone, side, 'Finger1');
+    const pinkyBase = findBone(clone, side, 'Finger4');
+    if (!wrist || !middle || !indexBase || !pinkyBase) return;
+
+    const wristPos = wrist.getWorldPosition(V(0, 0, 0));
+    const fingerDir = middle.getWorldPosition(V(0, 0, 0)).sub(wristPos).normalize();
+    const normal = new THREE.Vector3()
+      .crossVectors(
+        indexBase.getWorldPosition(V(0, 0, 0)).sub(wristPos),
+        pinkyBase.getWorldPosition(V(0, 0, 0)).sub(wristPos),
+      )
+      .normalize();
+    if (normal.lengthSq() < 0.5) normal.set(0, 0, 1);
+
+    const align = new THREE.Quaternion().setFromUnitVectors(fingerDir, V(0, 1, 0));
+    const rotatedNormal = normal.clone().applyQuaternion(align);
+    const yaw = Math.atan2(rotatedNormal.x, rotatedNormal.z);
+    const turn = new THREE.Quaternion().setFromAxisAngle(V(0, 1, 0), -yaw);
+    clone.quaternion.copy(turn.multiply(align));
+    clone.updateMatrixWorld(true);
+
+    // Nadgarstek ląduje dokładnie w początku układu `root`.
+    const scale = 1.72;
+    const rotated = wrist.getWorldPosition(V(0, 0, 0));
+    clone.scale.setScalar(scale);
+    clone.position.copy(rotated).multiplyScalar(-scale);
+    clone.updateMatrixWorld(true);
+    this.root.add(clone);
+    this.model = clone;
+    this.rigs = buildFingerRig(clone, side);
+  }
+
+  setAppearance(appearance: Appearance, female: boolean, template?: HumanTemplate): void {
+    this.options.appearance = appearance;
+    this.options.female = female;
+    if (template && template !== this.options.template) {
+      this.options.template = template;
+      if (this.model) this.root.remove(this.model);
+      this.model = null;
+      this.rebuild();
+      return;
+    }
+    if (!this.material) return;
+    const key = outfitBody(getOutfit(appearance.outfit), female);
+    this.material.map = this.assets.bodyTexture(key, appearance.skin);
+    this.material.normalMap = this.assets.bodyNormal(key);
+    this.material.needsUpdate = true;
+  }
+
+  /** 15 stawów + pozycja nadgarstka w 3D, wygładzane co klatkę. */
+  apply(target: HandPose, dt: number, sway = 0): void {
+    const k = 1 - Math.exp(-dt * 17);
+    blendPose(this.pose, target.present ? target : neutralHandPose(), k);
+
+    for (let f = 0; f < 5; f += 1) {
+      for (let j = 0; j < 3; j += 1) {
+        const rig = this.rigs[f * 3 + j];
+        if (!rig) continue;
+        const curl = rig.rest
+          .clone()
+          .multiply(new THREE.Quaternion().setFromAxisAngle(rig.curlAxis, this.pose.curl[f][j]));
+        if (j === 0) {
+          curl.multiply(
+            new THREE.Quaternion().setFromAxisAngle(rig.normalAxis, -this.pose.spread[f] * 0.7),
+          );
+        }
+        rig.bone.quaternion.copy(curl);
+      }
+    }
+
+    // Trójwymiarowe pozycjonowanie nadgarstka: ruch dłoni w kadrze przesuwa
+    // całą dłoń awatara w lewo/prawo, góra/dół oraz bliżej/dalej kamery.
+    const w = this.pose.wrist;
+    this.root.position.set(
+      this.base.x + w.x * (this.side === 'L' ? 0.075 : 0.075),
+      this.base.y + w.y * 0.075,
+      this.base.z + w.z * 0.055,
+    );
+    this.root.rotation.set(
+      this.pose.pitch * 0.3,
+      this.pose.yaw * 0.7 - this.pose.roll * 0.25 + sway * 0.04,
+      this.pose.roll * 0.18,
+    );
+  }
+}
+
+/**
+ * Awaryjny widok, gdy GLB nie wczytały się wcale. Używany wyłącznie jako
+ * fallback — w normalnym działaniu first-person korzysta z AvatarViewHand.
+ */
+export class FallbackViewHand {
+  readonly root = new THREE.Group();
   private readonly material: THREE.MeshStandardMaterial;
   private readonly joints: THREE.Group[][] = [];
   private readonly bases: THREE.Group[] = [];
   private readonly side: number;
+  private readonly base: THREE.Vector3;
   private readonly pose: HandPose = neutralHandPose();
 
-  constructor(side: 'L' | 'R', skin: string) {
+  constructor(side: 'L' | 'R', skin: string, base: THREE.Vector3) {
     this.side = side === 'L' ? 1 : -1;
-    this.material = new THREE.MeshStandardMaterial({ color: skin, roughness: 0.84, metalness: 0 });
-    const nail = new THREE.MeshStandardMaterial({ color: 0xd9b9a2, roughness: 0.4 });
-
-    // Krótki fragment przedramienia, żeby dłoń nie wyglądała jak odcięta.
-    const forearm = segment(0.039, 0.12, this.material);
+    this.base = base.clone();
+    this.root.position.copy(this.base);
+    this.material = new THREE.MeshStandardMaterial({ color: skin, roughness: 0.84 });
+    const segment = (radius: number, length: number): THREE.Mesh => {
+      const mesh = new THREE.Mesh(new THREE.CapsuleGeometry(radius, length, 4, 8), this.material);
+      mesh.position.y = length / 2;
+      return mesh;
+    };
+    const forearm = segment(0.039, 0.12);
     forearm.position.y = -0.075;
     this.root.add(forearm);
-
-    // Zaokrąglony prostokąt zamiast kuli — dłoń nie wygląda jak piłeczka.
-    const palm = new THREE.Mesh(
-      new RoundedBoxGeometry(0.132, 0.145, 0.05, 4, 0.038),
-      this.material,
-    );
-    palm.position.set(0, 0.055, 0);
-    palm.castShadow = true;
+    const palm = new THREE.Mesh(new RoundedBoxGeometry(0.132, 0.145, 0.05, 3, 0.038), this.material);
+    palm.position.y = 0.055;
     this.root.add(palm);
-
-    const knuckleGeo = new THREE.SphereGeometry(1, 10, 8);
-
     for (let f = 0; f < 5; f += 1) {
       const thumb = f === 0;
       const base = new THREE.Group();
@@ -63,25 +324,14 @@ export class ViewHand {
       }
       this.root.add(base);
       this.bases.push(base);
-
-      const lengths = thumb ? THUMB_LENGTHS : FINGER_LENGTHS;
       const chain: THREE.Group[] = [];
-      let pivot = base;
+      let pivot: THREE.Object3D = base;
       for (let j = 0; j < 3; j += 1) {
         const radius = (thumb ? 0.0165 : 0.0135) - j * 0.0018;
         const joint = new THREE.Group();
-        joint.add(segment(radius, lengths[j], this.material));
-        const knuckle = new THREE.Mesh(knuckleGeo, this.material);
-        knuckle.scale.setScalar(radius * 1.06);
-        joint.add(knuckle);
-        if (j === 2) {
-          const plate = new THREE.Mesh(new THREE.SphereGeometry(1, 10, 8), nail);
-          plate.scale.set(radius * 0.8, radius * 0.75, radius * 0.26);
-          plate.position.set(0, lengths[j] * 0.72, radius * 0.62);
-          joint.add(plate);
-        }
+        joint.add(segment(radius, 0.04 - j * 0.008));
         pivot.add(joint);
-        if (j > 0) joint.position.y = lengths[j - 1];
+        if (j > 0) joint.position.y = 0.04 - (j - 1) * 0.008;
         chain.push(joint);
         pivot = joint;
       }
@@ -93,23 +343,23 @@ export class ViewHand {
     this.material.color.set(hex);
   }
 
-  /** Wygładzanie ruchu, żeby odczyt z kamery nie drżał. */
   apply(target: HandPose, dt: number, sway = 0): void {
     const k = 1 - Math.exp(-dt * 17);
     const t = target.present ? target : neutralHandPose();
+    blendPose(this.pose, t, k);
     for (let f = 0; f < 5; f += 1) {
       for (let j = 0; j < 3; j += 1) {
-        this.pose.curl[f][j] += (t.curl[f][j] - this.pose.curl[f][j]) * k;
-        // Każdy kolejny staw zgina się ciut mocniej, jak w prawdziwym palcu.
         this.joints[f][j].rotation.x = this.pose.curl[f][j] * (j === 0 ? 0.85 : 1);
       }
-      this.pose.spread[f] += (t.spread[f] - this.pose.spread[f]) * k;
       this.bases[f].rotation.z =
         (f === 0 ? -this.side * 0.92 : 0) - this.side * this.pose.spread[f] * 0.7;
     }
-    this.pose.roll += (t.roll - this.pose.roll) * k;
-    this.pose.pitch += (t.pitch - this.pose.pitch) * k;
-    this.root.rotation.y = -this.pose.roll * 0.4 + sway * 0.04;
+    this.root.position.set(
+      this.base.x + this.pose.wrist.x * 0.075,
+      this.base.y + this.pose.wrist.y * 0.075,
+      this.base.z + this.pose.wrist.z * 0.055,
+    );
+    this.root.rotation.y = -this.pose.roll * 0.4 + this.pose.yaw * 0.5 + sway * 0.04;
     this.root.rotation.x = this.pose.pitch * 0.35;
   }
 }
@@ -143,7 +393,6 @@ export class ToolViewmodel {
     });
 
     const body = new THREE.Mesh(new RoundedBoxGeometry(0.105, 0.17, 0.038, 3, 0.012), shell);
-    body.castShadow = true;
     this.root.add(body);
     const grip = new THREE.Mesh(new RoundedBoxGeometry(0.096, 0.06, 0.044, 3, 0.014), rubber);
     grip.position.y = -0.098;

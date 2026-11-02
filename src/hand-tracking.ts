@@ -37,6 +37,8 @@ interface HandsSolution {
   close(): Promise<void>;
 }
 
+const MP_BASE = `${import.meta.env.BASE_URL}mediapipe/`;
+
 type HandsConstructor = new (config: {
   locateFile: (file: string) => string;
 }) => HandsSolution;
@@ -51,7 +53,7 @@ async function loadHands(): Promise<HandsConstructor> {
   if (window.Hands) return window.Hands;
   await new Promise<void>((resolve, reject) => {
     const script = document.createElement('script');
-    script.src = '/mediapipe/hands.js';
+    script.src = `${MP_BASE}hands.js`;
     script.async = true;
     script.onload = () => resolve();
     script.onerror = () => reject(new Error('Nie udało się wczytać modelu wykrywania dłoni.'));
@@ -115,7 +117,7 @@ export class HandTracker {
 
     this.status('Wczytuję model wykrywania dłoni…');
     const Hands = await loadHands();
-    const hands = new Hands({ locateFile: (file) => `/mediapipe/${file}` });
+    const hands = new Hands({ locateFile: (file) => `${MP_BASE}${file}` });
     hands.setOptions({
       maxNumHands: 2,
       modelComplexity: 1,

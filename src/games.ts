@@ -20,10 +20,10 @@ export const GAMES: GameInfo[] = [
     description:
       'Dom przy Wrzosowej 12. Wejdź z latarką, zbierz trzy dowody i rozpoznaj zjawę, zanim skończą Ci się nerwy.',
     tag: 'Horror · Dochodzenie',
-    players: '1 gracz',
+    players: '1–8 graczy',
     color: '#8b7355',
     accent: '#3f4a4a',
-    art: '/art/house.jpg',
+    art: `${import.meta.env.BASE_URL}art/house.jpg`,
     ready: true,
     claim: 'Nocne dochodzenie w opuszczonym domu. Trzy narzędzia, sześć zjaw, nalot i jedna szansa na poprawny raport.',
   },
@@ -63,10 +63,10 @@ export const CHARACTER_MODELS: CharacterModel[] = [
   { name: 'Eryk', female: false, file: 'Business_Male_01', look: 'czarny garnitur' },
   { name: 'Filip', female: false, file: 'Gardener_Male_01', look: 'brązowa kurtka robocza' },
   { name: 'Gustaw', female: false, file: 'Medical_Male_02', look: 'kurtka ratownika' },
-  { name: 'Alicja', female: true, file: 'Female_Adult_01', look: 'codzienny' },
-  { name: 'Ewa', female: true, file: 'Business_Female_01', look: 'czarny żakiet' },
-  { name: 'Nina', female: true, file: 'Female_Adult_03', look: 'codzienny' },
-  { name: 'Iza', female: true, file: 'Female_Adult_05', look: 'codzienny' },
+  { name: 'Alicja', female: true, file: 'Female_Adult_01', look: 'blond, polo i dżinsy' },
+  { name: 'Ewa', female: true, file: 'Business_Female_01', look: 'czarny żakiet i spódnica' },
+  { name: 'Nina', female: true, file: 'Female_Adult_03', look: 'fioletowa bluzka' },
+  { name: 'Iza', female: true, file: 'Female_Adult_05', look: 'różowa koszula i dżinsy' },
 ];
 
 export const SKIN_TONES = [
@@ -102,18 +102,29 @@ export interface OutfitDef {
   color: string;
   /** Nazwa pliku, z którego bierzemy *_body_color.jpg i *_body_normal.jpg. */
   body: string;
+  /**
+   * Modele żeńskie mają INNY układ UV korpusu (ręce u góry, nogi na dole),
+   * więc tekstura męska na damskim szkielecie daje „pończochy z rękawów”.
+   * Każdy strój ma więc własny, gotowy wariant damski z tej samej paczki.
+   */
+  bodyFemale: string;
 }
 
 export const OUTFITS: OutfitDef[] = [
-  { id: 'casual', value: 'casual', name: 'Polo i szorty', description: 'Koszulka w paski i krótkie spodnie.', color: '#b7ada0', body: 'Male_Adult_01' },
-  { id: 'shirt', value: 'shirt', name: 'Koszula', description: 'Klasyczna koszula i spodnie.', color: '#8f9aa6', body: 'Male_Adult_02' },
-  { id: 'sweater', value: 'sweater', name: 'Wełniany komplet', description: 'Marynarka, kamizelka i bordowy krawat.', color: '#7d7266', body: 'Male_Adult_03' },
-  { id: 'city', value: 'city', name: 'Taktyczny', description: 'Czarna kamizelka z niebieskimi wstawkami.', color: '#59636c', body: 'Male_Adult_04' },
-  { id: 'suit', value: 'suit', name: 'Garnitur', description: 'Marynarka, krawat, eleganckie spodnie.', color: '#3b424b', body: 'Business_Male_01' },
-  { id: 'workwear', value: 'workwear', name: 'Roboczy', description: 'Koszula robocza i spodnie z kieszeniami.', color: '#6f7a5c', body: 'Gardener_Male_01' },
-  { id: 'medical', value: 'medical', name: 'Ratownik', description: 'Niebieska kurtka z odblaskami.', color: '#4a70b8', body: 'Medical_Male_02' },
-  { id: 'office', value: 'office', name: 'Biurowy', description: 'Żakiet i elegancka bluzka.', color: '#8b6d78', body: 'Business_Female_01' },
+  { id: 'casual', value: 'casual', name: 'Polo i szorty', description: 'Koszulka w paski i krótkie spodnie.', color: '#b7ada0', body: 'Male_Adult_01', bodyFemale: 'Female_Adult_01' },
+  { id: 'shirt', value: 'shirt', name: 'Koszula', description: 'Klasyczna koszula i spodnie.', color: '#8f9aa6', body: 'Male_Adult_02', bodyFemale: 'Female_Adult_05' },
+  { id: 'sweater', value: 'sweater', name: 'Wełniany komplet', description: 'Marynarka, kamizelka i bordowy krawat.', color: '#7d7266', body: 'Male_Adult_03', bodyFemale: 'Female_Adult_03' },
+  { id: 'city', value: 'city', name: 'Taktyczny', description: 'Czarna kamizelka z niebieskimi wstawkami.', color: '#59636c', body: 'Male_Adult_04', bodyFemale: 'Business_Female_01' },
+  { id: 'suit', value: 'suit', name: 'Garnitur', description: 'Marynarka, krawat, eleganckie spodnie.', color: '#3b424b', body: 'Business_Male_01', bodyFemale: 'Business_Female_01' },
+  { id: 'workwear', value: 'workwear', name: 'Roboczy', description: 'Koszula robocza i spodnie z kieszeniami.', color: '#6f7a5c', body: 'Gardener_Male_01', bodyFemale: 'Female_Adult_05' },
+  { id: 'medical', value: 'medical', name: 'Ratownik', description: 'Niebieska kurtka z odblaskami.', color: '#4a70b8', body: 'Medical_Male_02', bodyFemale: 'Female_Adult_03' },
+  { id: 'office', value: 'office', name: 'Biurowy', description: 'Żakiet i elegancka bluzka.', color: '#8b6d78', body: 'Business_Male_01', bodyFemale: 'Business_Female_01' },
 ];
+
+/** Klucz tekstury korpusu właściwy dla płci wybranego modelu. */
+export function outfitBody(outfit: OutfitDef, female: boolean): string {
+  return female ? outfit.bodyFemale : outfit.body;
+}
 
 export function getOutfit(id: string): OutfitDef {
   return OUTFITS.find((entry) => entry.id === id) ?? OUTFITS[0];

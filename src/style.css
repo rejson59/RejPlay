@@ -2659,3 +2659,183 @@ body.in-game .hand-panel { display: none; }
 @media (max-width: 760px) {
   .option--outfit { flex-basis: 100%; }
 }
+
+/* ============================================================== HOME v0.3
+   Nowoczesny, spokojny layout: szkliste karty, żywy status multiplayeru,
+   większa typografia i delikatne tło bez nachalnych grafik. */
+
+.home::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto;
+  height: 620px;
+  pointer-events: none;
+  background:
+    radial-gradient(620px 340px at 78% -6%, rgba(200, 160, 106, 0.20), transparent 70%),
+    radial-gradient(520px 300px at 12% 18%, rgba(127, 154, 148, 0.14), transparent 72%);
+  z-index: 0;
+}
+.home > .wrap,
+.home > .topbar,
+.home > .footer { position: relative; z-index: 1; }
+
+.live-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 11px;
+  border: 1px solid var(--home-line);
+  border-radius: 100px;
+  background: var(--home-surface);
+  color: var(--home-soft);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.live-pill__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #c9a227;
+  box-shadow: 0 0 0 3px rgba(201, 162, 39, 0.16);
+}
+.live-pill.is-online .live-pill__dot {
+  background: #4fb98a;
+  box-shadow: 0 0 0 3px rgba(79, 185, 138, 0.18);
+  animation: livePulse 2.4s ease-in-out infinite;
+}
+.live-pill.is-offline .live-pill__dot { background: #9a9d99; box-shadow: none; }
+@keyframes livePulse {
+  0%, 100% { box-shadow: 0 0 0 3px rgba(79, 185, 138, 0.18); }
+  50% { box-shadow: 0 0 0 7px rgba(79, 185, 138, 0.04); }
+}
+
+.hero__kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  color: var(--accent-deep);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+.hero__spark {
+  width: 18px;
+  height: 1px;
+  background: var(--accent-deep);
+}
+.home-heading { align-items: end; margin-bottom: 22px; }
+.home-heading h1 { font-size: clamp(34px, 4.2vw, 54px); line-height: 1.06; }
+.home-heading h1 em { color: var(--accent-deep); font-style: italic; }
+.home-heading p { max-width: 560px; font-size: 14px; line-height: 1.7; }
+
+.live-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 30px;
+}
+.live-strip article {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  padding: 14px 16px;
+  border: 1px solid var(--home-line);
+  border-radius: 12px;
+  background: var(--home-surface);
+  box-shadow: 0 8px 26px rgba(20, 24, 25, 0.045);
+  transition: transform 0.2s ease, border-color 0.2s ease;
+}
+.live-strip article:hover { transform: translateY(-2px); border-color: var(--accent-deep); }
+.live-strip__icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: rgba(200, 160, 106, 0.14);
+  color: var(--accent-deep);
+  font-size: 17px;
+}
+.live-strip b { display: block; font-size: 12.5px; font-weight: 650; }
+.live-strip small { display: block; margin-top: 2px; color: var(--home-muted); font-size: 10.5px; line-height: 1.45; }
+
+.live-card {
+  padding: 15px;
+  border: 1px solid var(--home-line);
+  border-radius: 12px;
+  background: var(--home-surface);
+  box-shadow: 0 12px 30px rgba(20, 24, 25, 0.06);
+}
+.live-card__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+.live-card__head > span:first-child { display: inline-flex; align-items: center; gap: 8px; }
+.live-card__pulse {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #4fb98a;
+  animation: livePulse 2.4s ease-in-out infinite;
+}
+.live-card__count {
+  display: grid;
+  place-items: center;
+  min-width: 24px;
+  height: 24px;
+  padding: 0 6px;
+  border-radius: 8px;
+  background: rgba(200, 160, 106, 0.18);
+  color: var(--accent-deep);
+  font-family: var(--display);
+  font-size: 14px;
+}
+.live-card__sub { margin: 6px 0 10px; color: var(--home-muted); font-size: 10.5px; }
+.live-card__list { display: flex; flex-direction: column; gap: 6px; max-height: 132px; overflow: auto; }
+.live-card__list li { display: flex; align-items: center; gap: 8px; font-size: 11.5px; color: var(--home-soft); }
+.live-card__list li i { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+.live-card__list li.is-empty { color: var(--home-muted); font-style: italic; }
+.live-card__cta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  margin-top: 12px;
+  padding: 9px 11px;
+  border: 0;
+  border-radius: 8px;
+  background: #1b2021;
+  color: #f1f0ec;
+  font-size: 11.5px;
+  font-weight: 600;
+  transition: background 0.2s ease;
+}
+.live-card__cta:hover { background: var(--accent-deep); }
+.live-card__cta span { font-size: 14px; }
+
+body[data-theme='dark'] .live-pill,
+body[data-theme='dark'] .live-strip article,
+body[data-theme='dark'] .live-card { background: var(--home-surface); }
+body[data-theme='dark'] .live-strip article { box-shadow: 0 8px 26px rgba(0, 0, 0, 0.28); }
+body[data-theme='dark'] .live-card__cta { background: #c8a06a; color: #141819; }
+
+@media (max-width: 1180px) {
+  .live-strip { grid-template-columns: 1fr; gap: 8px; }
+  .live-strip article { padding: 10px 13px; }
+  .live-pill { display: none; }
+}
+
+.player__live {
+  margin-left: auto;
+  color: #4fb98a;
+  font-size: 9px;
+  line-height: 1;
+}

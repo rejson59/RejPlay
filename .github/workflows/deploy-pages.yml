@@ -31,6 +31,9 @@ jobs:
           path: dist
   deploy:
     needs: build
+    # Repozytorium pozwala wdrażać do środowiska github-pages tylko z main.
+    # Na branchu roboczym sprawdzamy wyłącznie build, bez próby deployu.
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment:
       name: github-pages

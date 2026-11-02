@@ -8,7 +8,7 @@ import {
   type LabelHandle,
 } from './avatar';
 import type { Appearance } from './character';
-import { CHARACTER_MODELS, getOutfit, OUTFITS } from './games';
+import { CHARACTER_MODELS, getOutfit, OUTFITS, outfitBody } from './games';
 import {
   blendPose,
   neutralHandPosePair,
@@ -27,6 +27,9 @@ import {
  */
 
 const AVATAR_NAMES = CHARACTER_MODELS.map((model) => model.file);
+/** Bazowy URL działa zarówno w dev (/), jak i na GitHub Pages (/RejPlay/). */
+const BASE = import.meta.env.BASE_URL;
+const asset = (file: string): string => `${BASE}characters/${file}`;
 
 export interface HumanTemplate {
   scene: THREE.Group;
@@ -36,6 +39,10 @@ export interface HumanTemplate {
 export interface BodyLook {
   color: THREE.Texture;
   normal: THREE.Texture;
+  /** Surowe RGBA koloru, potrzebne do przebarwienia odkrytej skóry dłoni. */
+  raw: Uint8ClampedArray;
+  width: number;
+  height: number;
 }
 
 interface HeadBase {
@@ -50,6 +57,8 @@ interface HeadBase {
   /** Średnia jasność fryzury i skóry: normalizujemy cieniowanie pod wybrany kolor. */
   hairLuma: number;
   skinLuma: number;
+  /** Średni kolor skóry twarzy — referencja dla przebarwienia dłoni. */
+  skinRef: [number, number, number];
 }
 
 export interface HumanAssets {
@@ -57,7 +66,9 @@ export interface HumanAssets {
   femaleClips: THREE.AnimationClip[];
   maleClips: THREE.AnimationClip[];
   hairMaps: THREE.Texture[];
-  bodyLooks: Map<string, BodyLook>;
+  /** Tekstura korpusu z przebarwioną skórą (dłonie/ramiona = wybrany odcień). */
+  bodyTexture(name: string, skin: string): THREE.Texture;
+  bodyNormal(name: string): THREE.Texture;
   headTexture(name: string, skin: string, hair: string): THREE.Texture;
 }
 
@@ -74,7 +85,7 @@ function inPlaceClips(clips: THREE.AnimationClip[]): THREE.AnimationClip[] {
 }
 
 function texture(file: string, srgb = false): THREE.Texture {
-  const map = new THREE.TextureLoader().load(`/characters/${file}`);
+  const map = new THREE.TextureLoader().load(asset(file));
   map.flipY = false;
   map.anisotropy = 8;
   if (srgb) map.colorSpace = THREE.SRGBColorSpace;
@@ -115,7 +126,7 @@ const clamp255 = (value: number): number => Math.max(0, Math.min(255, Math.round
  * daje dokładnie wybrany odcień (blond, czerń, rudy, siwy).
  */
 async function makeHairMap(name: string): Promise<THREE.CanvasTexture> {
-  const image = await loadImage(`/characters/${name}_opacity_color.png`);
+  const image = await loadImage(asset(`${name}_opacity_color.png`));
   const canvas = document.createElement('canvas');
   canvas.width = image.width;
   canvas.height = image.height;
@@ -140,12 +151,31 @@ async function makeHairMap(name: string): Promise<THREE.CanvasTexture> {
 }
 
 /**
- * Maska fryzury na teksturze głowy. Skóra ma charakterystyczny stosunek
- * kanałów i jasność; włosy są ciemniejsze / bardziej żółto-brązowe. Środkowy
- * owal twarzy jest wyłączony, żeby nie przebarwiać oczu i ust.
+ * Maska fryzury na teksturze głowy.
+ *
+ * Poprawka dla modeli żeńskich: jasny blond ma bardzo podobną jasność do skóry,
+ * więc stara heurystyka przebarwiała włosy na kolor twarzy i głowa wyglądała
+ * jak łysa. Rozróżniamy skórę (odcień czerwono-różowy: r-g > g-b) od włosów
+ * (odcień żółty: g-b > r-g), a fryzurę dodatkowo ograniczamy strefami UV.
+ * Dzięki temu oczy, usta i karta oka na dole atlasu zostają nietknięte.
  */
+function skinLikeness(r: number, g: number, b: number, ref: [number, number, number]): boolean {
+  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  const rg = r - g;
+  const gb = g - b;
+  const rb = r - b;
+  const distance =
+    Math.abs(r - ref[0]) * 0.55 + Math.abs(g - ref[1]) * 0.65 + Math.abs(b - ref[2]) * 1.1;
+  return (
+    luminance > 0.28 &&
+    rg > 2 && gb > 12 && gb < 68 && rb > 18 && rb < 140 &&
+    rg > gb * 0.9 &&
+    distance < 105
+  );
+}
+
 async function makeHeadBase(name: string): Promise<HeadBase> {
-  const image = await loadImage(`/characters/${name}_head_color.jpg`);
+  const image = await loadImage(asset(`${name}_head_color.jpg`));
   const canvas = document.createElement('canvas');
   canvas.width = image.width;
   canvas.height = image.height;
@@ -153,52 +183,76 @@ async function makeHeadBase(name: string): Promise<HeadBase> {
   context.drawImage(image, 0, 0);
   const pixels = context.getImageData(0, 0, canvas.width, canvas.height);
   const data = pixels.data;
-  const length = canvas.width * canvas.height;
+  const width = canvas.width;
+  const height = canvas.height;
+  const length = width * height;
+
+  // Referencyjny kolor skóry: środkowy fragment czoła (bez oczu i ust).
+  let refR = 0, refG = 0, refB = 0, refN = 0;
+  for (let y = Math.floor(height * 0.17); y < height * 0.24; y += 2) {
+    for (let x = Math.floor(width * 0.44); x < width * 0.56; x += 2) {
+      const i = (y * width + x) * 4;
+      const lum = (0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2]) / 255;
+      if (lum < 0.3 || lum > 0.98) continue;
+      refR += data[i]; refG += data[i + 1]; refB += data[i + 2]; refN += 1;
+    }
+  }
+  const skinRef: [number, number, number] = refN
+    ? [refR / refN, refG / refN, refB / refN]
+    : [225, 175, 145];
+
   const skin = new Float32Array(length);
   const hair = new Float32Array(length);
-  let hairSum = 0;
-  let hairCount = 0;
-  let skinSum = 0;
-  let skinCount = 0;
+  let hairSum = 0, hairCount = 0, skinSum = 0, skinCount = 0;
+  let sr = 0, sg = 0, sb = 0;
 
   for (let i = 0, p = 0; i < data.length; i += 4, p += 1) {
-    const r = data[i];
-    const g = data[i + 1];
-    const b = data[i + 2];
+    const r = data[i], g = data[i + 1], b = data[i + 2];
     const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
-    const x = p % canvas.width;
-    const y = Math.floor(p / canvas.width);
-    const nx = x / canvas.width;
-    const ny = y / canvas.height;
-    const inFace = nx > 0.3 && nx < 0.7 && ny > 0.15 && ny < 0.63;
-    const gOverB = g / Math.max(b, 1);
-    const rOverG = r / Math.max(g, 1);
-    const isSkin = luminance > 0.38 && gOverB < 1.46 && rOverG < 1.62 && b > 48;
-    const isBackground = luminance < 0.035;
+    const nx = (p % width) / width;
+    const ny = Math.floor(p / width) / height;
+    const isSkin = skinLikeness(r, g, b, skinRef);
+    // Strefy fryzury: góra + boki oraz warkocz w prawym dolnym rogu atlasu.
+    const hairZone =
+      (ny < 0.62 && (nx < 0.29 || nx > 0.71 || ny < 0.145)) ||
+      (ny < 0.34 && (nx < 0.38 || nx > 0.62)) ||
+      (ny >= 0.62 && nx > 0.47);
+    const isHair = hairZone && !isSkin && luminance > 0.075;
     skin[p] = isSkin ? 1 : 0;
-    hair[p] = !inFace && !isSkin && !isBackground && luminance > 0.06 ? 1 : 0;
-    if (skin[p]) { skinSum += luminance; skinCount += 1; }
-    if (hair[p]) { hairSum += luminance; hairCount += 1; }
+    hair[p] = isHair ? 1 : 0;
+    if (isSkin) {
+      skinSum += luminance; skinCount += 1;
+      sr += r; sg += g; sb += b;
+    }
+    if (isHair) { hairSum += luminance; hairCount += 1; }
   }
   return {
-    width: canvas.width,
-    height: canvas.height,
+    width, height,
     data: new Uint8ClampedArray(data),
-    skin,
-    hair,
+    skin, hair,
     hairLuma: hairCount ? hairSum / hairCount : 0.25,
     skinLuma: skinCount ? skinSum / skinCount : 0.65,
+    skinRef: skinCount ? [sr / skinCount, sg / skinCount, sb / skinCount] : skinRef,
   };
 }
 
 async function makeBodyLook(name: string): Promise<BodyLook> {
   const [colorImage, normalImage] = await Promise.all([
-    loadImage(`/characters/${name}_body_color.jpg`),
-    loadImage(`/characters/${name}_body_normal.jpg`),
+    loadImage(asset(`${name}_body_color.jpg`)),
+    loadImage(asset(`${name}_body_normal.jpg`)),
   ]);
+  const canvas = document.createElement('canvas');
+  canvas.width = colorImage.width;
+  canvas.height = colorImage.height;
+  const context = canvas.getContext('2d', { willReadFrequently: true })!;
+  context.drawImage(colorImage, 0, 0);
+  const raw = context.getImageData(0, 0, canvas.width, canvas.height).data;
   return {
     color: canvasTexture(colorImage, true),
     normal: canvasTexture(normalImage, false),
+    raw: new Uint8ClampedArray(raw),
+    width: canvas.width,
+    height: canvas.height,
   };
 }
 
@@ -245,14 +299,18 @@ function normalizeHeight(scene: THREE.Group, height = 1.75): void {
 export async function loadHumanAssets(): Promise<HumanAssets> {
   const loader = new GLTFLoader();
   const [models, animationLibs, hairMaps, headBases, bodyLookEntries] = await Promise.all([
-    Promise.all(AVATAR_NAMES.map((name) => loader.loadAsync(`/characters/${name}.glb`))),
+    Promise.all(AVATAR_NAMES.map((name) => loader.loadAsync(asset(`${name}.glb`)))),
     Promise.all([
-      loader.loadAsync('/characters/anim_f.glb'),
-      loader.loadAsync('/characters/anim_m.glb'),
+      loader.loadAsync(asset('anim_f.glb')),
+      loader.loadAsync(asset('anim_m.glb')),
     ]),
     Promise.all(AVATAR_NAMES.map(makeHairMap)),
     Promise.all(AVATAR_NAMES.map(makeHeadBase)),
-    Promise.all(OUTFITS.map(async (outfit) => [outfit.body, await makeBodyLook(outfit.body)] as const)),
+    Promise.all(
+      [...new Set(OUTFITS.flatMap((outfit) => [outfit.body, outfit.bodyFemale]))].map(
+        async (name) => [name, await makeBodyLook(name)] as const,
+      ),
+    ),
   ]);
 
   const templates: HumanTemplate[] = models.map((gltf, i) => {
@@ -265,6 +323,58 @@ export async function loadHumanAssets(): Promise<HumanAssets> {
   const bases = new Map<string, HeadBase>();
   AVATAR_NAMES.forEach((name, i) => bases.set(name, headBases[i]));
   const headCache = new Map<string, THREE.CanvasTexture>();
+  const bodyLooks = new Map<string, BodyLook>(bodyLookEntries);
+  const bodyCache = new Map<string, THREE.CanvasTexture>();
+
+  /** Gotowa tekstura ubrania + dłonie w kolorze skóry wybranym w edytorze. */
+  const bodyTexture = (name: string, skinHex: string): THREE.Texture => {
+    const key = `${name}|${skinHex}`;
+    const cached = bodyCache.get(key);
+    if (cached) return cached;
+    const look = bodyLooks.get(name) ?? bodyLookEntries[0][1];
+    const base = bases.get(name) ?? headBases[0];
+    const [tr, tg, tb] = hexRgb(skinHex);
+    const [rr, rg, rb] = base.skinRef;
+    const refLuma = Math.max(0.2, (0.299 * rr + 0.587 * rg + 0.114 * rb) / 255);
+    const canvas = document.createElement('canvas');
+    canvas.width = look.width;
+    canvas.height = look.height;
+    const context = canvas.getContext('2d')!;
+    const output = context.createImageData(look.width, look.height);
+    output.data.set(look.raw);
+    const data = output.data;
+    for (let i = 0, p = 0; i < data.length; i += 4, p += 1) {
+      const r = data[i], g = data[i + 1], b = data[i + 2];
+      const nx = (p % look.width) / look.width;
+      const ny = Math.floor(p / look.width) / look.height;
+      // Środek górnej części atlasu to ubranie (koszula, marynarka). Różowe i
+      // beżowe tkaniny mają podobną jasność do skóry — nie wolno ich przebarwiać.
+      if (nx > 0.26 && nx < 0.74 && ny < 0.55) continue;
+      if (!skinLikeness(r, g, b, base.skinRef)) continue;
+      if ((r - g) < (g - b) * 1.15) continue;
+      const distance =
+        Math.abs(r - rr) * 0.55 + Math.abs(g - rg) * 0.65 + Math.abs(b - rb) * 1.1;
+      // Płynne przejście: ostre odcięcie robiło „opaskę” na przedramieniu.
+      const weight = Math.max(0, Math.min(1, (105 - distance) / 70));
+      if (weight <= 0) continue;
+      const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+      const f = Math.max(0.45, Math.min(1.5, 0.28 + 0.72 * (luminance / refLuma)));
+      const blend = 0.86 * weight;
+      data[i] = clamp255(r + (tr * f - r) * blend);
+      data[i + 1] = clamp255(g + (tg * f - g) * blend);
+      data[i + 2] = clamp255(b + (tb * f - b) * blend);
+    }
+    context.putImageData(output, 0, 0);
+    const map = new THREE.CanvasTexture(canvas);
+    map.flipY = false;
+    map.anisotropy = 8;
+    map.colorSpace = THREE.SRGBColorSpace;
+    bodyCache.set(key, map);
+    return map;
+  };
+
+  const bodyNormal = (name: string): THREE.Texture =>
+    (bodyLooks.get(name) ?? bodyLookEntries[0][1]).normal;
 
   const headTexture = (name: string, skinHex: string, hairHex: string): THREE.Texture => {
     const key = `${name}|${skinHex}|${hairHex}`;
@@ -318,7 +428,8 @@ export async function loadHumanAssets(): Promise<HumanAssets> {
     femaleClips: inPlaceClips(animationLibs[0].animations),
     maleClips: inPlaceClips(animationLibs[1].animations),
     hairMaps,
-    bodyLooks: new Map(bodyLookEntries),
+    bodyTexture,
+    bodyNormal,
     headTexture,
   };
 }
@@ -344,6 +455,7 @@ export class HumanAvatar implements Avatar {
   private readonly assets: HumanAssets;
   private readonly model: THREE.Group;
   private readonly modelName: string;
+  private readonly female: boolean;
   private readonly mixer: THREE.AnimationMixer;
   private readonly idle: THREE.AnimationAction;
   private readonly walk: THREE.AnimationAction;
@@ -370,6 +482,7 @@ export class HumanAvatar implements Avatar {
     const index = templateIndex % assets.templates.length;
     const template = assets.templates[index];
     this.modelName = AVATAR_NAMES[index];
+    this.female = template.female;
     this.model = cloneSkeleton(template.scene) as THREE.Group;
     this.root.add(this.model);
     this.clips = template.female ? assets.femaleClips : assets.maleClips;
@@ -544,14 +657,14 @@ export class HumanAvatar implements Avatar {
 
   setAppearance(appearance: Appearance): void {
     const outfit = getOutfit(appearance.outfit);
-    const body = this.assets.bodyLooks.get(outfit.body);
+    // Damski i męski korpus mają różne UV — zawsze bierzemy wariant dla płci.
+    const bodyName = outfitBody(outfit, this.female);
+    const bodyMap = this.assets.bodyTexture(bodyName, appearance.skin);
     const headMap = this.assets.headTexture(this.modelName, appearance.skin, appearance.hair);
 
     for (const material of this.bodyMaterials) {
-      if (body) {
-        material.map = body.color;
-        material.normalMap = body.normal;
-      }
+      material.map = bodyMap;
+      material.normalMap = this.assets.bodyNormal(bodyName);
       material.color.set(0xffffff);
       material.needsUpdate = true;
     }

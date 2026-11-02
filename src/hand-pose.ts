@@ -31,6 +31,10 @@ export interface HandPose {
   roll: number;
   /** Przechylenie dłoni w stronę / od kamery. */
   pitch: number;
+  /** Pozycja nadgarstka w kadrze, znormalizowana do −1..1 (x, y, głębokość). */
+  wrist: { x: number; y: number; z: number };
+  /** Obrót nadgarstka wokół osi pionowej. */
+  yaw: number;
   present: boolean;
 }
 
@@ -56,6 +60,8 @@ export function neutralHandPose(): HandPose {
     spread: [0, 0, 0, 0, 0],
     roll: 0,
     pitch: 0,
+    wrist: { x: 0, y: 0, z: 0 },
+    yaw: 0,
     present: false,
   };
 }
@@ -120,6 +126,16 @@ export function computeHandPose(hand: TrackedHand, aspect = 4 / 3): HandPose {
   const palm = dir(0, 9);
   pose.roll = clamp(Math.atan2(palm.x, -palm.y) * 0.8, -1.0, 1.0);
   pose.pitch = clamp(Math.asin(clamp(normal.z, -1, 1)) * 0.55, -0.5, 0.5);
+  // Trzeci wymiar: nie tylko kąty palców, ale gdzie w kadrze jest nadgarstek.
+  // Dzięki temu przesunięcie ręki w lewo/prawo, góra/dół i bliżej/dalej
+  // przesuwa całą dłoń awatara (także w widoku first-person).
+  const w = hand.landmarks[0];
+  pose.wrist = {
+    x: clamp((w.x - 0.5) * 2, -1, 1),
+    y: clamp((0.5 - w.y) * 2, -1, 1),
+    z: clamp(-w.z * 2.4, -1, 1),
+  };
+  pose.yaw = clamp(Math.atan2(normal.x, normal.z + 0.4) * 0.55, -0.8, 0.8);
   return pose;
 }
 
@@ -147,5 +163,9 @@ export function blendPose(current: HandPose, target: HandPose, k: number): void 
   }
   current.roll += (target.roll - current.roll) * k;
   current.pitch += (target.pitch - current.pitch) * k;
+  current.yaw += (target.yaw - current.yaw) * k;
+  current.wrist.x += (target.wrist.x - current.wrist.x) * k;
+  current.wrist.y += (target.wrist.y - current.wrist.y) * k;
+  current.wrist.z += (target.wrist.z - current.wrist.z) * k;
   current.present = target.present;
 }

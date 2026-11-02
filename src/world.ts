@@ -5,6 +5,7 @@ import type { HumanAssets } from './human';
 import { HorrorGame, type HorrorResult, type HorrorState } from './horror';
 import { BOTS, GAMES, PALETTE } from './games';
 import { posesFromHands, type HandPosePair, type TrackedHand } from './hand-pose';
+import type { OnlinePeer } from './online';
 
 export type Mode = 'home' | 'lobby' | 'game';
 
@@ -99,6 +100,14 @@ export class World {
   private readonly player: Character;
   private readonly bots: Bot[] = [];
   private readonly assets: HumanAssets | null;
+  /** Prawdziwi gracze z Supabase Realtime — awatary w lobby 3D. */
+  private readonly remote = new Map<string, {
+    avatar: Character;
+    target: THREE.Vector3;
+    yaw: number;
+    nick: string;
+    appearance: Appearance;
+  }>();
   private readonly portals: Portal[] = [];
   private readonly heroOrbs: Orb[] = [];
   private readonly centerpiece = new THREE.Group();
@@ -158,12 +167,12 @@ export class World {
     this.horror = new HorrorGame({
       scene: this.gameScene,
       canvas: this.renderer.domElement,
+      assets: this.assets,
+      appearance: options.appearance,
       onState: (state) => options.onHorrorState?.(state),
       onFinish: (result) => options.onHorrorFinish?.(result),
       onPhoto: () => options.onHorrorPhoto?.(),
     });
-    this.horror.setSkinColor(options.appearance.skin);
-
     this.heroAvatar = new Character({
       color: options.color,
       assets: this.assets,
@@ -224,7 +233,61 @@ export class World {
   setPlayerAppearance(appearance: Appearance): void {
     this.heroAvatar.setAppearance(appearance);
     this.player.setAppearance(appearance);
-    this.horror.setSkinColor(appearance.skin);
+    this.horror.setAvatar(this.assets, appearance);
+  }
+
+  /** Pozycja lokalnego gracza wysyłana do Supabase Realtime presence. */
+  getPlayerState(): { x: number; y: number; z: number; yaw: number } {
+    const p = this.player.root.position;
+    return { x: p.x, y: p.y, z: p.z, yaw: this.player.root.rotation.y };
+  }
+
+  /** Lista obecnych graczy → rigowane awatary w Atrium. */
+  updatePeers(peers: OnlinePeer[]): void {
+    const seen = new Set<string>();
+    for (const peer of peers) {
+      if (peer.mode !== 'lobby') continue;
+      seen.add(peer.id);
+      let entry = this.remote.get(peer.id);
+      if (!entry || entry.appearance.model !== peer.appearance.model) {
+        if (entry) {
+          this.lobbyScene.remove(entry.avatar.root);
+          entry.avatar.dispose();
+        }
+        const avatar = new Character({
+          color: peer.color,
+          label: peer.nick,
+          assets: this.assets,
+          templateIndex: peer.appearance.model,
+          appearance: peer.appearance,
+        });
+        avatar.root.position.set(peer.x, peer.y, peer.z);
+        this.lobbyScene.add(avatar.root);
+        entry = {
+          avatar,
+          target: new THREE.Vector3(peer.x, peer.y, peer.z),
+          yaw: peer.yaw,
+          nick: peer.nick,
+          appearance: peer.appearance,
+        };
+        this.remote.set(peer.id, entry);
+      }
+      entry.target.set(peer.x, peer.y, peer.z);
+      entry.yaw = peer.yaw;
+      entry.nick = peer.nick;
+      entry.avatar.setLabel(peer.nick);
+      entry.avatar.setColor(peer.color);
+    }
+    for (const [id, entry] of this.remote) {
+      if (seen.has(id)) continue;
+      this.lobbyScene.remove(entry.avatar.root);
+      entry.avatar.dispose();
+      this.remote.delete(id);
+    }
+  }
+
+  get peerCount(): number {
+    return this.remote.size;
   }
 
   /** Kąty palców z kamerki trafiają i na awatary, i na dłonie first-person. */
@@ -781,6 +844,12 @@ export class World {
     }
     this.player.update(this.elapsed, intensity);
 
+    for (const entry of this.remote.values()) {
+      entry.avatar.root.position.lerp(entry.target, 1 - Math.exp(-dt * 8));
+      entry.avatar.root.rotation.y = approachAngle(entry.avatar.root.rotation.y, entry.yaw, dt * 9);
+      entry.avatar.update(this.elapsed, 0.12);
+    }
+
     for (const bot of this.bots) {
       bot.timer -= dt;
       bot.waveTimer -= dt;
@@ -874,6 +943,9 @@ export class World {
     this.player.scaleLabel(camera.distanceTo(this.player.root.position));
     for (const bot of this.bots) {
       bot.avatar.scaleLabel(camera.distanceTo(bot.avatar.root.position));
+    }
+    for (const entry of this.remote.values()) {
+      entry.avatar.scaleLabel(camera.distanceTo(entry.avatar.root.position));
     }
     for (const portal of this.portals) {
       scaleLabelToDistance(portal.label, camera.distanceTo(portal.group.position), 0.95);

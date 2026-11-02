@@ -1,0 +1,30 @@
+RejPlay · ready-made realistic props
+====================================
+
+All .glb files in public/assets/props/ are decimated copies of models from
+Poly Haven (https://polyhaven.com), obtained via the GridFall repository
+(https://github.com/KunalSiyag/gridfall, directory models/real/props).
+Their provenance is documented in gridfall/models/real/LICENSES/polyhaven.txt.
+
+Poly Haven assets are released under CC0 1.0 Universal (public domain):
+https://creativecommons.org/publicdomain/zero/1.0/
+
+No attribution is legally required; this notice is kept for provenance.
+The models are NOT from Phasmophobia or any other commercial game.
+
+Models used (Poly Haven asset id -> local file):
+  wooden_picnic_table       -> picnic_table.glb
+  painted_wooden_bench      -> bench_park.glb
+  metal_trash_can           -> trash_bin.glb
+  planter_box_01            -> planter_box.glb
+  shrub_03 / tree_fern      -> tree_fern.glb
+  rock_07                   -> rock_boulder.glb
+  street_lamp_01            -> lamp_classic.glb
+  mailbox (procedural/quaternius-derived in GridFall) -> mailbox.glb
+
+Textures (1K diffuse / normal / ARM) are embedded in the GLB files, so the
+game needs no CDN and works offline / on GitHub Pages.
+
+RejPlay characters remain Microsoft Rocketbox (MIT); see
+public/characters/LICENSE-rocketbox-MIT.txt.
+MediaPipe Hands remains Apache-2.0; see public/mediapipe/NOTICE.txt.

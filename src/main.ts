@@ -15,6 +15,7 @@ import { loadHumanAssets, type HumanAssets } from './human';
 import type { HorrorResult, HorrorState } from './horror';
 import { World } from './world';
 import { HandTracker } from './hand-tracking';
+import { OnlineClient, type OnlinePeer, type OnlineStatus } from './online';
 
 const $ = <T extends HTMLElement = HTMLElement>(selector: string): T => {
   const element = document.querySelector(selector);
@@ -82,6 +83,17 @@ if (!PALETTE.some((entry) => entry.value === state.color)) state.color = PALETTE
 let gameReturn: 'home' | 'lobby' = 'home';
 let roundActive = false;
 
+// ------------------------------------------------- multiplayer (Supabase)
+let onlinePeers: OnlinePeer[] = [];
+let onlineStatus: OnlineStatus = 'connecting';
+const online = new OnlineClient({
+  nick: state.nick,
+  color: state.color,
+  appearance: state.appearance,
+  mode: 'home',
+  x: 0, y: 0, z: 0, yaw: 0,
+});
+
 // ------------------------------------------------------------------ referencje
 
 const home = $('#home');
@@ -144,6 +156,11 @@ const handCanvas = $<HTMLCanvasElement>('#hand-canvas');
 const handReadout = $('#hand-readout');
 const handStatus = $('#hand-status');
 const handToggles = document.querySelectorAll<HTMLElement>('[data-hand-toggle]');
+const livePill = $('#live-pill');
+const liveStatus = $('#live-status');
+const liveCount = $('#live-count');
+const liveList = $('#live-list');
+const liveSub = $('#live-sub');
 
 let world!: World;
 
@@ -383,6 +400,7 @@ function applyColor(color: string): void {
   state.color = color;
   store('rejplay:color', color);
   world.setPlayerColor(color);
+  online.update({ color });
   updateSwatches();
   renderPlayerList();
 }
@@ -395,6 +413,7 @@ function applyNick(raw: string): void {
   $('#chip-nick').textContent = state.nick;
   $('#chip-avatar').textContent = state.nick.slice(0, 1).toUpperCase();
   $('#tile-nick').textContent = state.nick;
+  online.update({ nick: state.nick });
 }
 
 // ------------------------------------------------------------------- edytor
@@ -451,6 +470,7 @@ function applyAppearance(patch: Partial<Appearance>): void {
   state.appearance = { ...state.appearance, ...patch };
   store('rejplay:appearance', JSON.stringify(state.appearance));
   world.setPlayerAppearance(state.appearance);
+  online.update({ appearance: state.appearance });
   renderEditor();
 }
 
@@ -475,9 +495,11 @@ function closeEditor(): void {
 // ------------------------------------------------------------------- lobby UI
 
 function renderPlayerList(): void {
+  const real = onlinePeers.filter((peer) => peer.mode === 'lobby');
   const entries = [
-    { name: state.nick, color: state.color, you: true },
-    ...BOTS.map((bot) => ({ name: bot.name, color: bot.color, you: false })),
+    { name: state.nick, color: state.color, you: true, live: onlineStatus === 'online' },
+    ...real.map((peer) => ({ name: peer.nick, color: peer.color, you: false, live: true })),
+    ...BOTS.map((bot) => ({ name: bot.name, color: bot.color, you: false, live: false })),
   ];
   playerList.innerHTML = entries
     .map(
@@ -486,11 +508,37 @@ function renderPlayerList(): void {
           <span class="player__dot" style="--dot:${entry.color}"></span>
           <span class="player__name">${escapeHtml(entry.name)}</span>
           ${entry.you ? '<span class="player__you">Ty</span>' : ''}
+          ${entry.live ? '<span class="player__live" title="Gracz online">●</span>' : ''}
         </li>`,
     )
     .join('');
   playerCount.textContent = String(entries.length);
-  onlineCount.textContent = `${entries.length} postaci · Ty + boty demo`;
+  onlineCount.textContent = `${real.length + 1} ${real.length ? 'graczy' : 'gracz'} online · ${BOTS.length} boty demo`;
+  renderLive();
+}
+
+/** Panel „Na żywo” na stronie głównej — wyłącznie prawdziwe dane z presence. */
+function renderLive(): void {
+  const real = onlinePeers.filter((peer) => peer.mode !== 'game');
+  livePill.classList.toggle('is-online', onlineStatus === 'online');
+  livePill.classList.toggle('is-offline', onlineStatus === 'offline');
+  liveStatus.textContent =
+    onlineStatus === 'online' ? `${real.length + 1} online` :
+    onlineStatus === 'offline' ? 'Tryb offline' : 'Łączę…';
+  liveSub.textContent =
+    onlineStatus === 'online' ? 'Supabase Realtime · Atrium' :
+    onlineStatus === 'offline' ? 'Gra działa lokalnie · czat w tej karcie' : 'Supabase Realtime · łączenie…';
+  liveCount.textContent = String(real.length + 1);
+  const rows = [
+    `<li><i style="background:${escapeHtml(state.color)}"></i>${escapeHtml(state.nick)} (Ty)</li>`,
+    ...real.map(
+      (peer) => `<li><i style="background:${escapeHtml(peer.color)}"></i>${escapeHtml(peer.nick)} · ${peer.mode === 'lobby' ? 'Atrium' : 'Start'}</li>`,
+    ),
+  ];
+  if (real.length === 0) {
+    rows.push('<li class="is-empty">Nikogo jeszcze nie ma — wejdź pierwszy</li>');
+  }
+  liveList.innerHTML = rows.join('');
 }
 
 function addChatMessage(name: string, text: string, color?: string): void {
@@ -510,9 +558,12 @@ let chatSeeded = false;
 function seedChat(): void {
   if (chatSeeded) return;
   chatSeeded = true;
-  addChatMessage('Ada', 'siema! fajna postać :)', '#9db0aa');
-  addChatMessage('Miko', 'machnij do mnie klawiszem E!', '#c8a06a');
-  addChatMessage('RejPlay', 'To demo czatu — wiadomości zostają w Twojej karcie.');
+  addChatMessage(
+    'RejPlay',
+    onlineStatus === 'online'
+      ? 'Czat jest współdzielony przez Supabase — widzą go wszyscy w Atrium.'
+      : 'Brak połączenia z bazą — wiadomości zostają w tej karcie.',
+  );
 }
 
 function triggerWave(): void {
@@ -531,6 +582,7 @@ function captureGamePhoto(): void {
   link.href = dataUrl;
   link.download = `demonofobia-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.png`;
   link.click();
+  online.event('photo');
   showToast(gameToast, 'Foto-dowód zapisany jako PNG');
 }
 
@@ -545,9 +597,11 @@ function enterLobby(): void {
   document.title = `${LOBBY_NAME} · RejPlay`;
   world.setPreviewClose(false);
   world.mount(lobbyStage, 'lobby');
+  online.update({ mode: 'lobby' });
   renderPlayerList();
   seedChat();
   recordVisit('plaza');
+  online.event('lobby_enter');
   showToast(lobbyToast, `${LOBBY_NAME} · WASD = ruch, E = machnięcie, kamerka = ruchy palców 1:1`);
 }
 
@@ -559,6 +613,7 @@ function goHome(): void {
   document.body.classList.remove('in-lobby');
   document.title = 'RejPlay — Demonofobia i Atrium 3D';
   chatInput.blur();
+  online.update({ mode: 'home' });
   world.mount(heroStage, 'home');
   renderRecent();
 }
@@ -694,6 +749,7 @@ function renderGameTools(): void {
 }
 
 function showHorrorResult(result: HorrorResult): void {
+  online.event(result.win ? 'game_win' : 'game_fail', result.ghost);
   roundActive = false;
   showToast(gameToast, result.win ? 'Raport przyjęty. Udało się rozpoznać zjawę.' : result.reason);
 }
@@ -828,6 +884,8 @@ function openGame(from: 'home' | 'lobby'): void {
   document.body.classList.remove('in-lobby');
   document.title = 'Demonofobia · RejPlay';
   recordVisit('demonofobia');
+  online.update({ mode: 'game' });
+  online.event('game_open');
   gameIntro.hidden = false;
   gameHud.hidden = true;
   gameTools.hidden = true;
@@ -851,6 +909,7 @@ function startGameRound(): void {
   world.setPreviewClose(false);
   world.mount(gameStage, 'game'); // setActive(true) → HorrorGame.start()
   world.horror.beginInput();
+  online.event('game_start');
   showToast(gameToast, 'Przytrzymaj E, aby skanować. 1 / 2 / 3 zmieniają narzędzia.');
 }
 
@@ -863,6 +922,7 @@ function exitGame(): void {
   gameResult.hidden = true;
   gameIntro.hidden = true;
   handPanel.setAttribute('aria-hidden', handTracker.active ? 'false' : 'true');
+  online.update({ mode: gameReturn === 'lobby' ? 'lobby' : 'home' });
   if (gameReturn === 'lobby') {
     lobby.classList.add('is-active');
     lobby.setAttribute('aria-hidden', 'false');
@@ -980,8 +1040,8 @@ chatForm.addEventListener('submit', (event) => {
   event.preventDefault();
   const text = chatInput.value.trim();
   if (!text) return;
-  addChatMessage(state.nick, text, state.color);
   chatInput.value = '';
+  void online.chat(text);
 });
 
 $('#wave-btn').addEventListener('click', triggerWave);
@@ -1177,6 +1237,33 @@ async function boot(): Promise<void> {
     onHorrorPhoto: captureGamePhoto,
   });
   wireWorld();
+  online.onStatus = (status) => {
+    onlineStatus = status;
+    renderPlayerList();
+    if (status === 'offline' && chatSeeded) {
+      addChatMessage('RejPlay', 'Połączenie z bazą niedostępne — gra działa lokalnie.');
+    }
+  };
+  online.onPeers = (peers) => {
+    onlinePeers = peers;
+    world.updatePeers(peers);
+    renderPlayerList();
+  };
+  online.onChat = (message) => {
+    addChatMessage(message.nick, message.offline ? `${message.content} · (tylko u Ciebie)` : message.content, message.color);
+  };
+  void online.connect();
+  window.setInterval(() => {
+    online.update({
+      nick: state.nick,
+      color: state.color,
+      appearance: state.appearance,
+      mode: game.classList.contains('is-active')
+        ? 'game'
+        : lobby.classList.contains('is-active') ? 'lobby' : 'home',
+      ...world.getPlayerState(),
+    });
+  }, 160);
   // Tylko dev: umożliwia testom wstrzyknąć surowy odczyt dłoni bez kamery.
   if (import.meta.env.DEV) {
     (window as unknown as { __rejplay?: { world: typeof world } }).__rejplay = { world };
@@ -1195,6 +1282,7 @@ async function boot(): Promise<void> {
   renderPlayerList();
   renderEditor();
   renderTutorial();
+  renderLive();
   applyTheme(state.theme);
   world.mount(heroStage, 'home');
 

@@ -1,6 +1,10 @@
 import * as THREE from 'three';
 import { buildDecor, type Decor } from './horror-decor';
-import { ToolViewmodel, ViewHand } from './view-hands';
+import { AvatarViewHand, FallbackViewHand, ToolViewmodel } from './view-hands';
+import type { HumanAssets } from './human';
+import type { Appearance } from './character';
+import { CHARACTER_MODELS } from './games';
+import { loadRealProps } from './real-props';
 import { neutralHandPosePair, type HandPosePair } from './hand-pose';
 
 /**
@@ -62,6 +66,8 @@ export interface HorrorState {
 export interface HorrorOptions {
   scene: THREE.Scene;
   canvas: HTMLCanvasElement;
+  assets: HumanAssets | null;
+  appearance: Appearance;
   onState: (state: HorrorState) => void;
   onFinish: (result: HorrorResult) => void;
   onPhoto?: () => void;
@@ -148,11 +154,11 @@ export class HorrorGame {
   private readonly statuses = new Map<string, 'unknown' | 'found' | 'absent'>();
   private decor: Decor | null = null;
   private readonly handPoses: HandPosePair = neutralHandPosePair();
-  private leftHand!: ViewHand;
-  private rightHand!: ViewHand;
+  private leftHand!: AvatarViewHand | FallbackViewHand;
+  private rightHand!: AvatarViewHand | FallbackViewHand;
   private toolView!: ToolViewmodel;
-  private readonly leftHolder = new THREE.Group();
-  private readonly rightHolder = new THREE.Group();
+  private assets: HumanAssets | null;
+  private appearance: Appearance;
   private skin = '#d3a377';
   private readonly velocity = new THREE.Vector3();
   private screenTimer = 0;
@@ -197,6 +203,9 @@ export class HorrorGame {
     this.onState = options.onState;
     this.onFinish = options.onFinish;
     this.onPhoto = options.onPhoto;
+    this.assets = options.assets;
+    this.appearance = { ...options.appearance };
+    this.skin = options.appearance.skin;
 
     this.camera.rotation.order = 'YXZ';
     this.scene.background = new THREE.Color(0x0a0d0f);
@@ -244,16 +253,16 @@ export class HorrorGame {
       });
     }
     this.decor = buildDecor(this.scene, WALL_SEGMENTS);
+    // Gotowe, realistyczne modele CC0 (Poly Haven) — dokładane asynchronicznie,
+    // więc nawet przy braku sieci gra uruchamia się natychmiast.
+    void loadRealProps(this.scene);
   }
 
-  /** Dłonie first-person: te same kąty palców co na awatarze w lobby. */
+  /**
+   * Dłonie first-person to wycięty fragment ORYGINALNEGO awatara (ten sam
+   * szkielet, skóra i rękaw), a nie osobny proceduralny model.
+   */
   private buildViewmodel(): void {
-    this.leftHand = new ViewHand('L', this.skin);
-    this.rightHand = new ViewHand('R', this.skin);
-    this.toolView = new ToolViewmodel();
-
-    // Renderowane po scenie gry z wyczyszczonym Z, z własnym, łagodnym
-    // oświetleniem — latarka (62 cd) nie wypala dłoni na biało.
     this.viewScene.background = null;
     this.viewCamera.position.set(0, 0, 0);
     this.viewScene.add(this.viewCamera);
@@ -265,25 +274,69 @@ export class HorrorGame {
     fill.position.set(-2, -0.5, 1.5);
     this.viewScene.add(fill);
 
-    this.leftHolder.position.set(-0.36, -0.42, -0.62);
-    this.leftHolder.rotation.set(-0.12, 0.16, 0.1);
-    this.rightHolder.position.set(0.36, -0.42, -0.62);
-    this.rightHolder.rotation.set(-0.12, -0.16, -0.1);
-    this.leftHolder.scale.setScalar(0.72);
-    this.rightHolder.scale.setScalar(0.72);
-    this.leftHolder.add(this.leftHand.root);
-    this.rightHolder.add(this.rightHand.root);
-    this.toolView.root.position.set(0, 0.07, 0.065);
-    this.toolView.root.rotation.set(0.04, 0.05, -0.1);
-    this.rightHolder.add(this.toolView.root);
-    this.viewCamera.add(this.leftHolder, this.rightHolder);
+    this.makeHands();
+    this.toolView = new ToolViewmodel();
+    this.toolView.root.position.set(-0.055, 0.23, 0.13);
+    this.toolView.root.scale.setScalar(0.7);
+    this.toolView.root.rotation.set(0.04, 0.05, -0.22);
+    this.rightHand.root.add(this.toolView.root);
+    this.viewCamera.add(this.leftHand.root, this.rightHand.root);
   }
 
-  /** Kolor skóry dłoni first-person zgodny z wybranym w edytorze. */
+  private makeHands(): void {
+    const template = this.assets?.templates[this.appearance.model];
+    const female = CHARACTER_MODELS[this.appearance.model]?.female ?? false;
+    for (const side of ['L', 'R'] as const) {
+      const base = new THREE.Vector3(side === 'L' ? -0.33 : 0.33, -0.40, -0.62);
+      const hand = template && this.assets
+        ? new AvatarViewHand({
+          template,
+          female,
+          side,
+          assets: this.assets,
+          appearance: this.appearance,
+          base,
+        })
+        : new FallbackViewHand(side, this.skin, base);
+      if (side === 'L') this.leftHand = hand;
+      else this.rightHand = hand;
+    }
+  }
+
+  /** Wygląd wybrany w edytorze — również na dłoniach w grze. */
+  setAvatar(assets: HumanAssets | null, appearance: Appearance): void {
+    const modelChanged = appearance.model !== this.appearance.model;
+    this.assets = assets;
+    this.appearance = { ...appearance };
+    this.skin = appearance.skin;
+    const template = assets?.templates[appearance.model];
+    const female = CHARACTER_MODELS[appearance.model]?.female ?? false;
+    if (this.leftHand instanceof AvatarViewHand && this.rightHand instanceof AvatarViewHand && template && assets) {
+      this.leftHand.setAppearance(appearance, female, template);
+      this.rightHand.setAppearance(appearance, female, template);
+      return;
+    }
+    if (this.leftHand instanceof FallbackViewHand) this.leftHand.setSkin(this.skin);
+    if (this.rightHand instanceof FallbackViewHand) this.rightHand.setSkin(this.skin);
+    if (modelChanged || (template && assets)) {
+      this.viewCamera.remove(this.leftHand.root, this.rightHand.root);
+      this.makeHands();
+      this.rightHand.root.add(this.toolView.root);
+      this.viewCamera.add(this.leftHand.root, this.rightHand.root);
+    }
+  }
+
+  /** Zachowana dla kompatybilności: kolor skóry ustawia teraz setAvatar. */
   setSkinColor(hex: string): void {
     this.skin = hex;
-    this.leftHand.setSkin(hex);
-    this.rightHand.setSkin(hex);
+    this.appearance = { ...this.appearance, skin: hex };
+    if (this.leftHand instanceof FallbackViewHand) this.leftHand.setSkin(hex);
+    if (this.rightHand instanceof FallbackViewHand) this.rightHand.setSkin(hex);
+    if (this.leftHand instanceof AvatarViewHand && this.rightHand instanceof AvatarViewHand && this.assets) {
+      const female = CHARACTER_MODELS[this.appearance.model]?.female ?? false;
+      this.leftHand.setAppearance(this.appearance, female);
+      this.rightHand.setAppearance(this.appearance, female);
+    }
   }
 
   /** Surowy odczyt stawów obu dłoni z kamery (bez gestów, bez animacji). */
@@ -670,9 +723,7 @@ export class HorrorGame {
     const sway = this.moving ? Math.sin(this.bob) : Math.sin(this.elapsed * 1.3) * 0.12;
     this.leftHand.apply(this.handPoses.L, realDt, sway);
     this.rightHand.apply(this.handPoses.R, realDt, -sway);
-    this.leftHolder.position.y = -0.42 + (this.moving ? Math.sin(this.bob * 2) * 0.012 : 0);
-    this.rightHolder.position.y = -0.42 + (this.moving ? Math.sin(this.bob * 2 + 0.7) * 0.012 : 0);
-    this.toolView.root.position.y = 0.07 + this.scan * 0.06 + Math.sin(this.elapsed * 2) * 0.003;
+    this.toolView.root.position.y = 0.23 + this.scan * 0.05 + Math.sin(this.elapsed * 2) * 0.003;
     this.toolView.root.rotation.z = -0.22 + sway * 0.035;
     this.screenTimer -= realDt;
     if (this.screenTimer <= 0) {
