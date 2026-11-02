@@ -3,16 +3,18 @@ import {
   BOTS,
   CHARACTER_MODELS,
   GAMES,
+  LOBBY_NAME,
   HAIR_COLORS,
-  OUTFIT_COLORS,
+  OUTFITS,
   PALETTE,
   SKIN_TONES,
   type GameInfo,
 } from './games';
-import { DEFAULT_APPEARANCE, type Appearance, type AvatarStyle } from './character';
+import { DEFAULT_APPEARANCE, type Appearance } from './character';
 import { loadHumanAssets, type HumanAssets } from './human';
 import type { HorrorResult, HorrorState } from './horror';
 import { World } from './world';
+import { HandTracker, type Gesture } from './hand-tracking';
 
 const $ = <T extends HTMLElement = HTMLElement>(selector: string): T => {
   const element = document.querySelector(selector);
@@ -58,7 +60,7 @@ function readAppearance(): Appearance {
             : DEFAULT_APPEARANCE.model,
         skin: SKIN_TONES.some((entry) => entry.value === raw.skin) ? raw.skin! : DEFAULT_APPEARANCE.skin,
         hair: HAIR_COLORS.some((entry) => entry.value === raw.hair) ? raw.hair! : DEFAULT_APPEARANCE.hair,
-        outfit: OUTFIT_COLORS.some((entry) => entry.value === raw.outfit)
+        outfit: OUTFITS.some((entry) => entry.value === raw.outfit)
           ? raw.outfit!
           : DEFAULT_APPEARANCE.outfit,
       };
@@ -70,14 +72,13 @@ function readAppearance(): Appearance {
 }
 
 const state = {
-  nick: readStored('rejplay:nick') || `Kulka_${Math.floor(10 + Math.random() * 90)}`,
+  nick: readStored('rejplay:nick') || `Gracz_${Math.floor(10 + Math.random() * 90)}`,
   color: readStored('rejplay:color') || PALETTE[0].value,
-  style: (readStored('rejplay:style') === 'balls' ? 'balls' : 'human') as AvatarStyle,
+  theme: (readStored('rejplay:theme') === 'dark' ? 'dark' : 'light') as 'dark' | 'light',
   appearance: readAppearance(),
 };
 if (!PALETTE.some((entry) => entry.value === state.color)) state.color = PALETTE[0].value;
 
-let photoModeActive = false;
 let gameReturn: 'home' | 'lobby' = 'home';
 let roundActive = false;
 
@@ -107,10 +108,6 @@ const touchControls = $('#touch-controls');
 const joystick = $('#joystick');
 const joystickKnob = $('#joystick-knob');
 const jumpButton = $<HTMLButtonElement>('#jump-btn');
-const styleSwitch = $('#style-switch');
-const heroVisual = $('#hero-visual');
-const visualFooter = $('#visual-footer');
-const photoOverlay = $('#photo-overlay');
 const bootOverlay = $('#boot-overlay');
 const modelList = $('#model-list');
 const skinList = $('#skin-list');
@@ -131,6 +128,22 @@ const hudReading = $('#hud-reading');
 const hudReadingBar = $('#hud-reading-bar');
 const hudScanBar = $('#hud-scan-bar');
 const hudHint = $('#hud-hint');
+const tutorial = $('#tutorial');
+const tutorialStepsBox = $('#tutorial-steps');
+const tutorialDots = $('#tutorial-dots');
+const tutorialTitle = $('#tutorial-title');
+const tutorialText = $('#tutorial-text');
+const tutorialGlyph = $('#tutorial-glyph');
+const tutorialCaption = $('#tutorial-caption');
+const tutorialProgress = $('#tutorial-progress');
+const tutorialPrev = $<HTMLButtonElement>('#tutorial-prev');
+const tutorialNext = $<HTMLButtonElement>('#tutorial-next');
+const handPanel = $('#hand-panel');
+const handVideo = $<HTMLVideoElement>('#hand-video');
+const handCanvas = $<HTMLCanvasElement>('#hand-canvas');
+const handGesture = $('#hand-gesture');
+const handStatus = $('#hand-status');
+const handToggles = document.querySelectorAll<HTMLElement>('[data-hand-toggle]');
 
 let world!: World;
 
@@ -150,58 +163,34 @@ function showToast(element: HTMLElement, message: string): void {
 
 // -------------------------------------------------------------- home / katalog
 
-const CATEGORY_NAMES: Record<string, string> = {
-  horror: 'Horror',
-  social: 'Towarzyskie',
-  race: 'Wyścigi',
-  platform: 'Platformówki',
-  creative: 'Kreatywne',
-};
+/** Katalog = jedna gra + wspólne lobby (hub nie jest osobną grą). */
+const CATALOG: Array<{ id: string; title: string; tag: string; art: string; ready: boolean }> = [
+  ...GAMES.map((game) => ({
+    id: game.id,
+    title: game.title,
+    tag: game.tag,
+    art: game.art,
+    ready: game.ready,
+  })),
+  { id: 'plaza', title: LOBBY_NAME, tag: '3D · Lobby', art: '', ready: true },
+];
 
-let activeCategory = 'all';
 let searchQuery = '';
-let featuredIndex = 0;
-let sortMode = 'popular';
-let featuredPaused = false;
-
-function sortGames(games: GameInfo[]): GameInfo[] {
-  const copy = [...games];
-  switch (sortMode) {
-    case 'new':
-      return copy.sort((a, b) => b.added - a.added);
-    case 'name':
-      return copy.sort((a, b) => a.title.localeCompare(b.title, 'pl'));
-    case 'rating':
-      return copy.sort((a, b) => b.likes - a.likes);
-    default:
-      return copy.sort((a, b) => b.playing - a.playing || b.waiting - a.waiting);
-  }
-}
 
 function renderGames(): void {
   const query = searchQuery.trim().toLowerCase();
-  const visible = sortGames(
-    GAMES.filter((game) => {
-      const matchesCategory = activeCategory === 'all' || game.category === activeCategory;
-      const haystack = `${game.title} ${game.tag} ${game.description} ${game.claim} ${
-        CATEGORY_NAMES[game.category] ?? ''
-      }`.toLowerCase();
-      return matchesCategory && (!query || haystack.includes(query));
-    }),
+  const visible = GAMES.filter((game) =>
+    !query || `${game.title} ${game.tag} ${game.description} ${game.claim} lobby atrium`.toLowerCase().includes(query),
   );
 
   gameGrid.innerHTML = visible
     .map((game) => {
-      const art = game.art ? `--card-art:url('${game.art}');` : '';
-      const stats = game.ready
-        ? `<span class="game-card__stat">Ocena ${game.likes}%</span>
-           <span class="game-card__stat"><span class="dot-live"></span>${game.playing} gra teraz</span>`
-        : `<span class="game-card__stat">Ocena ${game.likes}%</span>
-           <span class="game-card__stat">${game.waiting} czeka na start</span>`;
+      const stats = `<span class="game-card__stat">${escapeHtml(game.players)}</span>
+           <span class="game-card__stat">Do uruchomienia od razu</span>`;
       return `
-        <article class="game-card ${game.ready ? 'game-card--ready' : ''}" style="${art}">
+        <article class="game-card game-card--ready" style="--card-art:url('${game.art}');">
           <div class="game-card__art" aria-hidden="true">
-            <span class="game-card__badge ${game.ready ? '' : 'game-card__badge--soon'}">${game.ready ? 'Działa' : 'Wkrótce'}</span>
+            <span class="game-card__badge">Działa</span>
           </div>
           <div class="game-card__body">
             <span class="game-card__tag">${escapeHtml(game.tag)}</span>
@@ -210,13 +199,7 @@ function renderGames(): void {
             <div class="game-card__stats">${stats}</div>
             <div class="game-card__foot">
               <span class="game-card__players">◉ ${escapeHtml(game.players)}</span>
-              <button
-                type="button"
-                class="btn btn--sm ${game.ready ? 'btn--primary' : 'btn--ghost'}"
-                data-game="${game.id}"
-              >
-                ${game.ready ? 'Graj' : 'Zobacz'}
-              </button>
+              <button type="button" class="btn btn--sm btn--primary" data-game="${game.id}">Graj</button>
             </div>
           </div>
         </article>`;
@@ -225,42 +208,25 @@ function renderGames(): void {
 
   $('#shelf-empty').hidden = visible.length > 0;
   $('#shelf-count').textContent = `${visible.length} ${visible.length === 1 ? 'świat' : 'światy'}`;
-  $('#shelf-title').textContent =
-    activeCategory === 'all' ? 'Popularne teraz' : CATEGORY_NAMES[activeCategory] ?? 'Katalog';
 }
 
 function renderFeatured(): void {
-  const game = GAMES[featuredIndex];
+  const game = GAMES[0];
   $('#featured-title').textContent = game.title;
-  $('#featured-tag').textContent = CATEGORY_NAMES[game.category] ?? game.tag;
+  $('#featured-tag').textContent = game.tag;
   $('#featured-desc').textContent = game.claim;
-  $('#featured-meta').textContent = `${game.tag} · ${game.players} · Ocena ${game.likes}%`;
-  $('#featured-art').style.setProperty(
-    '--feat-art',
-    game.art ? `url('${game.art}')` : `linear-gradient(135deg, ${game.color}, ${game.accent})`,
-  );
-  $('#featured-play').textContent = game.ready ? 'Graj teraz →' : 'Zobacz świat →';
-  $('#featured-counter').textContent = `${String(featuredIndex + 1).padStart(2, '0')} / ${String(GAMES.length).padStart(2, '0')}`;
-  $('#featured-dots').innerHTML = GAMES.map(
-    (entry, i) =>
-      `<button type="button" class="${i === featuredIndex ? 'is-active' : ''}" data-featured="${i}" role="tab" aria-label="${escapeHtml(entry.title)}" aria-selected="${i === featuredIndex}"></button>`,
-  ).join('');
-}
-
-function setFeatured(index: number): void {
-  featuredIndex = (index + GAMES.length) % GAMES.length;
-  renderFeatured();
+  $('#featured-meta').textContent = `${game.tag} · ${game.players} · bez logowania`;
+  $('#featured-art').style.setProperty('--feat-art', `url('${game.art}')`);
 }
 
 function renderFriends(): void {
-  const friends = BOTS.slice(0, 3);
-  $('#friends-row').innerHTML = friends
+  $('#friends-row').innerHTML = BOTS.slice(0, 3)
     .map(
       (bot) => `
         <div class="friend">
           <span class="friend__avatar" style="--fc:${bot.color}">${escapeHtml(bot.name.slice(0, 1))}</span>
           <span>${escapeHtml(bot.name)}</span>
-          <span class="friend__status" title="online"></span>
+          <span class="friend__status" title="Bot demonstracyjny"></span>
         </div>`,
     )
     .join('');
@@ -284,24 +250,24 @@ function recordVisit(id: string): void {
 
 function renderRecent(): void {
   const recent = readRecent()
-    .map((id) => GAMES.find((game) => game.id === id))
-    .filter((game): game is GameInfo => Boolean(game));
+    .map((id) => CATALOG.find((entry) => entry.id === id))
+    .filter((entry): entry is (typeof CATALOG)[number] => Boolean(entry));
   const row = $('#recent-row');
   if (recent.length === 0) {
-    row.innerHTML = `<div class="recent-card--empty">Jeszcze nic nie odwiedziłeś. Wybierz świat z katalogu poniżej — pojawi się tutaj, żebyś mógł szybko wrócić.</div>`;
+    row.innerHTML = `<div class="recent-card--empty">Jeszcze nic nie odwiedziłeś. Uruchom dochodzenie lub wejdź do ${escapeHtml(LOBBY_NAME)} — pojawi się tutaj, żebyś mógł szybko wrócić.</div>`;
     return;
   }
   row.innerHTML = recent
-    .map((game) => {
-      const art = game.art ? `--card-art:url('${game.art}');` : '';
+    .map((entry) => {
+      const art = entry.art ? `--card-art:url('${entry.art}');` : '';
       return `
         <div class="recent-card" style="${art}">
           <span class="recent-card__art" aria-hidden="true"></span>
           <div class="recent-card__body">
-            <h3>${escapeHtml(game.title)}</h3>
-            <span>${escapeHtml(game.tag)} · ${game.ready ? 'grywalny' : 'zapowiedź'}</span>
+            <h3>${escapeHtml(entry.title)}</h3>
+            <span>${escapeHtml(entry.tag)}</span>
           </div>
-          <button type="button" class="btn btn--sm btn--primary" data-game="${game.id}">Wróć</button>
+          <button type="button" class="btn btn--sm btn--primary" data-game="${entry.id}">Wróć</button>
         </div>`;
     })
     .join('');
@@ -309,15 +275,84 @@ function renderRecent(): void {
 
 /** Jedno miejsce decyduje, co robi kliknięcie kafelka z dowolnej półki. */
 function launchGame(id: string): void {
-  const game = GAMES.find((entry) => entry.id === id);
-  if (!game) return;
-  if (game.id === 'zimny-slad') {
+  if (id === 'demonofobia') {
     openGame('home');
-  } else if (game.id === 'plaza') {
+  } else if (id === 'plaza') {
     enterLobby();
-  } else {
-    showToast(globalToast, `„${game.title}” jest jeszcze w przygotowaniu. Dodaj ją do obserwowanych!`);
   }
+}
+
+// ------------------------------------------------------------------- motyw
+
+function applyTheme(theme: 'light' | 'dark'): void {
+  state.theme = theme;
+  store('rejplay:theme', theme);
+  document.body.dataset.theme = theme;
+  document.documentElement.dataset.theme = theme;
+  const dark = theme === 'dark';
+  const button = $('#theme-toggle');
+  const label = button.querySelector<HTMLElement>('.theme-toggle__label');
+  const icon = button.querySelector<HTMLElement>('.theme-toggle__ico');
+  if (label) label.textContent = dark ? 'Tryb jasny' : 'Tryb ciemny';
+  if (icon) icon.textContent = dark ? '☀' : '☾';
+  button.setAttribute('aria-pressed', String(dark));
+  button.title = dark ? 'Wróć do trybu jasnego' : 'Przełącz tryb ciemny';
+  const meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
+  if (meta) meta.content = dark ? '#12171a' : '#f1f0ec';
+}
+
+// ------------------------------------------------------- gesty dłoni / kamerka
+
+const handTracker = new HandTracker({
+  video: handVideo,
+  canvas: handCanvas,
+  onGesture: (gesture: Gesture) => {
+    handGesture.textContent = gesture.label;
+  },
+  onStatus: (message, kind) => {
+    handStatus.textContent = message;
+    handStatus.classList.toggle('is-error', kind === 'error');
+  },
+});
+
+handTracker.onEmote = (gesture: Gesture) => {
+  world.playEmote(gesture.clip);
+  showToast(
+    lobby.classList.contains('is-active') ? lobbyToast : globalToast,
+    `${state.nick}: ${gesture.label}`,
+  );
+};
+
+function syncHandButtons(): void {
+  const on = handTracker.active;
+  handToggles.forEach((button) => button.classList.toggle('is-on', on));
+}
+
+async function openHands(): Promise<void> {
+  handPanel.classList.add('is-active');
+  handPanel.setAttribute('aria-hidden', 'false');
+  handGesture.textContent = 'Uruchamianie kamerki…';
+  handStatus.classList.remove('is-error');
+  try {
+    await handTracker.start();
+    handPanel.classList.add('is-on');
+  } catch (error) {
+    handPanel.classList.remove('is-on');
+    handGesture.textContent = 'Kamerka niedostępna';
+    handStatus.textContent = error instanceof Error ? error.message : String(error);
+    handStatus.classList.add('is-error');
+  }
+  syncHandButtons();
+}
+
+function closeHands(): void {
+  handTracker.stop();
+  handPanel.classList.remove('is-active', 'is-on');
+  handPanel.setAttribute('aria-hidden', 'true');
+  handGesture.textContent = 'Kamerka wyłączona';
+  handStatus.textContent = 'Obraz nie opuszcza przeglądarki.';
+  handStatus.classList.remove('is-error');
+  syncHandButtons();
 }
 
 function renderSwatches(): void {
@@ -361,33 +396,6 @@ function applyNick(raw: string): void {
   $('#tile-nick').textContent = state.nick;
 }
 
-function updateStyleUI(): void {
-  const human = state.style === 'human' && world.hasHumans;
-  heroVisual.classList.toggle('is-balls', !human);
-  visualFooter.textContent = human
-    ? 'Postać 3D · animacje motion capture · gesty bez VR'
-    : '6 kulek · 1 awatar · klasyczny styl';
-  styleSwitch.querySelectorAll<HTMLButtonElement>('[data-style]').forEach((button) => {
-    const active = button.dataset.style === state.style;
-    button.classList.toggle('is-active', active);
-    button.setAttribute('aria-pressed', String(active));
-  });
-}
-
-function applyStyle(style: AvatarStyle): void {
-  if (style === 'human' && !world.hasHumans) return;
-  state.style = style;
-  store('rejplay:style', style);
-  world.setStyle(style);
-  updateStyleUI();
-  showToast(
-    globalToast,
-    style === 'human'
-      ? 'Styl realistyczny: teksturowane postacie z animacjami.'
-      : 'Styl klasyczny: awatar z sześciu kulek.',
-  );
-}
-
 // ------------------------------------------------------------------- edytor
 
 function renderEditor(): void {
@@ -395,7 +403,7 @@ function renderEditor(): void {
   modelList.innerHTML = CHARACTER_MODELS.map(
     (entry, i) => `
       <button type="button" class="option ${a.model === i ? 'is-active' : ''}" data-field="model" data-index="${i}">
-        ${String(i + 1).padStart(2, '0')} · ${escapeHtml(entry.name)}
+        ${String(i + 1).padStart(2, '0')} · ${escapeHtml(entry.name)}<small>${escapeHtml(entry.look)}</small>
       </button>`,
   ).join('');
 
@@ -417,9 +425,25 @@ function renderEditor(): void {
       )
       .join('');
 
+  const outfitRow = (current: string): string =>
+    OUTFITS.map(
+      (entry) => `
+        <button
+          type="button"
+          class="option option--outfit ${current === entry.value ? 'is-active' : ''}"
+          data-field="outfit"
+          data-value="${entry.value}"
+          title="${escapeHtml(entry.description)}"
+          aria-label="${escapeHtml(entry.name)} — ${escapeHtml(entry.description)}"
+        >
+          <span class="option__swatch" style="--opt:${entry.color}"></span>
+          <span class="option__outfit"><b>${escapeHtml(entry.name)}</b><small>${escapeHtml(entry.description)}</small></span>
+        </button>`,
+    ).join('');
+
   skinList.innerHTML = colorRow(SKIN_TONES, 'skin', a.skin);
   hairList.innerHTML = colorRow(HAIR_COLORS, 'hair', a.hair);
-  outfitList.innerHTML = colorRow(OUTFIT_COLORS, 'outfit', a.outfit);
+  outfitList.innerHTML = outfitRow(a.outfit);
 }
 
 function applyAppearance(patch: Partial<Appearance>): void {
@@ -465,7 +489,7 @@ function renderPlayerList(): void {
     )
     .join('');
   playerCount.textContent = String(entries.length);
-  onlineCount.textContent = `${entries.length} graczy online`;
+  onlineCount.textContent = `${entries.length} postaci · Ty + boty demo`;
 }
 
 function addChatMessage(name: string, text: string, color?: string): void {
@@ -485,35 +509,28 @@ let chatSeeded = false;
 function seedChat(): void {
   if (chatSeeded) return;
   chatSeeded = true;
-  addChatMessage('Bąbel', 'siema! niezła postać :)', '#9db0aa');
-  addChatMessage('Sferka', 'machnij do mnie klawiszem E!', '#c8a06a');
+  addChatMessage('Ada', 'siema! fajna postać :)', '#9db0aa');
+  addChatMessage('Miko', 'machnij do mnie klawiszem E!', '#c8a06a');
   addChatMessage('RejPlay', 'To demo czatu — wiadomości zostają w Twojej karcie.');
 }
 
-function setPhotoMode(enabled: boolean): void {
-  if (!lobby.classList.contains('is-active')) return;
-  photoModeActive = enabled;
-  lobby.classList.toggle('is-photo-mode', photoModeActive);
-  photoOverlay.hidden = !photoModeActive;
-  world.setPhotoMode(photoModeActive);
-  if (photoModeActive) {
-    showToast(lobbyToast, 'Tryb aparatu · przeciągnij, żeby ustawić kadr · E = machnięcie');
-  }
-}
-
 function triggerWave(): void {
-  if (!lobby.classList.contains('is-active')) return;
+  if (game.classList.contains('is-active')) return;
   world.wave();
-  showToast(lobbyToast, `${state.nick} macha do wszystkich`);
+  showToast(
+    lobby.classList.contains('is-active') ? lobbyToast : globalToast,
+    `${state.nick} macha do wszystkich`,
+  );
 }
 
-function takePhoto(): void {
+/** Foto-dowód z wnętrza domu — ta sama klatka, inny kontekst. */
+function captureGamePhoto(): void {
   const dataUrl = world.capturePhoto();
   const link = document.createElement('a');
   link.href = dataUrl;
-  link.download = `rejplay-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.png`;
+  link.download = `demonofobia-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.png`;
   link.click();
-  showToast(lobbyToast, 'Zdjęcie zapisane');
+  showToast(gameToast, 'Foto-dowód zapisany jako PNG');
 }
 
 function enterLobby(): void {
@@ -524,31 +541,28 @@ function enterLobby(): void {
   home.setAttribute('aria-hidden', 'true');
   document.body.classList.add('in-lobby');
   document.body.classList.remove('in-game');
-  document.title = 'Plaza Kulki · RejPlay';
+  document.title = `${LOBBY_NAME} · RejPlay`;
   world.setPreviewClose(false);
   world.mount(lobbyStage, 'lobby');
   renderPlayerList();
   seedChat();
   recordVisit('plaza');
-  showToast(lobbyToast, 'Plaza Kulki · WASD = ruch, E = machnięcie, C = aparat');
+  showToast(lobbyToast, `${LOBBY_NAME} · WASD = ruch, E = machnięcie, kamerka = gesty dłoni`);
 }
 
 function goHome(): void {
   if (!lobby.classList.contains('is-active')) return;
-  photoModeActive = false;
-  lobby.classList.remove('is-active', 'is-photo-mode');
-  photoOverlay.hidden = true;
-  world.setPhotoMode(false);
+  lobby.classList.remove('is-active');
   lobby.setAttribute('aria-hidden', 'true');
   home.setAttribute('aria-hidden', 'false');
   document.body.classList.remove('in-lobby');
-  document.title = 'RejPlay — odkrywaj światy i graj';
+  document.title = 'RejPlay — Demonofobia i Atrium 3D';
   chatInput.blur();
   world.mount(heroStage, 'home');
   renderRecent();
 }
 
-// -------------------------------------------------------------- HUD Zimny Ślad
+// -------------------------------------------------------------- HUD Demonofobia
 
 let lastEvidenceSignature = '';
 let lastJournalSignature = '';
@@ -563,6 +577,7 @@ function formatTime(seconds: number): string {
 function renderHorrorState(state: HorrorState): void {
   if (!game.classList.contains('is-active') || !roundActive) return;
 
+  game.classList.toggle('is-hunting', state.hunting);
   gameTimer.textContent = formatTime(state.seconds);
   hudNerves.textContent = String(state.nerves);
   hudNervesBar.style.width = `${state.nerves}%`;
@@ -573,7 +588,9 @@ function renderHorrorState(state: HorrorState): void {
   hudReading.textContent = `${Math.round(state.reading * 100)}%`;
   hudReadingBar.style.width = `${Math.round(state.reading * 100)}%`;
   hudScanBar.style.width = `${Math.round(state.scan * 100)}%`;
-  hudHint.textContent = state.hint;
+  hudHint.textContent = `${state.hunting ? 'NALOT · ' : ''}${state.hint}`;
+  const photoCount = $('#game-photo-count');
+  if (photoCount) photoCount.textContent = String(state.photos);
 
   const evidenceSignature = state.evidence.map((entry) => `${entry.id}:${entry.status}`).join('|');
   if (evidenceSignature !== lastEvidenceSignature) {
@@ -671,6 +688,7 @@ function renderGameTools(): void {
       )
       .join('') +
     `<button type="button" class="tool-btn" data-game-action="light"><kbd>F</kbd><b>Latarka</b>włącz / wyłącz</button>
+     <button type="button" class="tool-btn" data-game-action="photo"><kbd>P</kbd><b>Foto-dowód</b>zapisz klatkę · <span id="game-photo-count">0</span></button>
      <button type="button" class="tool-btn" data-game-action="journal"><kbd>J</kbd><b>Notatnik</b>złóż raport</button>`;
 }
 
@@ -679,22 +697,131 @@ function showHorrorResult(result: HorrorResult): void {
   showToast(gameToast, result.win ? 'Raport przyjęty. Udało się rozpoznać zjawę.' : result.reason);
 }
 
+// ---------------------------------------------------------------- samouczek
+
+interface TutorialStep {
+  title: string;
+  text: string;
+  glyph: string;
+  caption: string;
+  tag: string;
+}
+
+const TUTORIAL_STEPS: TutorialStep[] = [
+  {
+    tag: 'Ruch',
+    title: 'Wejdź do domu i rozejrzyj się',
+    text: 'Klawisze W A S D prowadzą postać, a myszką rozglądasz się bez blokady kursora. Shift to krótki sprint. Na telefonie użyj joysticka po lewej i przeciągnij palcem po prawej stronie ekranu.',
+    glyph: 'W A S D',
+    caption: 'kursor zostaje wolny',
+  },
+  {
+    tag: 'Narzędzia',
+    title: 'Zabierz trzy przyrządy',
+    text: 'Termometr (1) szuka zimnego punktu, miernik pola (2) zakłóceń prądu, a rejestrator (3) szeptów. Każdy ślad ma własne miejsce w domu — zmieniaj narzędzia w trakcie obchodu.',
+    glyph: '1  2  3',
+    caption: 'trzy narzędzia, trzy ślady',
+  },
+  {
+    tag: 'Skan',
+    title: 'Przytrzymaj E przy śladzie',
+    text: 'Podejdź do punktu z aktywnym narzędziem i przytrzymaj E około sekundy. Pasek skanu się zapełni, a w notatniku pojawi się „wykryto" albo „brak". Zbadaj wszystkie trzy rodzaje śladów, zanim zgadujesz.',
+    glyph: 'E',
+    caption: 'przytrzymaj ~1 s',
+  },
+  {
+    tag: 'Foto-dowód',
+    title: 'Zrób zdjęcie klawiszem P',
+    text: 'Foto-dowód zapisuje aktualną klatkę jako plik PNG. Zdjęcie zrobione przy silnym odczycie trochę uspokaja nerwy, a podczas nalotu potrafi go przerwać, jeśli uchwycisz sylwetkę.',
+    glyph: 'P',
+    caption: 'zapis do pliku PNG',
+  },
+  {
+    tag: 'Nalot',
+    title: 'Uważaj na nalot',
+    text: 'Co jakiś czas zjawa rusza w Twoją stronę: światło migocze, nerwy spadają szybciej, a w korytarzu widać sylwetkę. Wyjdź frontowymi drzwiami, zrób jej zdjęcie albo przeczekaj kilkanaście sekund.',
+    glyph: '!',
+    caption: 'latarka F · ucieczka lub P',
+  },
+  {
+    tag: 'Notatnik',
+    title: 'Porównaj ślady z opisami',
+    text: 'Klawisz J albo Tab otwiera notatnik. Sześć autorskich zjaw ma różne zestawy śladów: jedna zostawia tylko zimno, inna wszystkie trzy. Odczytaj tabelę i wybierz pasującą.',
+    glyph: 'J',
+    caption: 'sześć typów zjaw',
+  },
+  {
+    tag: 'Raport',
+    title: 'Złóż raport i wyjdź',
+    text: 'Kliknij wybraną zjawę w notatniku. Trafny raport kończy rundę sukcesem, pomyłka kosztuje nerwy. Wyjście z gry jest zawsze pod ręką w prawym górnym rogu — Esc działa tak samo.',
+    glyph: '✓',
+    caption: 'Esc = wyjście',
+  },
+];
+
+let tutorialStep = 0;
+
+function renderTutorial(): void {
+  tutorialStepsBox.innerHTML = TUTORIAL_STEPS.map(
+    (step, i) => `<button type="button" class="tutorial__step" data-tutorial-step="${i}"><span>${String(i + 1).padStart(2, '0')}</span>${escapeHtml(step.tag)}</button>`,
+  ).join('');
+  tutorialDots.innerHTML = TUTORIAL_STEPS.map(
+    (_, i) => `<button type="button" class="tutorial__dot" data-tutorial-step="${i}" aria-label="Krok ${i + 1}"></button>`,
+  ).join('');
+  if (readStored('rejplay:tutorial')) {
+    const button = $<HTMLButtonElement>('#tutorial-open');
+    button.textContent = 'Powtórz samouczek';
+  }
+  setTutorialStep(0);
+}
+
+function setTutorialStep(index: number): void {
+  tutorialStep = Math.max(0, Math.min(TUTORIAL_STEPS.length - 1, index));
+  const step = TUTORIAL_STEPS[tutorialStep];
+  tutorialTitle.textContent = step.title;
+  tutorialText.textContent = step.text;
+  tutorialGlyph.textContent = step.glyph;
+  tutorialCaption.textContent = step.caption;
+  tutorialProgress.textContent = `${String(tutorialStep + 1).padStart(2, '0')} / ${String(TUTORIAL_STEPS.length).padStart(2, '0')}`;
+  tutorialPrev.disabled = tutorialStep === 0;
+  tutorialNext.textContent = tutorialStep === TUTORIAL_STEPS.length - 1 ? 'Rozumiem, gram' : 'Dalej';
+  for (const element of tutorial.querySelectorAll<HTMLElement>('[data-tutorial-step]')) {
+    element.classList.toggle('is-active', Number(element.dataset.tutorialStep) === tutorialStep);
+    element.setAttribute('aria-current', Number(element.dataset.tutorialStep) === tutorialStep ? 'step' : 'false');
+  }
+}
+
+function openTutorial(): void {
+  setTutorialStep(0);
+  tutorial.classList.add('is-active');
+  tutorial.setAttribute('aria-hidden', 'false');
+  tutorialNext.focus();
+}
+
+function closeTutorial(): void {
+  tutorial.classList.remove('is-active');
+  tutorial.setAttribute('aria-hidden', 'true');
+  store('rejplay:tutorial', '1');
+  const button = $<HTMLButtonElement>('#tutorial-open');
+  button.textContent = 'Powtórz samouczek';
+}
+
 // -------------------------------------------------------------- wejście do gry
 
 function openGame(from: 'home' | 'lobby'): void {
   closeEditor();
+  if (handTracker.active) closeHands();
   gameReturn = from;
   roundActive = false;
-  lobby.classList.remove('is-active', 'is-photo-mode');
+  lobby.classList.remove('is-active');
   lobby.setAttribute('aria-hidden', 'true');
-  photoOverlay.hidden = true;
   game.classList.add('is-active');
   game.setAttribute('aria-hidden', 'false');
   home.setAttribute('aria-hidden', 'true');
   document.body.classList.add('in-game');
   document.body.classList.remove('in-lobby');
-  document.title = 'Zimny Ślad · RejPlay';
-  recordVisit('zimny-slad');
+  document.title = 'Demonofobia · RejPlay';
+  recordVisit('demonofobia');
   gameIntro.hidden = false;
   gameHud.hidden = true;
   gameTools.hidden = true;
@@ -733,12 +860,12 @@ function exitGame(): void {
     lobby.classList.add('is-active');
     lobby.setAttribute('aria-hidden', 'false');
     document.body.classList.add('in-lobby');
-    document.title = 'Plaza Kulki · RejPlay';
+    document.title = `${LOBBY_NAME} · RejPlay`;
     world.mount(lobbyStage, 'lobby');
     renderPlayerList();
   } else {
     home.setAttribute('aria-hidden', 'false');
-    document.title = 'RejPlay — odkrywaj światy i graj';
+    document.title = 'RejPlay — Demonofobia i Atrium 3D';
     world.mount(heroStage, 'home');
     renderRecent();
   }
@@ -766,16 +893,6 @@ document.addEventListener('click', (event) => {
 });
 
 // Kategorie, wyszukiwarka i karuzela wyróżnionych światów
-$('.sidebar').addEventListener('click', (event) => {
-  const button = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-category]');
-  if (!button?.dataset.category) return;
-  activeCategory = button.dataset.category;
-  $('.sidebar').querySelectorAll<HTMLButtonElement>('[data-category]').forEach((entry) => {
-    entry.classList.toggle('is-active', entry === button);
-  });
-  renderGames();
-});
-
 $<HTMLInputElement>('#game-search').addEventListener('input', (event) => {
   searchQuery = (event.target as HTMLInputElement).value;
   renderGames();
@@ -790,31 +907,37 @@ window.addEventListener('keydown', (event) => {
   $<HTMLInputElement>('#game-search').focus();
 });
 
-$('#featured-dots').addEventListener('click', (event) => {
-  const button = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-featured]');
-  if (button?.dataset.featured !== undefined) setFeatured(Number(button.dataset.featured));
+$('#featured-play').addEventListener('click', () => launchGame(GAMES[0].id));
+$('#theme-toggle').addEventListener('click', () => applyTheme(state.theme === 'dark' ? 'light' : 'dark'));
+
+handToggles.forEach((button) => {
+  button.addEventListener('click', () => {
+    if (handTracker.active) closeHands();
+    else void openHands();
+  });
 });
+$('#hand-close').addEventListener('click', closeHands);
 
-$('#featured-next').addEventListener('click', () => setFeatured(featuredIndex + 1));
-$('#featured-prev').addEventListener('click', () => setFeatured(featuredIndex - 1));
-$('#featured-play').addEventListener('click', () => launchGame(GAMES[featuredIndex].id));
-
-const featured = $('#featured-card');
-featured.addEventListener('mouseenter', () => { featuredPaused = true; });
-featured.addEventListener('mouseleave', () => { featuredPaused = false; });
-
-$('#shelf-sort').addEventListener('change', (event) => {
-  sortMode = (event.target as HTMLSelectElement).value;
-  renderGames();
-});
-
-window.setInterval(() => {
-  const inFullscreenView =
-    document.body.classList.contains('in-lobby') || document.body.classList.contains('in-game');
-  if (!inFullscreenView && !editor.classList.contains('is-active') && !featuredPaused) {
-    setFeatured(featuredIndex + 1);
+document.addEventListener('click', (event) => {
+  const target = event.target as HTMLElement;
+  if (target.closest('[data-tutorial-open]')) {
+    openTutorial();
+    return;
   }
-}, 9000);
+  if (target.closest('[data-tutorial-close]')) {
+    closeTutorial();
+    return;
+  }
+  const stepButton = target.closest<HTMLElement>('[data-tutorial-step]');
+  if (stepButton?.dataset.tutorialStep !== undefined) {
+    setTutorialStep(Number(stepButton.dataset.tutorialStep));
+  }
+});
+tutorialPrev.addEventListener('click', () => setTutorialStep(tutorialStep - 1));
+tutorialNext.addEventListener('click', () => {
+  if (tutorialStep === TUTORIAL_STEPS.length - 1) closeTutorial();
+  else setTutorialStep(tutorialStep + 1);
+});
 
 gameGrid.addEventListener('click', (event) => {
   const button = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-game]');
@@ -822,6 +945,11 @@ gameGrid.addEventListener('click', (event) => {
 });
 
 $('#recent-row').addEventListener('click', (event) => {
+  const button = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-game]');
+  if (button?.dataset.game) launchGame(button.dataset.game);
+});
+
+$('#hub-card').addEventListener('click', (event) => {
   const button = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-game]');
   if (button?.dataset.game) launchGame(button.dataset.game);
 });
@@ -849,18 +977,7 @@ chatForm.addEventListener('submit', (event) => {
   chatInput.value = '';
 });
 
-styleSwitch.addEventListener('click', (event) => {
-  const button = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-style]');
-  if (button?.dataset.style === 'human' || button?.dataset.style === 'balls') {
-    applyStyle(button.dataset.style);
-  }
-});
-
 $('#wave-btn').addEventListener('click', triggerWave);
-$('#camera-btn').addEventListener('click', () => setPhotoMode(!photoModeActive));
-$('#photo-wave').addEventListener('click', triggerWave);
-$('#photo-shoot').addEventListener('click', takePhoto);
-$('#photo-close').addEventListener('click', () => setPhotoMode(false));
 $('#play-horror').addEventListener('click', () => openGame('lobby'));
 
 // Edytor
@@ -879,7 +996,7 @@ $('#editor-reset').addEventListener('click', () => {
   showToast(globalToast, 'Wygląd przywrócony do ustawień domyślnych.');
 });
 
-// Zimny Ślad
+// Demonofobia
 $('#game-start').addEventListener('click', startGameRound);
 $('#game-cancel').addEventListener('click', exitGame);
 $('#game-leave').addEventListener('click', exitGame);
@@ -890,6 +1007,7 @@ gameTools.addEventListener('click', (event) => {
   button.blur();
   if (button.dataset.tool !== undefined) world.horror.selectTool(Number(button.dataset.tool));
   else if (button.dataset.gameAction === 'light') world.horror.toggleFlashlight();
+  else if (button.dataset.gameAction === 'photo') world.horror.photo();
   else if (button.dataset.gameAction === 'journal') world.horror.toggleJournal();
 });
 
@@ -911,6 +1029,16 @@ gameResult.addEventListener('click', (event) => {
 });
 
 window.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && handPanel.classList.contains('is-active')) {
+    closeHands();
+    return;
+  }
+  if (tutorial.classList.contains('is-active')) {
+    if (event.key === 'Escape') closeTutorial();
+    else if (event.key === 'ArrowRight') setTutorialStep(tutorialStep + 1);
+    else if (event.key === 'ArrowLeft') setTutorialStep(tutorialStep - 1);
+    return;
+  }
   if (editor.classList.contains('is-active')) {
     if (event.key === 'Escape') closeEditor();
     return;
@@ -927,17 +1055,12 @@ window.addEventListener('keydown', (event) => {
   if (!lobby.classList.contains('is-active')) return;
   if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return;
   if (event.key === 'Escape') {
-    if (photoModeActive) setPhotoMode(false);
-    else goHome();
+    goHome();
     return;
   }
   if (event.code === 'KeyE') {
     event.preventDefault();
     triggerWave();
-  }
-  if (event.code === 'KeyC') {
-    event.preventDefault();
-    setPhotoMode(!photoModeActive);
   }
 });
 
@@ -1006,7 +1129,7 @@ function bindTouchControls(): void {
 
 function wireWorld(): void {
   world.onPortalSelect((id) => {
-    if (id === 'zimny-slad') {
+    if (id === 'demonofobia') {
       openGame('lobby');
       return;
     }
@@ -1026,8 +1149,6 @@ async function boot(): Promise<void> {
   } catch (error) {
     console.warn('Nie udało się wczytać modeli postaci:', error);
   }
-  if (!assets) state.style = 'balls';
-
   renderGameTools();
   gameHud.hidden = true;
   gameTools.hidden = true;
@@ -1039,14 +1160,15 @@ async function boot(): Promise<void> {
     color: state.color,
     name: state.nick,
     assets,
-    style: state.style,
     appearance: state.appearance,
     onHorrorState: renderHorrorState,
     onHorrorFinish: showHorrorResult,
+    onHorrorPhoto: captureGamePhoto,
   });
   wireWorld();
 
   nickInput.value = state.nick;
+  $('#hub-name').textContent = LOBBY_NAME;
   $('#chip-nick').textContent = state.nick;
   $('#chip-avatar').textContent = state.nick.slice(0, 1).toUpperCase();
   $('#tile-nick').textContent = state.nick;
@@ -1057,15 +1179,14 @@ async function boot(): Promise<void> {
   renderSwatches();
   renderPlayerList();
   renderEditor();
+  renderTutorial();
+  applyTheme(state.theme);
   world.mount(heroStage, 'home');
-  updateStyleUI();
 
   if (coarse) bindTouchControls();
 
   if (!assets) {
-    const humanButton = styleSwitch.querySelector<HTMLButtonElement>('[data-style="human"]');
-    if (humanButton) humanButton.disabled = true;
-    showToast(globalToast, 'Nie udało się wczytać postaci — dostępny styl klasyczny z kulek.');
+    showToast(globalToast, 'Nie udało się wczytać modeli postaci — używam neutralnego podglądu zastępczego.');
   }
 
   bootOverlay.classList.add('is-done');

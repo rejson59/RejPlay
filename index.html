@@ -1,28 +1,76 @@
 <!doctype html>
-<html lang="pl">
+<html lang="pl" data-theme="light">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#f1f0ec" />
     <meta
       name="description"
-      content="RejPlay — przeglądarkowa platforma gier 3D. Odkrywaj światy, edytuj realistyczną postać, spotkaj się w lobby i zagraj w Zimny Ślad."
+      content="RejPlay — przeglądarkowa platforma 3D. Jedna autorska gra dochodzeniowa Demonofobia, wspólne lobby Atrium, edytor postaci, samouczek i gesty dłoni przez kamerę."
     />
-    <link
-      rel="icon"
-      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%23141819'/%3E%3Cpath d='M18 46V18h16a9 9 0 0 1 0 18h-8l12 10' fill='none' stroke='%23c8a06a' stroke-width='5' stroke-linecap='square'/%3E%3C/svg%3E"
-    />
-    <title>RejPlay — odkrywaj światy i graj</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='15' fill='%23141a1c'/%3E%3Cpath d='M32 9 55 32 32 55 9 32Z' fill='none' stroke='%23c8a06a' stroke-width='3' stroke-linejoin='round'/%3E%3Cpath d='M27 23 42 32 27 41Z' fill='%23e4c99e'/%3E%3Ccircle cx='32' cy='9' r='4.2' fill='%23e4c99e'/%3E%3C/svg%3E" />
+    <title>RejPlay — Demonofobia i Atrium 3D</title>
+
+    <!-- Motyw ZANIM pojawi się CSS: bez tego ciemny motyw mruga na jasno. -->
+    <script>
+      (function () {
+        var theme = 'light';
+        try { theme = localStorage.getItem('rejplay:theme') === 'dark' ? 'dark' : 'light'; } catch (e) {}
+        document.documentElement.dataset.theme = theme;
+        var meta = document.querySelector('meta[name="theme-color"]');
+        if (meta) meta.content = theme === 'dark' ? '#111719' : '#f1f0ec';
+      })();
+    </script>
+
+    <!-- Krytyczny CSS inline: arkusz główny ładuje się przez <link>, ale zanim
+         dotrze, pokazujemy tylko ekran startowy zamiast nieostylowanego HTML.
+         Dzięki temu nie ma ani sekundy "gołej" strony (FOUC). -->
+    <style>
+      html, body { margin: 0; min-height: 100vh; }
+      html[data-theme='light'] { background: #f1f0ec; color: #1b2021; }
+      html[data-theme='dark'] { background: #111719; color: #eae7e0; }
+      .boot {
+        position: fixed;
+        inset: 0;
+        z-index: 9999;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 14px;
+        background: #f1f0ec;
+        color: #1b2021;
+        font: 500 14px/1.5 ui-sans-serif, system-ui, sans-serif;
+        letter-spacing: 0.02em;
+      }
+      html[data-theme='dark'] .boot { background: #111719; color: #eae7e0; }
+      .boot__mark { width: 58px; height: 58px; flex: none; }
+    </style>
   </head>
   <body>
+    <!-- Jeden symbol logotypu użyty w kilku miejscach (bez plików graficznych). -->
+    <svg class="svg-sprite" aria-hidden="true" focusable="false" width="0" height="0">
+      <defs>
+        <linearGradient id="rp-gold" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stop-color="#e8cf9f" />
+          <stop offset="1" stop-color="#a97f4c" />
+        </linearGradient>
+        <symbol id="rp-mark" viewBox="0 0 64 64">
+          <rect x="2" y="2" width="60" height="60" rx="15" fill="#141a1c" />
+          <path d="M32 9 55 32 32 55 9 32Z" fill="none" stroke="url(#rp-gold)" stroke-width="3" stroke-linejoin="round" />
+          <path d="M27 23 42 32 27 41Z" fill="url(#rp-gold)" />
+          <circle cx="32" cy="9" r="4.2" fill="#e8cf9f" />
+        </symbol>
+      </defs>
+    </svg>
     <div id="app">
       <!-- ======================= EKRAN GŁÓWNY ======================= -->
       <section id="home" class="screen home">
         <header class="topbar">
           <div class="topbar__inner wrap">
             <a class="brand" href="#top" aria-label="RejPlay — strona główna">
-              <span class="brand__mark" aria-hidden="true">R</span>
-              <span>Rej<span>Play</span></span>
+              <svg class="brand__mark" viewBox="0 0 64 64" aria-hidden="true"><use href="#rp-mark" /></svg>
+              <span class="brand__word">Rej<span>Play</span></span>
+              <span class="brand__tag">3D</span>
             </a>
 
             <div class="search">
@@ -45,9 +93,17 @@
             </nav>
 
             <div class="topbar__right">
+              <button type="button" class="icon-toggle" data-hand-toggle title="Gesty dłoni przez kamerę" aria-label="Włącz gesty dłoni przez kamerę">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 13V5.5a1.5 1.5 0 0 1 3 0V11m0-4.5a1.5 1.5 0 0 1 3 0V11m0-3.5a1.5 1.5 0 0 1 3 0V12m0-2a1.5 1.5 0 0 1 3 0v4.5c0 3.6-2.4 6.5-6 6.5h-1.2c-1.7 0-3.2-.8-4.2-2.2L5 15.4a1.6 1.6 0 0 1 2.4-2.1L8 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                <span class="icon-toggle__label">Gesty dłoni</span>
+              </button>
+              <button type="button" class="theme-toggle" id="theme-toggle" aria-pressed="false" title="Przełącz tryb ciemny">
+                <span class="theme-toggle__ico" aria-hidden="true">☾</span>
+                <span class="theme-toggle__label">Tryb ciemny</span>
+              </button>
               <button type="button" class="profile-chip" data-action="open-editor" title="Edytuj postać">
                 <span class="profile-chip__avatar" id="chip-avatar" aria-hidden="true">K</span>
-                <span class="profile-chip__name" id="chip-nick">Kulka_24</span>
+                <span class="profile-chip__name" id="chip-nick">Gracz</span>
               </button>
               <button type="button" class="btn btn--sm btn--primary" data-action="enter-lobby">
                 Wejdź do lobby
@@ -76,31 +132,22 @@
             </div>
 
             <div class="sidebar__group">
-              <span class="sidebar__label">Kategorie</span>
-              <button type="button" class="sidebar__link is-active" data-category="all">
-                <span class="sidebar__ico">·</span> Wszystkie
+              <span class="sidebar__label">Na start</span>
+              <button type="button" class="sidebar__link" data-tutorial-open>
+                <span class="sidebar__ico">?</span> Samouczek gry
               </button>
-              <button type="button" class="sidebar__link" data-category="horror">
-                <span class="sidebar__ico">◐</span> Horror
+              <button type="button" class="sidebar__link" data-hand-toggle>
+                <span class="sidebar__ico">✋</span> Gesty dłoni · kamerka
               </button>
-              <button type="button" class="sidebar__link" data-category="social">
-                <span class="sidebar__ico">○○</span> Towarzyskie
-              </button>
-              <button type="button" class="sidebar__link" data-category="race">
-                <span class="sidebar__ico">→</span> Wyścigi
-              </button>
-              <button type="button" class="sidebar__link" data-category="platform">
-                <span class="sidebar__ico">▤</span> Platformówki
-              </button>
-              <button type="button" class="sidebar__link" data-category="creative">
-                <span class="sidebar__ico">✎</span> Kreatywne
-              </button>
+              <a class="sidebar__link" href="#how">
+                <span class="sidebar__ico">≡</span> Jak to działa
+              </a>
             </div>
 
             <div class="friends">
               <div class="friends__head">
-                <span>Znajomi online</span>
-                <span class="friends__count">3</span>
+                <span>Boty demonstracyjne</span>
+                <span class="friends__count">4</span>
               </div>
               <div class="friends__row" id="friends-row"></div>
             </div>
@@ -116,10 +163,13 @@
           <main class="home-main">
             <div class="home-heading">
               <div>
-                <h1>Odkryj światy RejPlay</h1>
-                <p>Gry 3D w przeglądarce. Wybierz świat, dostosuj postać i wchodź.</p>
+                <h1>Demonofobia czeka</h1>
+                <p>Jedna gra dochodzeniowa, wspólne lobby 3D i Twój awatar. Bez kont i instalacji.</p>
               </div>
-              <span class="home-heading__badge"><span class="dot"></span> 2 światy grywalne</span>
+              <div class="home-heading__actions">
+                <button type="button" class="btn btn--ghost" id="tutorial-open" data-tutorial-open>Jak grać? · samouczek</button>
+                <span class="home-heading__badge"><span class="dot"></span> 1 gra + lobby 3D</span>
+              </div>
             </div>
 
             <!-- Wyróżniony świat: obraz jest tylko w kafelku, nigdy w tle strony -->
@@ -127,21 +177,19 @@
               <div class="featured__card" id="featured-card">
                 <div class="featured__content">
                   <span class="featured__eyebrow">Wyróżniony świat · <span id="featured-tag">Horror</span></span>
-                  <h2 id="featured-title">Zimny Ślad</h2>
+                  <h2 id="featured-title">Demonofobia</h2>
                   <p id="featured-desc"></p>
                   <div class="featured__meta" id="featured-meta"></div>
                   <div class="featured__actions">
                     <button type="button" class="btn btn--primary" id="featured-play">Graj teraz <span aria-hidden="true">→</span></button>
-                    <button type="button" class="btn btn--ghost" id="featured-prev" aria-label="Poprzedni świat">←</button>
-                    <button type="button" class="btn btn--ghost" id="featured-next" aria-label="Następny świat">→</button>
-                    <span class="featured__counter" id="featured-counter">01 / 06</span>
+                    <button type="button" class="btn btn--ghost" data-tutorial-open>Samouczek</button>
+                    <span class="featured__counter" id="featured-counter">01 / 01</span>
                   </div>
                 </div>
                 <div class="featured__art" id="featured-art" aria-hidden="true"></div>
               </div>
               <div class="featured__footer">
-                <div class="featured__dots" id="featured-dots" role="tablist" aria-label="Wyróżnione światy"></div>
-                <span class="featured__live"><span class="dot"></span> 214 osób gra teraz na RejPlay</span>
+                <span class="featured__live"><span class="dot"></span> Autorska gra RejPlay · tryb jednoosobowy, bez serwera i bez rankingu</span>
               </div>
             </section>
 
@@ -165,20 +213,23 @@
                   <h2 id="shelf-title">Popularne teraz</h2>
                 </div>
                 <div class="shelf__right">
-                  <span class="shelf__count" id="shelf-count">6 światów</span>
-                  <label class="shelf__sort" for="shelf-sort">
-                    <span>Sortuj</span>
-                    <select id="shelf-sort" aria-label="Sortowanie katalogu">
-                      <option value="popular">Popularność</option>
-                      <option value="new">Najnowsze</option>
-                      <option value="name">Nazwa A–Z</option>
-                      <option value="rating">Najlepiej oceniane</option>
-                    </select>
-                  </label>
+                  <span class="shelf__count" id="shelf-count">1 świat</span>
                 </div>
               </div>
               <div class="game-grid" id="game-grid"></div>
               <p class="shelf__empty" id="shelf-empty" hidden>Nie znaleziono świata o tej nazwie. Spróbuj innej frazy.</p>
+
+              <div class="hub-card" id="hub-card">
+                <div class="hub-card__art" aria-hidden="true">
+                  <svg viewBox="0 0 64 64"><use href="#rp-mark" /></svg>
+                </div>
+                <div class="hub-card__body">
+                  <span class="section__kicker">Wspólny punkt zbiórki</span>
+                  <h3 id="hub-name">Atrium</h3>
+                  <p>Lobby 3D nie jest osobną grą. Cztery postacie to boty demonstracyjne — nikt inny nie jest podłączony. Możesz do nich machnąć klawiszem E albo wypróbować gesty dłoni przez kamerę.</p>
+                  <button type="button" class="btn btn--sm btn--primary" data-game="plaza">Wejdź do lobby</button>
+                </div>
+              </div>
             </section>
 
             <!-- Postać + konfiguracja -->
@@ -192,10 +243,11 @@
                 </div>
                 <div class="character-tile__info">
                   <span class="section__kicker">Twoja postać</span>
-                  <h2 id="tile-nick">Kulka_24</h2>
+                  <h2 id="tile-nick">Gracz</h2>
                   <p>
-                    Sześć sylwetek, odcień skóry, kolor włosów i ubioru nakładane na teksturowane
-                    modele 3D. Zmiany widać od razu w podglądzie, lobby i grze.
+                    Trzynaście gotowych postaci Rocketbox (w tym dziewięć męskich),
+                    odcień skóry, prawdziwy kolor włosów i osiem gotowych strojów.
+                    Zmiany widać od razu w podglądzie, lobby i grze.
                   </p>
                   <div class="character-tile__actions">
                     <button type="button" class="btn btn--primary" data-action="open-editor">Edytuj postać</button>
@@ -219,17 +271,9 @@
                       maxlength="16"
                       autocomplete="nickname"
                       spellcheck="false"
-                      placeholder="Kulka_42"
+                      placeholder="Gracz_42"
                     />
                   </label>
-
-                  <div class="field">
-                    <span>Styl postaci</span>
-                    <div class="style-switch" id="style-switch" role="group" aria-label="Styl awatara">
-                      <button type="button" class="style-switch__btn is-active" data-style="human">Realistyczny</button>
-                      <button type="button" class="style-switch__btn" data-style="balls">Kulki · klasyk</button>
-                    </div>
-                  </div>
 
                   <div class="field">
                     <span>Akcent kolorystyczny</span>
@@ -237,14 +281,14 @@
                   </div>
 
                   <p class="creator__note">
-                    Machnięcie <kbd>E</kbd> · aparat <kbd>C</kbd> · bez VR. Klasyczny awatar
-                    z sześciu kulek zostaje jako styl alternatywny.
+                    Machnięcie <kbd>E</kbd> · gesty dłoni z kamerki · bez VR. Wygląd
+                    zapisuje się w tej przeglądarce i obowiązuje też w lobby oraz w grze.
                   </p>
                 </div>
 
                 <div class="facts">
-                  <div><strong>6</strong><span>sylwetek</span></div>
-                  <div><strong>18</strong><span>barw</span></div>
+                  <div><strong>13</strong><span>sylwetek · 9 męskich</span></div>
+                  <div><strong>8</strong><span>gotowych strojów</span></div>
                   <div><strong>1</strong><span>renderer WebGL</span></div>
                   <p>
                     Modele: Microsoft Rocketbox (MIT). To rigowane postacie 3D, nie
@@ -256,11 +300,11 @@
 
             <section class="how" id="how">
               <span class="section__kicker">Jak to działa</span>
-              <h2>Jedna przeglądarka, jeden awatar, wiele światów</h2>
+              <h2>Jedna przeglądarka, jeden awatar, jedno dochodzenie</h2>
               <div class="how__grid">
                 <div><span>01</span><h3>Stwórz postać</h3><p>Wybierz sylwetkę, skórę, włosy i ubranie w edytorze. Ustawienia zapisują się w przeglądarce.</p></div>
-                <div><span>02</span><h3>Wejdź do lobby</h3><p>Plaza Kulki to wspólny punkt zbiórki: pomachaj znajomym i zrób zdjęcie w trybie kamery.</p></div>
-                <div><span>03</span><h3>Wybierz świat</h3><p>Kliknij kafelek gry. Zimny Ślad to pierwsza pełna, grywalna produkcja platformy.</p></div>
+                <div><span>02</span><h3>Wejdź do lobby</h3><p>Atrium to scena demonstracyjna z botami: pomachaj im klawiszem E lub użyj gestów dłoni z kamerki.</p></div>
+                <div><span>03</span><h3>Wybierz świat</h3><p>Kliknij kafelek gry. Demonofobia to jedyna grywalna produkcja w tym prototypie.</p></div>
               </div>
             </section>
           </main>
@@ -273,7 +317,7 @@
       </section>
 
       <!-- ============================ LOBBY ============================ -->
-      <section id="lobby" class="lobby" aria-hidden="true" aria-label="Lobby Plaza Kulki">
+      <section id="lobby" class="lobby" aria-hidden="true" aria-label="Lobby Atrium">
         <div id="lobby-stage" class="stage stage--lobby"></div>
         <div class="lobby__vignette" aria-hidden="true"></div>
 
@@ -281,11 +325,11 @@
           <button type="button" class="btn btn--sm btn--glass" id="back-home">← Ekran główny</button>
           <div class="lobby__title">
             <span>RejPlay · Lobby</span>
-            <h2>Plaza Kulki</h2>
+            <h2>Atrium</h2>
           </div>
           <div class="status-pill status-pill--glass">
             <span class="dot"></span>
-            <span id="online-count">5 graczy online</span>
+            <span id="online-count">5 postaci · Ty + boty demo</span>
           </div>
         </header>
 
@@ -295,7 +339,7 @@
         </aside>
 
         <aside class="panel panel--chat">
-          <h3>Czat <span class="panel__tag">demo · lokalny</span></h3>
+          <h3>Czat <span class="panel__tag">demo · tylko ta karta</span></h3>
           <div class="chat__log" id="chat-log" aria-live="polite"></div>
           <form id="chat-form" autocomplete="off">
             <input id="chat-input" type="text" maxlength="80" placeholder="Napisz coś..." aria-label="Wiadomość na czacie" />
@@ -307,16 +351,15 @@
           <div><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd><span>ruch</span></div>
           <div><kbd>Spacja</kbd><span>skok</span></div>
           <div><kbd>E</kbd><span>machnięcie</span></div>
-          <div><kbd>C</kbd><span>tryb kamery</span></div>
           <div><kbd>przeciągnij</kbd><span>obrót kamery</span></div>
-          <p>Kliknij plakat przy bramie, żeby wybrać świat.</p>
+          <p>Kliknij „Demonofobia · graj”, żeby rozpocząć dochodzenie.</p>
         </div>
 
         <div class="lobby__tools" id="lobby-tools">
           <button type="button" class="btn btn--sm btn--glass" id="wave-btn">Machaj <kbd>E</kbd></button>
-          <button type="button" class="btn btn--sm btn--glass" id="camera-btn">Aparat <kbd>C</kbd></button>
+          <button type="button" class="btn btn--sm btn--glass" data-hand-toggle>Gesty dłoni · kamerka</button>
           <button type="button" class="btn btn--sm btn--accent" id="play-horror">
-            Zimny Ślad · graj <span aria-hidden="true">→</span>
+            Demonofobia · graj <span aria-hidden="true">→</span>
           </button>
         </div>
 
@@ -327,26 +370,11 @@
           <button type="button" class="jump-btn" id="jump-btn">Skok</button>
         </div>
 
-        <div class="photo" id="photo-overlay" hidden>
-          <div class="photo__frame" aria-hidden="true">
-            <span class="photo__corner photo__corner--tl"></span>
-            <span class="photo__corner photo__corner--tr"></span>
-            <span class="photo__corner photo__corner--bl"></span>
-            <span class="photo__corner photo__corner--br"></span>
-          </div>
-          <div class="photo__top">TRYB APARATU · przeciągnij, żeby ustawić kadr · kółko myszki = zoom</div>
-          <div class="photo__bottom">
-            <button type="button" class="btn btn--primary" id="photo-shoot">Zrób zdjęcie</button>
-            <button type="button" class="btn btn--glass" id="photo-wave">Machaj</button>
-            <button type="button" class="btn btn--glass" id="photo-close">Zamknij <kbd>C</kbd></button>
-          </div>
-        </div>
-
         <div class="toast toast--lobby" id="lobby-toast" role="status"></div>
       </section>
 
-      <!-- ========================= ZIMNY ŚLAD ========================= -->
-      <section id="game" class="game" aria-hidden="true" aria-label="Zimny Ślad">
+      <!-- ========================= DEMONOFOBIA ========================= -->
+      <section id="game" class="game" aria-hidden="true" aria-label="Demonofobia">
         <div id="game-stage" class="stage stage--game"></div>
         <div class="game__vignette" aria-hidden="true"></div>
         <div class="game__grain" aria-hidden="true"></div>
@@ -354,7 +382,7 @@
         <header class="game__top">
           <button type="button" class="btn btn--sm btn--glass" id="game-leave">← Wyjdź</button>
           <div class="game__title">
-            <span>ZIMNY ŚLAD</span>
+            <span>DEMONOFOBIA</span>
             <small>Wrzosowa 12 · dochodzenie nocne</small>
           </div>
           <div class="game__timer" id="game-timer">00:00</div>
@@ -400,7 +428,7 @@
         <div class="game__intro" id="game-intro">
           <div class="intro__card">
             <span class="section__kicker">Autorska gra dochodzeniowa</span>
-            <h2>Zimny Ślad</h2>
+            <h2>Demonofobia</h2>
             <p>
               Dom przy Wrzosowej 12 jest pusty od lat, ale coś w nim zostawia ślady.
               Wejdź z latarką, przeszukaj cztery pokoje, zbierz dowody trzema
@@ -409,7 +437,7 @@
             <ul class="intro__keys">
               <li><kbd>W A S D</kbd> ruch · <kbd>mysz</kbd> rozglądanie (bez blokady kursora)</li>
               <li><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> narzędzia · <kbd>E</kbd> przytrzymaj, aby skanować</li>
-              <li><kbd>F</kbd> latarka · <kbd>J</kbd> notatnik · <kbd>Shift</kbd> bieg</li>
+              <li><kbd>F</kbd> latarka · <kbd>P</kbd> foto-dowód · <kbd>J</kbd> notatnik · <kbd>Shift</kbd> bieg</li>
             </ul>
             <p class="intro__note">
               Oryginalna gra RejPlay. Nie zawiera nazw, postaci ani materiałów z innych
@@ -417,7 +445,8 @@
             </p>
             <div class="intro__actions">
               <button type="button" class="btn btn--primary" id="game-start">Rozpocznij dochodzenie</button>
-              <button type="button" class="btn btn--ghost" id="game-cancel">Wróć do lobby</button>
+              <button type="button" class="btn btn--ghost" data-tutorial-open>Samouczek · 7 kroków</button>
+              <button type="button" class="btn btn--ghost" id="game-cancel">Wróć</button>
             </div>
           </div>
         </div>
@@ -457,12 +486,13 @@
                 <div class="option-grid" id="hair-list"></div>
               </section>
               <section class="editor__group">
-                <h3>Ubranie</h3>
+                <h3>Ubranie · gotowe stroje Rocketbox</h3>
                 <div class="option-grid" id="outfit-list"></div>
               </section>
               <p class="editor__hint">
-                Zmiany zapisują się automatycznie i dotyczą też postaci w lobby oraz w grze.
-                Kolor tekstur jest modyfikowany, więc zachowane są cienie, fałdy i detale twarzy.
+                Włosy dostają prawdziwy kolor na całej głowie (maska fryzury),
+                a ubrania to oryginalne, gotowe tekstury z paczki Rocketbox —
+                nie dorabiane mesh'y ani nakładki koloru. Zmiany zapisują się automatycznie.
               </p>
               <div class="editor__actions">
                 <button type="button" class="btn btn--ghost" id="editor-reset">Przywróć domyślne</button>
@@ -473,10 +503,59 @@
         </div>
       </div>
 
+
+      <!-- ========================= SAMOUCZEK ========================= -->
+      <div id="tutorial" class="tutorial" aria-hidden="true">
+        <div class="tutorial__backdrop" data-tutorial-close></div>
+        <div class="tutorial__panel" role="dialog" aria-modal="true" aria-labelledby="tutorial-title">
+          <div class="tutorial__visual" aria-hidden="true">
+            <span class="tutorial__visual-ring"></span>
+            <span class="tutorial__glyph" id="tutorial-glyph">W A S D</span>
+            <span class="tutorial__caption" id="tutorial-caption">kursor zostaje wolny</span>
+          </div>
+          <div class="tutorial__body">
+            <button type="button" class="tutorial__x" data-tutorial-close aria-label="Zamknij samouczek">×</button>
+            <span class="section__kicker">Samouczek · Demonofobia</span>
+            <span class="tutorial__progress" id="tutorial-progress">01 / 07</span>
+            <h2 id="tutorial-title">Wejdź do domu i rozejrzyj się</h2>
+            <p id="tutorial-text"></p>
+            <div class="tutorial__steps" id="tutorial-steps"></div>
+            <div class="tutorial__dots" id="tutorial-dots"></div>
+            <div class="tutorial__actions">
+              <button type="button" class="btn btn--ghost" id="tutorial-prev">Wstecz</button>
+              <button type="button" class="btn btn--ghost" data-tutorial-close>Pomiń</button>
+              <button type="button" class="btn btn--primary" id="tutorial-next">Dalej</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ======================= GESTY DŁONI (KAMERKA) ======================= -->
+      <div id="hand-panel" class="hand-panel" aria-hidden="true">
+        <div class="hand-panel__head">
+          <span class="hand-panel__title"><span class="dot"></span> Przechwytywanie dłoni</span>
+          <button type="button" class="hand-panel__close" id="hand-close" aria-label="Wyłącz kamerę">×</button>
+        </div>
+        <div class="hand-panel__view">
+          <video id="hand-video" playsinline muted autoplay></video>
+          <canvas id="hand-canvas" aria-hidden="true"></canvas>
+          <span class="hand-panel__placeholder" id="hand-placeholder">Podgląd z kamerki</span>
+        </div>
+        <div class="hand-panel__readout">
+          <span class="hand-panel__gesture" id="hand-gesture">Kamerka wyłączona</span>
+          <span class="hand-panel__status" id="hand-status">Obraz nie opuszcza przeglądarki.</span>
+        </div>
+        <div class="hand-panel__legend">
+          <span><kbd>✋</kbd> machnięcie</span><span><kbd>✊</kbd> stuknięcie</span>
+          <span><kbd>☝</kbd> sięgnięcie</span><span><kbd>✌</kbd> rozmowa</span>
+          <span><kbd>👍</kbd> rozejrzenie</span>
+        </div>
+      </div>
+
       <div class="toast toast--global" id="global-toast" role="status"></div>
 
       <div class="boot" id="boot-overlay">
-        <span class="boot__mark" aria-hidden="true">R</span>
+        <svg class="boot__mark" viewBox="0 0 64 64" aria-hidden="true"><use href="#rp-mark" /></svg>
         <span>Wczytywanie postaci…</span>
       </div>
     </div>

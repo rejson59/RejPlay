@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { createLabel, scaleLabelToDistance, type LabelHandle } from './avatar';
-import { Character, type Appearance, type AvatarStyle } from './character';
+import { Character, type Appearance } from './character';
 import type { HumanAssets } from './human';
 import { HorrorGame, type HorrorResult, type HorrorState } from './horror';
 import { BOTS, GAMES, PALETTE } from './games';
@@ -82,7 +82,7 @@ function approachAngle(current: number, target: number, factor: number): number 
 }
 
 /**
- * Jeden renderer, dwie sceny: podgląd awatara na home screenie oraz lobby 3D.
+ * Jeden renderer, trzy sceny: podgląd awatara, lobby 3D oraz gra dochodzeniowa.
  * Dzięki temu przeglądarka trzyma tylko jeden kontekst WebGL.
  */
 export class World {
@@ -98,7 +98,6 @@ export class World {
   private readonly player: Character;
   private readonly bots: Bot[] = [];
   private readonly assets: HumanAssets | null;
-  private style: AvatarStyle;
   private readonly portals: Portal[] = [];
   private readonly heroOrbs: Orb[] = [];
   private readonly centerpiece = new THREE.Group();
@@ -115,6 +114,8 @@ export class World {
   private mode: Mode = 'home';
   private elapsed = 0;
   private heroAngle = 0.55;
+  /** Obrót samej postaci w edytorze — niezależny od kamery i świateł. */
+  private previewAngle = 0.35;
   private yaw = 0.35;
   private pitch = 0.3;
   private dragging = false;
@@ -127,22 +128,17 @@ export class World {
   private previewClose = false;
   private portalHandler: ((id: string) => void) | undefined;
   private waveHandler: ((name: string) => void) | undefined;
-  private photoMode = false;
-  private photoYaw = 0.35;
-  private photoPitch = 0.12;
-  private photoDistance = 4.2;
 
   constructor(options: {
     color: string;
     name: string;
     assets: HumanAssets | null;
-    style: AvatarStyle;
     appearance: Appearance;
     onHorrorState?: (state: HorrorState) => void;
     onHorrorFinish?: (result: HorrorResult) => void;
+    onHorrorPhoto?: () => void;
   }) {
     this.assets = options.assets;
-    this.style = options.style;
     this.renderer = new THREE.WebGLRenderer({
       antialias: true,
       alpha: true,
@@ -163,14 +159,13 @@ export class World {
       canvas: this.renderer.domElement,
       onState: (state) => options.onHorrorState?.(state),
       onFinish: (result) => options.onHorrorFinish?.(result),
+      onPhoto: () => options.onHorrorPhoto?.(),
     });
 
     this.heroAvatar = new Character({
       color: options.color,
-      scale: 0.92,
       assets: this.assets,
       templateIndex: options.appearance.model,
-      style: this.style,
       appearance: options.appearance,
     });
     this.player = new Character({
@@ -178,7 +173,6 @@ export class World {
       label: options.name,
       assets: this.assets,
       templateIndex: options.appearance.model,
-      style: this.style,
       appearance: options.appearance,
     });
 
@@ -212,7 +206,6 @@ export class World {
     if (mode === 'lobby') {
       this.camReady = false;
     } else {
-      this.photoMode = false;
       this.setLabelsVisible(true);
     }
   }
@@ -236,30 +229,22 @@ export class World {
     this.previewClose = close;
   }
 
-  setStyle(style: AvatarStyle): void {
-    this.style = style;
-    this.heroAvatar.setStyle(style);
-    this.player.setStyle(style);
-    for (const bot of this.bots) bot.avatar.setStyle(style);
-  }
-
-  get activeStyle(): AvatarStyle {
-    return this.player.activeStyle;
-  }
-
   get hasHumans(): boolean {
     return this.assets !== null;
   }
 
-  /** Machnięcie bez VR — mechanicznym odpowiednikiem gestu z VRChat. */
+  /** Machnięcie bez VR — mechanicznym odpowiednikiem gestu z kamerki. */
   wave(): void {
-    if (this.mode !== 'lobby') return;
+    if (this.mode === 'game') return;
+    this.heroAvatar.wave();
     this.player.wave();
   }
 
-  setPhotoMode(enabled: boolean): void {
-    this.photoMode = enabled && this.mode === 'lobby';
-    this.setLabelsVisible(!this.photoMode);
+  /** Gesty wykryte w obrazie z kamerki odtwarzają animacje na awatarze. */
+  playEmote(clipName: string): void {
+    if (this.mode === 'game') return;
+    this.heroAvatar.playEmote(clipName);
+    this.player.playEmote(clipName);
   }
 
   private setLabelsVisible(visible: boolean): void {
@@ -473,8 +458,8 @@ export class World {
 
     // Portale = pozostałe gierki z katalogu
     const portalGames = GAMES.filter((game) => game.id !== 'plaza').slice(0, 3);
-    // Trzy bramy stoją w rzędzie na dalszym końcu placu, zwrócone do kamery.
-    const angles = [Math.PI - 0.72, Math.PI, Math.PI + 0.72];
+    // Bramy stoją w rzędzie na dalszym końcu placu, zwrócone do kamery.
+    const angles = portalGames.map((_, i) => Math.PI + (i - (portalGames.length - 1) / 2) * 0.72);
     portalGames.forEach((game, i) => {
       const angle = angles[i] ?? (i / portalGames.length) * Math.PI * 2;
       const group = new THREE.Group();
@@ -555,9 +540,8 @@ export class World {
         color: bot.color,
         label: bot.name,
         assets: this.assets,
-        templateIndex: i % 4,
-        style: this.style,
-      });
+        templateIndex: (i + 1) % 6,
+        });
       avatar.root.position.copy(this.pickBotTarget());
       avatar.root.rotation.y = (i / BOTS.length) * Math.PI * 2;
       this.lobbyScene.add(avatar.root);
@@ -572,7 +556,7 @@ export class World {
     });
   }
 
-  /** Boty nie wchodzą w pole widzenia kamery — inaczej ich kulki zasłaniają cały ekran. */
+  /** Boty trzymają się poza polem widzenia kamery, żeby nie zasłaniać placu. */
   private pickBotTarget(): THREE.Vector3 {
     const camera = this.lobbyCamera.position;
     for (let attempt = 0; attempt < 16; attempt++) {
@@ -617,36 +601,22 @@ export class World {
       this.dragMoved += Math.abs(dx) + Math.abs(dy);
 
       if (this.mode === 'home') {
-        this.heroAngle -= dx * 0.008;
-      } else if (this.photoMode) {
-        this.photoYaw -= dx * 0.006;
-        this.photoPitch = THREE.MathUtils.clamp(this.photoPitch + dy * 0.004, -0.35, 0.75);
+        // W edytorze przeciąganie obraca POSTAĆ. Gdyby obracać też kamerę,
+        // model stałby nieruchomo względem kadru i wyglądałoby to jak
+        // przesuwanie się światła po scenie.
+        if (this.previewClose) this.previewAngle -= dx * 0.008;
+        else this.heroAngle -= dx * 0.008;
       } else {
         this.yaw -= dx * 0.005;
         this.pitch = THREE.MathUtils.clamp(this.pitch + dy * 0.002, -0.12, 0.8);
       }
     });
 
-    canvas.addEventListener(
-      'wheel',
-      (event: WheelEvent) => {
-        if (!this.photoMode) return;
-        event.preventDefault();
-        this.photoDistance = THREE.MathUtils.clamp(
-          this.photoDistance + event.deltaY * 0.005,
-          2.2,
-          9,
-        );
-      },
-      { passive: false },
-    );
-
     const endDrag = (event: PointerEvent) => {
       if (!this.dragging) return;
       this.dragging = false;
       if (
         this.mode === 'lobby' &&
-        !this.photoMode &&
         this.dragMoved < 8 &&
         Math.hypot(
           event.clientX - this.pointerStart.x,
@@ -709,8 +679,12 @@ export class World {
   private updateHero(): void {
     this.heroPlatform.visible = !this.previewClose;
     for (const orb of this.heroOrbs) orb.mesh.visible = !this.previewClose;
-    this.heroAvatar.update(this.elapsed, this.activeStyle === 'balls' ? 0.16 : 0);
-    this.heroAvatar.root.rotation.y = this.elapsed * (this.activeStyle === 'balls' ? 0.22 : 0.1);
+    this.heroAvatar.update(this.elapsed, 0);
+    // W edytorze postać staje przodem do kamery, żeby było widać twarz,
+    // kolor włosów i krój ubrania. Na stronie głównej obraca się powoli.
+    this.heroAvatar.root.rotation.y = this.previewClose
+      ? this.previewAngle
+      : this.elapsed * 0.1;
 
     for (const orb of this.heroOrbs) {
       const angle = orb.angle + this.elapsed * orb.speed;
@@ -721,13 +695,14 @@ export class World {
       );
     }
 
-    const heroDistance = this.previewClose ? 2.75 : this.activeStyle === 'balls' ? 5.1 : 4.2;
+    const heroDistance = this.previewClose ? 3.15 : 4.2;
+    const cameraAngle = this.previewClose ? 0.35 : this.heroAngle;
     this.heroCamera.position.set(
-      Math.sin(this.heroAngle) * heroDistance,
-      this.previewClose ? 1.62 : this.activeStyle === 'balls' ? 2.6 : 2.1,
-      Math.cos(this.heroAngle) * heroDistance,
+      Math.sin(cameraAngle) * heroDistance,
+      this.previewClose ? 1.55 : 2.1,
+      Math.cos(cameraAngle) * heroDistance,
     );
-    this.heroCamera.lookAt(0, this.previewClose ? 1.45 : this.activeStyle === 'balls' ? 1.12 : 0.95, 0);
+    this.heroCamera.lookAt(0, this.previewClose ? 1.18 : 0.95, 0);
   }
 
   private updateLobby(dt: number): void {
@@ -830,7 +805,7 @@ export class World {
         const dx = b.x - a.x;
         const dz = b.z - a.z;
         const gap = Math.hypot(dx, dz);
-        const minGap = this.activeStyle === 'balls' ? 1.6 : 2.8;
+        const minGap = 2.8;
         if (gap > 0.001 && gap < minGap) {
           const push = (minGap - gap) * Math.min(1, dt * 4);
           const nx = (dx / gap) * push;
@@ -849,25 +824,13 @@ export class World {
     let desired: THREE.Vector3;
     let lookAt: THREE.Vector3;
 
-    if (this.photoMode) {
-      // Wirtualna kamera z VRChat: orbituje wokół postaci, niezależnie od ruchu gracza.
-      const focus = new THREE.Vector3(position.x, position.y + 1.0, position.z);
-      const horizontal = this.photoDistance * Math.cos(this.photoPitch);
-      desired = new THREE.Vector3(
-        focus.x + Math.sin(this.photoYaw) * horizontal,
-        focus.y + 0.35 + Math.sin(this.photoPitch) * this.photoDistance,
-        focus.z + Math.cos(this.photoYaw) * horizontal,
-      );
-      lookAt = focus;
-    } else {
-      const distance = 8.2 * Math.cos(this.pitch * 0.55);
-      desired = new THREE.Vector3(
-        target.x + Math.sin(this.yaw) * distance,
-        target.y + 2.1 + this.pitch * 5.5,
-        target.z + Math.cos(this.yaw) * distance,
-      );
-      lookAt = target;
-    }
+    const distance = 8.2 * Math.cos(this.pitch * 0.55);
+    desired = new THREE.Vector3(
+      target.x + Math.sin(this.yaw) * distance,
+      target.y + 2.1 + this.pitch * 5.5,
+      target.z + Math.cos(this.yaw) * distance,
+    );
+    lookAt = target;
 
     if (!this.camReady) {
       this.lobbyCamera.position.copy(desired);

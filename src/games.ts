@@ -1,5 +1,3 @@
-export type GameCategory = 'horror' | 'social' | 'race' | 'platform' | 'creative';
-
 export interface GameInfo {
   id: string;
   title: string;
@@ -8,125 +6,31 @@ export interface GameInfo {
   players: string;
   color: string;
   accent: string;
-  art?: string;
+  art: string;
   ready: boolean;
-  category: GameCategory;
-  /** Procent pozytywnych ocen, liczba grających, liczba oczekujących, kolejność dodania. */
-  likes: number;
-  playing: number;
-  waiting: number;
-  added: number;
-  /** Krótki claim używany w karuzeli wyróżnionych światów. */
+  /** Krótki claim na banerze strony głównej. */
   claim: string;
 }
 
-/** Katalog światów. Na etapie prototypu dane są statyczne — później przyjdzie tu Supabase. */
+/** Jeden grywalny świat. Katalog nie zawiera zapowiedzi ani placeholderów. */
 export const GAMES: GameInfo[] = [
   {
-    id: 'zimny-slad',
-    title: 'Zimny Ślad',
+    id: 'demonofobia',
+    title: 'Demonofobia',
     description:
-      'Dom przy Wrzosowej 12. Wejdź z latarką, zbierz trzy dowody i rozpoznaj zjawę, zanim stracisz nerwy.',
+      'Dom przy Wrzosowej 12. Wejdź z latarką, zbierz trzy dowody i rozpoznaj zjawę, zanim skończą Ci się nerwy.',
     tag: 'Horror · Dochodzenie',
-    players: '1–4 graczy',
+    players: '1 gracz',
     color: '#8b7355',
     accent: '#3f4a4a',
     art: '/art/house.jpg',
     ready: true,
-    category: 'horror',
-    likes: 94,
-    playing: 128,
-    waiting: 0,
-    added: 6,
-    claim: 'Pierwsze pełne dochodzenie na RejPlay. Tylko latarka, trzy narzędzia i nerwy.',
-  },
-  {
-    id: 'plaza',
-    title: 'Plaza Kulki',
-    description:
-      'Spokojne lobby, w którym spotykasz innych graczy, machasz na powitanie i wybierasz kolejną gierkę.',
-    tag: '3D · Social',
-    players: 'do 12 graczy',
-    color: '#7a6a55',
-    accent: '#4a5a58',
-    art: '/art/plaza.jpg',
-    ready: true,
-    category: 'social',
-    likes: 91,
-    playing: 86,
-    waiting: 0,
-    added: 5,
-    claim: 'Miejsce, w którym zaczyna się każda rozgrywka. Machnij do kogoś i zrób zdjęcie.',
-  },
-  {
-    id: 'wyscig',
-    title: 'Kulkowy Wyścig',
-    description: 'Tocz się po mokrym torze, zbieraj przyspieszenia i wyprzedzaj znajomych na ostatniej prostej.',
-    tag: '3D · Wyścigi',
-    players: 'do 8 graczy',
-    color: '#8a5f4c',
-    accent: '#a08a5c',
-    art: '/art/race.jpg',
-    ready: false,
-    category: 'race',
-    likes: 88,
-    playing: 0,
-    waiting: 342,
-    added: 4,
-    claim: 'Betowy tor o zmierzchu. Każdy zakręt zostawia ślad na mokrym betonie.',
-  },
-  {
-    id: 'skok',
-    title: 'Skok nad Kropkami',
-    description: 'Platformówka z jedną zasadą: skacz od kamienia do kamienia i nie spadnij w mgłę.',
-    tag: '3D · Platformer',
-    players: '1–6 graczy',
-    color: '#4d6660',
-    accent: '#6f6250',
-    art: '/art/obby.jpg',
-    ready: false,
-    category: 'platform',
-    likes: 85,
-    playing: 0,
-    waiting: 219,
-    added: 3,
-    claim: 'Mosty nad mgłą, latarnie co kilka skoków i zero drugich szans.',
-  },
-  {
-    id: 'miasto',
-    title: 'Miasto Kulek',
-    description: 'Mały brutalistyczny kwartał do spacerów, spotkań i wspólnego odkrywania zakątków.',
-    tag: '3D · Miasto',
-    players: 'do 16 graczy',
-    color: '#6b7076',
-    accent: '#8a7250',
-    art: '/art/city.jpg',
-    ready: false,
-    category: 'social',
-    likes: 82,
-    playing: 0,
-    waiting: 187,
-    added: 2,
-    claim: 'Deszcz, beton i ciepłe okna. Otwarte spacery dla całej ekipy.',
-  },
-  {
-    id: 'pracownia',
-    title: 'Pracownia Światów',
-    description: 'Warsztat twórcy: układaj własne pomieszczenia, testuj je i publikuj jako nową gierkę.',
-    tag: 'Kreator · UGC',
-    players: '1–4 twórców',
-    color: '#7c6a55',
-    accent: '#4f5b5c',
-    art: '/art/studio.jpg',
-    ready: false,
-    category: 'creative',
-    likes: 79,
-    playing: 0,
-    waiting: 411,
-    added: 1,
-    claim: 'Od szkicu na stole do grywalnego świata. Edytor świata w przygotowaniu.',
+    claim: 'Nocne dochodzenie w opuszczonym domu. Trzy narzędzia, sześć zjaw, nalot i jedna szansa na poprawny raport.',
   },
 ];
+
+/** Nazwa wspólnego lobby 3D (to nie jest osobna gra). */
+export const LOBBY_NAME = 'Atrium';
 
 export const PALETTE = [
   { name: 'Bursztyn', value: '#c8a06a' },
@@ -137,14 +41,32 @@ export const PALETTE = [
   { name: 'Śliwka', value: '#8a6b78' },
 ];
 
-/** Wygląd postaci: model ( fryzura / sylwetka ) + barwy nakładane na tekstury. */
-export const CHARACTER_MODELS = [
-  { name: 'Alicja', female: true },
-  { name: 'Marek', female: false },
-  { name: 'Ewa', female: true },
-  { name: 'Tomek', female: false },
-  { name: 'Nina', female: true },
-  { name: 'Iza', female: true },
+/**
+ * Gotowe, rigowane postacie Microsoft Rocketbox (MIT). Każdy plik ma już
+ * własną fryzurę, twarz i ubranie — 9 sylwetek męskich i 4 żeńskie.
+ * `file` to nazwa GLB w public/characters/ (jedno źródło prawdy dla UI i 3D).
+ */
+export interface CharacterModel {
+  name: string;
+  female: boolean;
+  file: string;
+  look: string;
+}
+
+export const CHARACTER_MODELS: CharacterModel[] = [
+  { name: 'Marek', female: false, file: 'Male_Adult_01', look: 'polo w paski i szorty' },
+  { name: 'Tomek', female: false, file: 'Male_Adult_02', look: 'jasna koszula' },
+  { name: 'Adam', female: false, file: 'Male_Adult_03', look: 'wełniany komplet' },
+  { name: 'Bruno', female: false, file: 'Male_Adult_04', look: 'kamizelka taktyczna' },
+  { name: 'Czesław', female: false, file: 'Male_Adult_06', look: 'czerwone polo i dżinsy' },
+  { name: 'Damian', female: false, file: 'Male_Adult_08', look: 'niebieska koszula' },
+  { name: 'Eryk', female: false, file: 'Business_Male_01', look: 'czarny garnitur' },
+  { name: 'Filip', female: false, file: 'Gardener_Male_01', look: 'brązowa kurtka robocza' },
+  { name: 'Gustaw', female: false, file: 'Medical_Male_02', look: 'kurtka ratownika' },
+  { name: 'Alicja', female: true, file: 'Female_Adult_01', look: 'codzienny' },
+  { name: 'Ewa', female: true, file: 'Business_Female_01', look: 'czarny żakiet' },
+  { name: 'Nina', female: true, file: 'Female_Adult_03', look: 'codzienny' },
+  { name: 'Iza', female: true, file: 'Female_Adult_05', look: 'codzienny' },
 ];
 
 export const SKIN_TONES = [
@@ -160,24 +82,47 @@ export const HAIR_COLORS = [
   { name: 'Czarny', value: '#241c17' },
   { name: 'Ciemny brąz', value: '#4b3020' },
   { name: 'Brąz', value: '#8a5c33' },
-  { name: 'Blond', value: '#c8a562' },
-  { name: 'Rudy', value: '#93442a' },
-  { name: 'Siwy', value: '#b8b4ac' },
+  { name: 'Blond', value: '#e0c48a' },
+  { name: 'Rudy', value: '#a9502c' },
+  { name: 'Siwy', value: '#d5d3cd' },
 ];
 
-export const OUTFIT_COLORS = [
-  { name: 'Oryginał', value: '#ffffff' },
-  { name: 'Szary', value: '#9aa2a8' },
-  { name: 'Oliwka', value: '#7f8c75' },
-  { name: 'Granat', value: '#6c7889' },
-  { name: 'Rdza', value: '#b27a5f' },
-  { name: 'Grafit', value: '#6d7075' },
+/**
+ * Gotowe ubrania z TEJ SAMEJ paczki Rocketbox. Zamiast dorabiać geometrię,
+ * podmieniamy wyłącznie teksturę korpusu (body) na inną, już gotową wersję
+ * z profesjonalnymi strojami: garniturem, fartuchem, mundurem itd. Szkielet,
+ * UV, głowa i fryzura zostają nietknięte, więc nie ma z-fightingu ani
+ * "kartonowych" nakładek. Zero własnych meshów ubrań.
+ */
+export interface OutfitDef {
+  id: string;
+  value: string;
+  name: string;
+  description: string;
+  color: string;
+  /** Nazwa pliku, z którego bierzemy *_body_color.jpg i *_body_normal.jpg. */
+  body: string;
+}
+
+export const OUTFITS: OutfitDef[] = [
+  { id: 'casual', value: 'casual', name: 'Polo i szorty', description: 'Koszulka w paski i krótkie spodnie.', color: '#b7ada0', body: 'Male_Adult_01' },
+  { id: 'shirt', value: 'shirt', name: 'Koszula', description: 'Klasyczna koszula i spodnie.', color: '#8f9aa6', body: 'Male_Adult_02' },
+  { id: 'sweater', value: 'sweater', name: 'Wełniany komplet', description: 'Marynarka, kamizelka i bordowy krawat.', color: '#7d7266', body: 'Male_Adult_03' },
+  { id: 'city', value: 'city', name: 'Taktyczny', description: 'Czarna kamizelka z niebieskimi wstawkami.', color: '#59636c', body: 'Male_Adult_04' },
+  { id: 'suit', value: 'suit', name: 'Garnitur', description: 'Marynarka, krawat, eleganckie spodnie.', color: '#3b424b', body: 'Business_Male_01' },
+  { id: 'workwear', value: 'workwear', name: 'Roboczy', description: 'Koszula robocza i spodnie z kieszeniami.', color: '#6f7a5c', body: 'Gardener_Male_01' },
+  { id: 'medical', value: 'medical', name: 'Ratownik', description: 'Niebieska kurtka z odblaskami.', color: '#4a70b8', body: 'Medical_Male_02' },
+  { id: 'office', value: 'office', name: 'Biurowy', description: 'Żakiet i elegancka bluzka.', color: '#8b6d78', body: 'Business_Female_01' },
 ];
 
-/** Boty w lobby. Docelowo zastąpią ich gracze z Colyseusa. */
+export function getOutfit(id: string): OutfitDef {
+  return OUTFITS.find((entry) => entry.id === id) ?? OUTFITS[0];
+}
+
+/** Boty w lobby. Docelowo zastąpią ich gracze z serwera pokoi. */
 export const BOTS = [
-  { name: 'Bąbel', color: '#6f8a86' },
-  { name: 'Sferka', color: '#a4654c' },
-  { name: 'Kulka_07', color: '#b9a37d' },
-  { name: 'Miki', color: '#7d8791' },
+  { name: 'Ada', color: '#6f8a86' },
+  { name: 'Miko', color: '#a4654c' },
+  { name: 'Wera', color: '#b9a37d' },
+  { name: 'Bruno', color: '#7d8791' },
 ];

@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 
 /**
- * „Zimny Ślad” — autorska, pierwszoosobowa gra dochodzeniowa.
+ * „Demonofobia” — autorska, pierwszoosobowa gra dochodzeniowa.
  *
  * To ORYGINALNA interpretacja gatunku: własna nazwa, własna klasyfikacja zjaw,
  * własne dowody, teksty i dźwięki. Nie używamy nazwy, lore'u, interfejsu ani
@@ -52,6 +52,8 @@ export interface HorrorState {
   result: HorrorResult | null;
   seconds: number;
   canReport: boolean;
+  hunting: boolean;
+  photos: number;
 }
 
 export interface HorrorOptions {
@@ -59,6 +61,7 @@ export interface HorrorOptions {
   canvas: HTMLCanvasElement;
   onState: (state: HorrorState) => void;
   onFinish: (result: HorrorResult) => void;
+  onPhoto?: () => void;
 }
 
 const TOOLS: ToolInfo[] = [
@@ -78,6 +81,8 @@ const GHOSTS: GhostInfo[] = [
   { id: 'iskra', name: 'Iskra', hint: 'Nie obniża temperatury. Pole i szepty.', signature: ['field', 'voice'] },
   { id: 'szron', name: 'Szron', hint: 'Milczy. Zostawia zimno i pole.', signature: ['cold', 'field'] },
   { id: 'cisza', name: 'Cisza', hint: 'Zostawia wszystkie trzy ślady naraz.', signature: ['cold', 'field', 'voice'] },
+  { id: 'popiol', name: 'Popiół', hint: 'Zimno bez żadnego dźwięku. Tylko jeden ślad.', signature: ['cold'] },
+  { id: 'nic', name: 'Nić', hint: 'Same szepty. Nie rusza temperatury ani prądu.', signature: ['voice'] },
 ];
 
 /**
@@ -189,6 +194,7 @@ export class HorrorGame {
   private readonly canvas: HTMLCanvasElement;
   private readonly onState: (state: HorrorState) => void;
   private readonly onFinish: (result: HorrorResult) => void;
+  private readonly onPhoto: (() => void) | undefined;
 
   private readonly position = new THREE.Vector3(0, 1.65, 7.0);
   private readonly walls: Box[] = [];
@@ -217,6 +223,10 @@ export class HorrorGame {
   private elapsed = 0;
   private eventTimer = 12;
   private apparitionTimer = 0;
+  private hunting = false;
+  private huntTimer = 0;
+  private huntCooldown = 26;
+  private photos = 0;
   private emitTimer = 0;
   private bob = 0;
   private moving = false;
@@ -230,6 +240,7 @@ export class HorrorGame {
     this.canvas = options.canvas;
     this.onState = options.onState;
     this.onFinish = options.onFinish;
+    this.onPhoto = options.onPhoto;
 
     this.camera.rotation.order = 'YXZ';
     this.scene.background = new THREE.Color(0x0a0d0f);
@@ -412,6 +423,7 @@ export class HorrorGame {
       if (event.code === 'Digit2') this.selectTool(1);
       if (event.code === 'Digit3') this.selectTool(2);
       if (event.code === 'KeyF') this.toggleFlashlight();
+      if (event.code === 'KeyP' && !event.repeat) this.photo();
       if (event.code === 'KeyJ' || event.code === 'Tab') {
         event.preventDefault();
         this.toggleJournal();
@@ -505,6 +517,10 @@ export class HorrorGame {
     this.eventTimer = 11;
     this.apparitionTimer = 0;
     this.apparition.visible = false;
+    this.hunting = false;
+    this.huntTimer = 0;
+    this.huntCooldown = 26;
+    this.photos = 0;
     this.lastFrameTime = 0;
     this.keys.clear();
     this.joystick.x = 0;
@@ -520,6 +536,8 @@ export class HorrorGame {
     if (!active) {
       this.keys.clear();
       this.interacting = false;
+      this.hunting = false;
+      this.huntTimer = 0;
       this.joystick.x = 0;
       this.joystick.y = 0;
     } else {
@@ -558,6 +576,44 @@ export class HorrorGame {
     this.emit();
   }
 
+  /** Foto-dowód: zapis klatki + przerwanie nalotu, jeśli uda się sfotografować zjawę. */
+  photo(): void {
+    if (!this.active || this.result || this.journal) return;
+    this.photos += 1;
+    this.onPhoto?.();
+    this.beep(880, 0.09, 0.03);
+    if (this.hunting) {
+      this.endHunt('Uchwyciłeś zjawę na zdjęciu — nalot się cofnął.');
+      this.nerves = Math.min(100, this.nerves + 8);
+    } else if (this.reading > 0.5) {
+      this.nerves = Math.min(100, this.nerves + 3);
+      this.hint = 'Foto-dowód zapisany. Nerwy trochę wracają do równowagi.';
+    } else {
+      this.hint = 'Zdjęcie zapisane. Tu nic nie ma — szukaj dalej.';
+    }
+    this.emit();
+  }
+
+  private startHunt(): void {
+    this.hunting = true;
+    this.huntTimer = 13;
+    this.huntCooldown = 30 + Math.random() * 18;
+    this.hint = 'NALOT. Zjawa idzie w Twoją stronę — wyjdź frontowymi drzwiami albo zrób jej zdjęcie (P).';
+    this.flicker = 1.2;
+    this.knock();
+    this.showApparition();
+    this.emit();
+  }
+
+  private endHunt(reason: string): void {
+    this.hunting = false;
+    this.huntTimer = 0;
+    this.apparitionTimer = 0;
+    this.apparition.visible = false;
+    this.hint = reason;
+    this.emit();
+  }
+
   selectGhost(id: string): void {
     if (!this.active || this.result || !this.journal) return;
     if (id === this.ghost.id) {
@@ -586,6 +642,8 @@ export class HorrorGame {
     };
     this.journal = false;
     this.interacting = false;
+    this.hunting = false;
+    this.apparition.visible = false;
     this.beep(win ? 660 : 150, 0.5, 0.05);
     this.emit();
     this.onFinish(this.result);
@@ -712,15 +770,24 @@ export class HorrorGame {
       this.emit();
     }
 
+    this.huntCooldown -= dt;
+    if (!this.hunting && this.huntCooldown <= 0 && this.seconds > 18) this.startHunt();
+    if (this.hunting) {
+      this.huntTimer -= dt;
+      if (this.huntTimer <= 0) {
+        this.endHunt('Nalot minął. Dom znowu cichnie, ale nerwy zostały nadwyrężone.');
+      }
+    }
+
     if (this.flicker > 0) this.flicker = Math.max(0, this.flicker - dt);
-    if (this.apparitionTimer > 0) {
+    if (!this.hunting && this.apparitionTimer > 0) {
       this.apparitionTimer -= dt;
       const material = (this.apparition.children[0] as THREE.Mesh).material as THREE.MeshBasicMaterial;
       material.opacity = Math.min(0.22, this.apparitionTimer * 0.22);
       if (this.apparitionTimer <= 0) this.apparition.visible = false;
     }
 
-    const drain = this.flashlightOn ? 0.28 : 0.62;
+    const drain = (this.flashlightOn ? 0.28 : 0.62) + (this.hunting ? 1.5 : 0);
     this.nerves = Math.max(0, this.nerves - drain * dt);
     if (this.nerves <= 0 && !this.result) {
       this.finish(false, 'Nerwy nie wytrzymały. Musiałeś wyjść z domu.');
@@ -756,6 +823,26 @@ export class HorrorGame {
     this.updateMovement(dt);
     this.updateScan(realDt);
     this.updateEvents(realDt);
+
+    if (this.hunting) {
+      // Sylwetka podąża korytarzem, ale zatrzymuje się ~1,6 m od gracza.
+      const dx = this.position.x - this.apparition.position.x;
+      const dz = this.position.z - this.apparition.position.z;
+      const distance = Math.hypot(dx, dz) || 1;
+      if (distance > 1.6) {
+        const step = Math.min(0.85 * realDt, distance - 1.6);
+        this.apparition.position.x += (dx / distance) * step;
+        this.apparition.position.z += (dz / distance) * step;
+      }
+      this.apparition.rotation.y = Math.atan2(dx, dz);
+      this.apparition.visible = true;
+      const material = (this.apparition.children[0] as THREE.Mesh).material as THREE.MeshBasicMaterial;
+      material.opacity = 0.3;
+      if (this.position.z > 8.35 && Math.abs(this.position.x) < 1.15) {
+        this.nerves = Math.max(1, this.nerves - 6);
+        this.endHunt('Wypadłeś frontowymi drzwiami. Nalot Cię nie dopadł.');
+      }
+    }
 
     const flickerFactor = this.flicker > 0 && Math.random() > 0.55 ? 0.08 : 1;
     this.flashlight.intensity = this.flashlightOn ? 62 * flickerFactor : 0;
@@ -844,6 +931,8 @@ export class HorrorGame {
       result: this.result,
       seconds: Math.floor(this.seconds),
       canReport,
+      hunting: this.hunting,
+      photos: this.photos,
     });
   }
 }
