@@ -20,7 +20,7 @@ export const GAMES: GameInfo[] = [
     description:
       'Dom przy Wrzosowej 12. Wejdź z latarką, zbierz trzy dowody i rozpoznaj zjawę, zanim skończą Ci się nerwy.',
     tag: 'Horror · Dochodzenie',
-    players: '1–8 graczy',
+    players: 'Dochodzenie solo · Atrium online',
     color: '#8b7355',
     accent: '#3f4a4a',
     art: `${import.meta.env.BASE_URL}art/house.jpg`,
