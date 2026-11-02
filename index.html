@@ -48,13 +48,13 @@
 
               <h1>
                 Twoje mini gierki.<br />
-                <span class="gradient-text">Twój świat z kulek.</span>
+                <span class="gradient-text">Postacie, które żyją.</span>
               </h1>
 
               <p class="lead">
-                Wchodzisz na stronę i od razu grasz z innymi. Zaczynamy od lobby oraz awatara
-                złożonego z sześciu kulek — dokładnie tak, jak to wymyśliłeś: jedna na głowę,
-                po jednej na ręce, jedna wydłużona na ciało i dwie na nogi.
+                Wchodzisz na stronę i od razu grasz z innymi. W lobby stoją teksturowane postacie
+                z animacjami motion capture: machnij do kogoś z klawiatury, bez VR, i zrób zdjęcie
+                w trybie kamery. Awatary z sześciu kulek zostają jako styl klasyczny.
               </p>
 
               <div class="creator card">
@@ -76,6 +76,18 @@
                 </label>
 
                 <div class="field">
+                  <span>Styl postaci</span>
+                  <div class="style-switch" id="style-switch" role="group" aria-label="Styl awatara">
+                    <button type="button" class="style-switch__btn is-active" data-style="human">
+                      Realistyczne
+                    </button>
+                    <button type="button" class="style-switch__btn" data-style="balls">
+                      Kulki · klasyk
+                    </button>
+                  </div>
+                </div>
+
+                <div class="field">
                   <span>Kolor awatara</span>
                   <div class="swatches" id="swatches" role="group" aria-label="Kolor awatara"></div>
                 </div>
@@ -89,22 +101,22 @@
               </div>
 
               <div class="hero__stats">
-                <div><strong>6</strong><span>kulek na awatara</span></div>
+                <div><strong>2</strong><span>style awatarów</span></div>
                 <div><strong>0</strong><span>plików do pobrania</span></div>
                 <div><strong>3D</strong><span>prosto w przeglądarce</span></div>
               </div>
             </div>
 
-            <div class="hero__visual">
+            <div class="hero__visual" id="hero-visual">
               <div class="hero__glow" aria-hidden="true"></div>
               <div id="hero-stage" class="stage stage--hero" aria-label="Trójwymiarowy podgląd awatara"></div>
 
-              <span class="visual__label">Podgląd awatara · przeciągnij, żeby obrócić</span>
+              <span class="visual__label">Podgląd postaci · przeciągnij, żeby obrócić</span>
               <span class="visual__badge visual__badge--head">1 × głowa</span>
               <span class="visual__badge visual__badge--arms">2 × ręce</span>
               <span class="visual__badge visual__badge--body">1 × ciało</span>
               <span class="visual__badge visual__badge--legs">2 × nogi</span>
-              <span class="visual__footer">6 kulek · 1 awatar · nieskończenie wiele gier</span>
+              <span class="visual__footer" id="visual-footer">Postać 3D · animacje motion capture · gesty bez VR</span>
             </div>
           </section>
 
@@ -125,11 +137,12 @@
           <section id="avatar" class="recipe wrap">
             <div class="section__head">
               <div>
-                <span class="section__kicker">Przepis na awatara</span>
+                <span class="section__kicker">Styl klasyczny</span>
                 <h2>Sześć kulek i gotowe</h2>
                 <p class="section__sub">
-                  Żadnych skomplikowanych modeli, rigów i importów. Każda część to jedna kula,
-                  więc awatar jest lekki, wszędzie taki sam i łatwy do pokolorowania.
+                  Domyślnie w lobby stoją realistyczne postacie. W każdej chwili możesz wrócić
+                  do awatara z sześciu kulek: jedna głowa, dwie ręce, jedna wydłużona na ciało
+                  i dwie nogi. Lekki, wszędzie taki sam i łatwy do pokolorowania.
                 </p>
               </div>
             </div>
@@ -203,7 +216,14 @@
           <div><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd><span>ruch</span></div>
           <div><span class="controls-hint__glyph">↔</span><span>przeciągnij: kamera</span></div>
           <div><kbd>Spacja</kbd><span>skok</span></div>
+          <div><kbd>E</kbd><span>machnięcie</span></div>
+          <div><kbd>C</kbd><span>tryb kamery</span></div>
           <p>Kliknij kolorowy portal, żeby wybrać gierkę.</p>
+        </div>
+
+        <div class="lobby__tools" id="lobby-tools">
+          <button type="button" class="btn btn--sm btn--glass" id="wave-btn">Machaj <kbd>E</kbd></button>
+          <button type="button" class="btn btn--sm btn--glass" id="camera-btn">Kamera <kbd>C</kbd></button>
         </div>
 
         <div class="touch-controls" id="touch-controls" hidden>
@@ -213,10 +233,30 @@
           <button type="button" class="jump-btn" id="jump-btn">Skok</button>
         </div>
 
+        <div class="photo" id="photo-overlay" hidden>
+          <div class="photo__frame" aria-hidden="true">
+            <span class="photo__corner photo__corner--tl"></span>
+            <span class="photo__corner photo__corner--tr"></span>
+            <span class="photo__corner photo__corner--bl"></span>
+            <span class="photo__corner photo__corner--br"></span>
+          </div>
+          <div class="photo__top">TRYB KAMERY · przeciągnij, żeby ustawić kadr · kółko myszki = zoom</div>
+          <div class="photo__bottom">
+            <button type="button" class="btn btn--primary" id="photo-shoot">Zrób zdjęcie</button>
+            <button type="button" class="btn btn--glass" id="photo-wave">Machaj</button>
+            <button type="button" class="btn btn--glass" id="photo-close">Zamknij <kbd>C</kbd></button>
+          </div>
+        </div>
+
         <div class="toast toast--lobby" id="lobby-toast" role="status"></div>
       </section>
 
       <div class="toast toast--global" id="global-toast" role="status"></div>
+
+      <div class="boot" id="boot-overlay">
+        <span class="boot__orb" aria-hidden="true"></span>
+        <span>Wczytywanie postaci…</span>
+      </div>
     </div>
 
     <script type="module" src="/src/main.ts"></script>

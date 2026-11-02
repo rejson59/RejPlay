@@ -1270,3 +1270,219 @@ kbd {
     scroll-behavior: auto !important;
   }
 }
+
+/* ============================================ style postaci, gesty, tryb kamery */
+
+/* Opisy „1 × głowa" itd. dotyczą tylko klasycznego stylu z kulek. */
+.visual__badge {
+  display: none;
+}
+
+.hero__visual.is-balls .visual__badge {
+  display: inline-block;
+}
+
+.style-switch {
+  display: flex;
+  gap: 6px;
+  padding: 5px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: rgba(7, 9, 22, 0.7);
+}
+
+.style-switch__btn {
+  flex: 1;
+  padding: 10px 12px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 700;
+  transition: background 0.18s ease, color 0.18s ease, border-color 0.18s ease;
+}
+
+.style-switch__btn:hover {
+  color: var(--text);
+}
+
+.style-switch__btn.is-active {
+  background: linear-gradient(120deg, rgba(124, 92, 255, 0.9), rgba(101, 68, 242, 0.9));
+  border-color: rgba(255, 255, 255, 0.14);
+  color: #fff;
+  box-shadow: 0 6px 18px rgba(107, 74, 246, 0.28);
+}
+
+.style-switch__btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.lobby__tools {
+  position: absolute;
+  z-index: 4;
+  left: 50%;
+  bottom: 26px;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 9px;
+}
+
+.lobby__tools .btn {
+  backdrop-filter: blur(14px);
+}
+
+.lobby__tools kbd {
+  margin-left: 4px;
+  padding: 2px 5px;
+  font-size: 0.64rem;
+}
+
+/* --- tryb kamery (odpowiednik wirtualnej kamery z VRChat) --- */
+
+.photo {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  pointer-events: none;
+}
+
+.photo[hidden] {
+  display: none;
+}
+
+.photo__frame {
+  position: absolute;
+  inset: 8% 10%;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 6px;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.35);
+}
+
+.photo__corner {
+  position: absolute;
+  width: 34px;
+  height: 34px;
+  border: 2px solid rgba(255, 255, 255, 0.85);
+}
+
+.photo__corner--tl { top: -2px; left: -2px; border-right: 0; border-bottom: 0; border-radius: 6px 0 0 0; }
+.photo__corner--tr { top: -2px; right: -2px; border-left: 0; border-bottom: 0; border-radius: 0 6px 0 0; }
+.photo__corner--bl { bottom: -2px; left: -2px; border-right: 0; border-top: 0; border-radius: 0 0 0 6px; }
+.photo__corner--br { bottom: -2px; right: -2px; border-left: 0; border-top: 0; border-radius: 0 0 6px 0; }
+
+.photo__top {
+  position: absolute;
+  top: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 9px 16px;
+  border-radius: 999px;
+  background: rgba(12, 15, 34, 0.75);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 650;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+  backdrop-filter: blur(12px);
+}
+
+.photo__bottom {
+  position: absolute;
+  bottom: 26px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 10px;
+  pointer-events: auto;
+}
+
+.lobby.is-photo-mode .lobby__top,
+.lobby.is-photo-mode .panel,
+.lobby.is-photo-mode .controls-hint,
+.lobby.is-photo-mode .lobby__tools,
+.lobby.is-photo-mode .touch-controls {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.lobby.is-photo-mode .toast--lobby {
+  bottom: 92px;
+}
+
+/* --- ekran ładowania modeli --- */
+
+.boot {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  background: var(--bg);
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 650;
+  letter-spacing: 0.03em;
+  transition: opacity 0.45s ease, visibility 0.45s ease;
+}
+
+.boot.is-done {
+  opacity: 0;
+  visibility: hidden;
+}
+
+.boot__orb {
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 30% 25%, #d6caff, var(--violet) 60%, #4931c4);
+  box-shadow: 0 0 34px rgba(124, 92, 255, 0.7);
+  animation: boot-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes boot-pulse {
+  0%, 100% { transform: scale(0.88); opacity: 0.75; }
+  50% { transform: scale(1.08); opacity: 1; }
+}
+
+@media (max-width: 620px) {
+  .lobby__tools {
+    bottom: 156px;
+    gap: 6px;
+  }
+  .lobby__tools .btn {
+    padding: 9px 11px;
+    font-size: 0.75rem;
+  }
+  .lobby__tools kbd {
+    display: none;
+  }
+  .photo__frame {
+    inset: 14% 6%;
+  }
+  .photo__top {
+    font-size: 0.62rem;
+    white-space: normal;
+    text-align: center;
+    max-width: calc(100% - 32px);
+  }
+  .photo__bottom {
+    flex-wrap: wrap;
+    justify-content: center;
+    bottom: 18px;
+    width: calc(100% - 24px);
+  }
+  .photo__bottom .btn {
+    padding: 11px 14px;
+    font-size: 0.8rem;
+  }
+  .lobby.is-photo-mode .toast--lobby {
+    bottom: 130px;
+  }
+}

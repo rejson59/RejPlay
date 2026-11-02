@@ -1,5 +1,7 @@
 import './style.css';
 import { BOTS, GAMES, PALETTE, type GameInfo } from './games';
+import type { AvatarStyle } from './character';
+import { loadHumanAssets, type HumanAssets } from './human';
 import { World } from './world';
 
 const $ = <T extends HTMLElement = HTMLElement>(selector: string): T => {
@@ -38,8 +40,10 @@ function escapeHtml(value: string): string {
 const state = {
   nick: readStored('rejplay:nick') || `Kulka_${Math.floor(10 + Math.random() * 90)}`,
   color: readStored('rejplay:color') || PALETTE[0].value,
+  style: (readStored('rejplay:style') === 'balls' ? 'balls' : 'human') as AvatarStyle,
 };
 if (!PALETTE.some((entry) => entry.value === state.color)) state.color = PALETTE[0].value;
+let photoModeActive = false;
 
 const home = $('#home');
 const lobby = $('#lobby');
@@ -60,8 +64,13 @@ const touchControls = $('#touch-controls');
 const joystick = $('#joystick');
 const joystickKnob = $('#joystick-knob');
 const jumpButton = $<HTMLButtonElement>('#jump-btn');
+const styleSwitch = $('#style-switch');
+const heroVisual = $('#hero-visual');
+const visualFooter = $('#visual-footer');
+const photoOverlay = $('#photo-overlay');
+const bootOverlay = $('#boot-overlay');
 
-const world = new World({ color: state.color, name: state.nick });
+let world!: World;
 
 // --------------------------------------------------------------------- toasts
 
@@ -152,6 +161,33 @@ function applyNick(raw: string): void {
   renderPlayerList();
 }
 
+function updateStyleUI(): void {
+  const human = state.style === 'human' && world.hasHumans;
+  heroVisual.classList.toggle('is-balls', !human);
+  visualFooter.textContent = human
+    ? 'Postać 3D · animacje motion capture · gesty bez VR'
+    : '6 kulek · 1 awatar · nieskończenie wiele gier';
+  styleSwitch.querySelectorAll<HTMLButtonElement>('[data-style]').forEach((button) => {
+    const active = button.dataset.style === state.style;
+    button.classList.toggle('is-active', active);
+    button.setAttribute('aria-pressed', String(active));
+  });
+}
+
+function applyStyle(style: AvatarStyle): void {
+  if (style === 'human' && !world.hasHumans) return;
+  state.style = style;
+  store('rejplay:style', style);
+  world.setStyle(style);
+  updateStyleUI();
+  showToast(
+    globalToast,
+    style === 'human'
+      ? 'Styl realistyczny: postacie z animacjami motion capture.'
+      : 'Styl klasyczny: awatar z sześciu kulek.',
+  );
+}
+
 // ------------------------------------------------------------------- lobby UI
 
 function renderPlayerList(): void {
@@ -190,9 +226,35 @@ let chatSeeded = false;
 function seedChat(): void {
   if (chatSeeded) return;
   chatSeeded = true;
-  addChatMessage('Bąbel', 'siema! świetna kulka :)', '#42e8b4');
-  addChatMessage('Sferka', 'kto biega do fioletowego portalu?', '#ff8fd0');
+  addChatMessage('Bąbel', 'siema! niezła postać :)', '#42e8b4');
+  addChatMessage('Sferka', 'machnij do mnie klawiszem E!', '#ff8fd0');
   addChatMessage('RejPlay', 'To demo czatu — wiadomości zostają w Twojej karcie.');
+}
+
+function setPhotoMode(enabled: boolean): void {
+  if (!lobby.classList.contains('is-active')) return;
+  photoModeActive = enabled;
+  lobby.classList.toggle('is-photo-mode', photoModeActive);
+  photoOverlay.hidden = !photoModeActive;
+  world.setPhotoMode(photoModeActive);
+  if (photoModeActive) {
+    showToast(lobbyToast, 'Tryb kamery · przeciągnij, żeby ustawić kadr · E = machnięcie');
+  }
+}
+
+function triggerWave(): void {
+  if (!lobby.classList.contains('is-active')) return;
+  world.wave();
+  showToast(lobbyToast, `${state.nick} macha do wszystkich 👋`);
+}
+
+function takePhoto(): void {
+  const dataUrl = world.capturePhoto();
+  const link = document.createElement('a');
+  link.href = dataUrl;
+  link.download = `rejplay-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.png`;
+  link.click();
+  showToast(lobbyToast, 'Zdjęcie zapisane 📸');
 }
 
 function enterLobby(): void {
@@ -205,12 +267,15 @@ function enterLobby(): void {
   world.mount(lobbyStage, 'lobby');
   renderPlayerList();
   seedChat();
-  showToast(lobbyToast, 'Plaza Kulki · WASD = ruch, spacja = skok, przeciągnij = kamera');
+  showToast(lobbyToast, 'Plaza Kulki · WASD = ruch, E = machnięcie, C = kamera');
 }
 
 function goHome(): void {
   if (!lobby.classList.contains('is-active')) return;
-  lobby.classList.remove('is-active');
+  photoModeActive = false;
+  lobby.classList.remove('is-active', 'is-photo-mode');
+  photoOverlay.hidden = true;
+  world.setPhotoMode(false);
   lobby.setAttribute('aria-hidden', 'true');
   home.setAttribute('aria-hidden', 'false');
   document.body.classList.remove('in-lobby');
@@ -268,18 +333,37 @@ chatForm.addEventListener('submit', (event) => {
   chatInput.value = '';
 });
 
-world.onPortalSelect((id) => {
-  const game = GAMES.find((entry) => entry.id === id);
-  showToast(
-    lobbyToast,
-    game
-      ? `Portal „${game.title}” — ta gierka powstaje. Plaza Kulki działa już teraz!`
-      : 'Portal',
-  );
+styleSwitch.addEventListener('click', (event) => {
+  const button = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-style]');
+  if (button?.dataset.style === 'human' || button?.dataset.style === 'balls') {
+    applyStyle(button.dataset.style);
+  }
 });
 
+$('#wave-btn').addEventListener('click', triggerWave);
+$('#camera-btn').addEventListener('click', () => setPhotoMode(!photoModeActive));
+$('#photo-wave').addEventListener('click', triggerWave);
+$('#photo-shoot').addEventListener('click', takePhoto);
+$('#photo-close').addEventListener('click', () => setPhotoMode(false));
+
 window.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape' && lobby.classList.contains('is-active')) goHome();
+  if (!lobby.classList.contains('is-active')) return;
+  if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) {
+    return;
+  }
+  if (event.key === 'Escape') {
+    if (photoModeActive) setPhotoMode(false);
+    else goHome();
+    return;
+  }
+  if (event.code === 'KeyE') {
+    event.preventDefault();
+    triggerWave();
+  }
+  if (event.code === 'KeyC') {
+    event.preventDefault();
+    setPhotoMode(!photoModeActive);
+  }
 });
 
 // Sterowanie dotykowe
@@ -321,8 +405,50 @@ if (window.matchMedia('(pointer: coarse)').matches) {
 
 // ------------------------------------------------------------------ inicjalizacja
 
-nickInput.value = state.nick;
-renderGames();
-renderSwatches();
-renderPlayerList();
-world.mount(heroStage, 'home');
+function wireWorld(): void {
+  world.onPortalSelect((id) => {
+    const game = GAMES.find((entry) => entry.id === id);
+    showToast(
+      lobbyToast,
+      game
+        ? `Portal „${game.title}” — ta gierka powstaje. Plaza Kulki działa już teraz!`
+        : 'Portal',
+    );
+  });
+  world.onWave((name) => showToast(lobbyToast, `${name} macha do Ciebie 👋`));
+}
+
+async function boot(): Promise<void> {
+  let assets: HumanAssets | null = null;
+  try {
+    assets = await loadHumanAssets();
+  } catch (error) {
+    console.warn('Nie udało się wczytać modeli postaci:', error);
+  }
+  if (!assets) state.style = 'balls';
+
+  world = new World({
+    color: state.color,
+    name: state.nick,
+    assets,
+    style: state.style,
+  });
+  wireWorld();
+
+  nickInput.value = state.nick;
+  renderGames();
+  renderSwatches();
+  renderPlayerList();
+  world.mount(heroStage, 'home');
+  updateStyleUI();
+
+  if (!assets) {
+    const humanButton = styleSwitch.querySelector<HTMLButtonElement>('[data-style="human"]');
+    if (humanButton) humanButton.disabled = true;
+    showToast(globalToast, 'Nie udało się wczytać postaci — dostępny styl klasyczny z kulek.');
+  }
+
+  bootOverlay.classList.add('is-done');
+}
+
+void boot();

@@ -1,14 +1,18 @@
 import * as THREE from 'three';
-import { BallAvatar, createLabel, scaleLabelToDistance, type LabelHandle } from './avatar';
+import { createLabel, scaleLabelToDistance, type LabelHandle } from './avatar';
+import { Character, type AvatarStyle } from './character';
+import type { HumanAssets } from './human';
 import { BOTS, GAMES, PALETTE } from './games';
 
 export type Mode = 'home' | 'lobby';
 
 interface Bot {
-  avatar: BallAvatar;
+  avatar: Character;
+  name: string;
   target: THREE.Vector3;
   timer: number;
   speed: number;
+  waveTimer: number;
 }
 
 interface Portal {
@@ -83,9 +87,11 @@ export class World {
   private readonly heroCamera = new THREE.PerspectiveCamera(38, 1, 0.1, 100);
   private readonly lobbyCamera = new THREE.PerspectiveCamera(58, 1, 0.1, 200);
 
-  private readonly heroAvatar: BallAvatar;
-  private readonly player: BallAvatar;
+  private readonly heroAvatar: Character;
+  private readonly player: Character;
   private readonly bots: Bot[] = [];
+  private readonly assets: HumanAssets | null;
+  private style: AvatarStyle;
   private readonly portals: Portal[] = [];
   private readonly heroOrbs: Orb[] = [];
   private readonly centerpiece = new THREE.Group();
@@ -111,12 +117,25 @@ export class World {
   private jumpHeight = 0;
   private camReady = false;
   private portalHandler: ((id: string) => void) | undefined;
+  private waveHandler: ((name: string) => void) | undefined;
+  private photoMode = false;
+  private photoYaw = 0.35;
+  private photoPitch = 0.12;
+  private photoDistance = 4.2;
 
-  constructor(options: { color: string; name: string }) {
+  constructor(options: {
+    color: string;
+    name: string;
+    assets: HumanAssets | null;
+    style: AvatarStyle;
+  }) {
+    this.assets = options.assets;
+    this.style = options.style;
     this.renderer = new THREE.WebGLRenderer({
       antialias: true,
       alpha: true,
       powerPreference: 'high-performance',
+      preserveDrawingBuffer: true, // potrzebne do zapisu zdjęć z trybu kamery
     });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.shadowMap.enabled = true;
@@ -127,8 +146,20 @@ export class World {
     this.renderer.setClearColor(0x000000, 0);
     this.renderer.domElement.className = 'stage__canvas';
 
-    this.heroAvatar = new BallAvatar({ color: options.color, scale: 0.92 });
-    this.player = new BallAvatar({ color: options.color, label: options.name });
+    this.heroAvatar = new Character({
+      color: options.color,
+      scale: 0.92,
+      assets: this.assets,
+      templateIndex: 0,
+      style: this.style,
+    });
+    this.player = new Character({
+      color: options.color,
+      label: options.name,
+      assets: this.assets,
+      templateIndex: 1,
+      style: this.style,
+    });
 
     this.buildHero();
     this.buildLobby();
@@ -156,7 +187,12 @@ export class World {
     this.keys.clear();
     this.joystick.x = 0;
     this.joystick.y = 0;
-    if (mode === 'lobby') this.camReady = false;
+    if (mode === 'lobby') {
+      this.camReady = false;
+    } else {
+      this.photoMode = false;
+      this.setLabelsVisible(true);
+    }
   }
 
   setPlayerColor(color: string): void {
@@ -168,8 +204,52 @@ export class World {
     this.player.setLabel(name);
   }
 
+  setStyle(style: AvatarStyle): void {
+    this.style = style;
+    this.heroAvatar.setStyle(style);
+    this.player.setStyle(style);
+    for (const bot of this.bots) bot.avatar.setStyle(style);
+  }
+
+  get activeStyle(): AvatarStyle {
+    return this.player.activeStyle;
+  }
+
+  get hasHumans(): boolean {
+    return this.assets !== null;
+  }
+
+  /** Machnięcie bez VR — mechanicznym odpowiednikiem gestu z VRChat. */
+  wave(): void {
+    if (this.mode !== 'lobby') return;
+    this.player.wave();
+  }
+
+  setPhotoMode(enabled: boolean): void {
+    this.photoMode = enabled && this.mode === 'lobby';
+    this.setLabelsVisible(!this.photoMode);
+  }
+
+  private setLabelsVisible(visible: boolean): void {
+    this.player.setLabelVisible(visible);
+    for (const bot of this.bots) bot.avatar.setLabelVisible(visible);
+  }
+
+  /** Zwraca gotowe zdjęcie (data URL PNG) z aktualnej klatki. */
+  capturePhoto(): string {
+    this.renderer.render(
+      this.mode === 'home' ? this.heroScene : this.lobbyScene,
+      this.mode === 'home' ? this.heroCamera : this.lobbyCamera,
+    );
+    return this.renderer.domElement.toDataURL('image/png');
+  }
+
   onPortalSelect(handler: (id: string) => void): void {
     this.portalHandler = handler;
+  }
+
+  onWave(handler: (name: string) => void): void {
+    this.waveHandler = handler;
   }
 
   setJoystick(x: number, y: number): void {
@@ -441,15 +521,23 @@ export class World {
 
     // Boty — docelowo podmieniane na prawdziwych graczy z serwera
     BOTS.forEach((bot, i) => {
-      const avatar = new BallAvatar({ color: bot.color, label: bot.name });
+      const avatar = new Character({
+        color: bot.color,
+        label: bot.name,
+        assets: this.assets,
+        templateIndex: i % 4,
+        style: this.style,
+      });
       avatar.root.position.copy(this.pickBotTarget());
       avatar.root.rotation.y = (i / BOTS.length) * Math.PI * 2;
       this.lobbyScene.add(avatar.root);
       this.bots.push({
         avatar,
+        name: bot.name,
         target: this.pickBotTarget(),
         timer: 2 + Math.random() * 4,
         speed: 1.1 + Math.random() * 0.9,
+        waveTimer: 6 + i * 4 + Math.random() * 8,
       });
     });
   }
@@ -499,17 +587,35 @@ export class World {
 
       if (this.mode === 'home') {
         this.heroAngle -= dx * 0.008;
+      } else if (this.photoMode) {
+        this.photoYaw -= dx * 0.006;
+        this.photoPitch = THREE.MathUtils.clamp(this.photoPitch + dy * 0.004, -0.35, 0.75);
       } else {
         this.yaw -= dx * 0.005;
         this.pitch = THREE.MathUtils.clamp(this.pitch + dy * 0.002, -0.12, 0.8);
       }
     });
 
+    canvas.addEventListener(
+      'wheel',
+      (event: WheelEvent) => {
+        if (!this.photoMode) return;
+        event.preventDefault();
+        this.photoDistance = THREE.MathUtils.clamp(
+          this.photoDistance + event.deltaY * 0.005,
+          2.2,
+          9,
+        );
+      },
+      { passive: false },
+    );
+
     const endDrag = (event: PointerEvent) => {
       if (!this.dragging) return;
       this.dragging = false;
       if (
         this.mode === 'lobby' &&
+        !this.photoMode &&
         this.dragMoved < 8 &&
         Math.hypot(
           event.clientX - this.pointerStart.x,
@@ -567,8 +673,8 @@ export class World {
   }
 
   private updateHero(): void {
-    this.heroAvatar.update(this.elapsed, 0.16);
-    this.heroAvatar.root.rotation.y = this.elapsed * 0.22;
+    this.heroAvatar.update(this.elapsed, this.activeStyle === 'balls' ? 0.16 : 0);
+    this.heroAvatar.root.rotation.y = this.elapsed * (this.activeStyle === 'balls' ? 0.22 : 0.1);
 
     for (const orb of this.heroOrbs) {
       const angle = orb.angle + this.elapsed * orb.speed;
@@ -579,12 +685,13 @@ export class World {
       );
     }
 
+    const heroDistance = this.activeStyle === 'balls' ? 5.1 : 4.2;
     this.heroCamera.position.set(
-      Math.sin(this.heroAngle) * 5.1,
-      2.6,
-      Math.cos(this.heroAngle) * 5.1,
+      Math.sin(this.heroAngle) * heroDistance,
+      this.activeStyle === 'balls' ? 2.6 : 2.1,
+      Math.cos(this.heroAngle) * heroDistance,
     );
-    this.heroCamera.lookAt(0, 1.12, 0);
+    this.heroCamera.lookAt(0, this.activeStyle === 'balls' ? 1.12 : 0.95, 0);
   }
 
   private updateLobby(dt: number): void {
@@ -638,6 +745,12 @@ export class World {
 
     for (const bot of this.bots) {
       bot.timer -= dt;
+      bot.waveTimer -= dt;
+      if (bot.waveTimer <= 0) {
+        bot.avatar.wave();
+        this.waveHandler?.(bot.name);
+        bot.waveTimer = 20 + Math.random() * 30;
+      }
       const botPosition = bot.avatar.root.position;
       const radialBot = Math.hypot(botPosition.x, botPosition.z);
       if (radialBot > 9.2) {
@@ -681,8 +794,9 @@ export class World {
         const dx = b.x - a.x;
         const dz = b.z - a.z;
         const gap = Math.hypot(dx, dz);
-        if (gap > 0.001 && gap < 1.6) {
-          const push = (1.6 - gap) * Math.min(1, dt * 4);
+        const minGap = this.activeStyle === 'balls' ? 1.6 : 2.8;
+        if (gap > 0.001 && gap < minGap) {
+          const push = (minGap - gap) * Math.min(1, dt * 4);
           const nx = (dx / gap) * push;
           const nz = (dz / gap) * push;
           a.x -= nx;
@@ -700,20 +814,36 @@ export class World {
     }
 
     const target = new THREE.Vector3(position.x, position.y + 1.3, position.z);
-    const distance = 8.2 * Math.cos(this.pitch * 0.55);
-    const desired = new THREE.Vector3(
-      target.x + Math.sin(this.yaw) * distance,
-      target.y + 2.1 + this.pitch * 5.5,
-      target.z + Math.cos(this.yaw) * distance,
-    );
+    let desired: THREE.Vector3;
+    let lookAt: THREE.Vector3;
+
+    if (this.photoMode) {
+      // Wirtualna kamera z VRChat: orbituje wokół postaci, niezależnie od ruchu gracza.
+      const focus = new THREE.Vector3(position.x, position.y + 1.0, position.z);
+      const horizontal = this.photoDistance * Math.cos(this.photoPitch);
+      desired = new THREE.Vector3(
+        focus.x + Math.sin(this.photoYaw) * horizontal,
+        focus.y + 0.35 + Math.sin(this.photoPitch) * this.photoDistance,
+        focus.z + Math.cos(this.photoYaw) * horizontal,
+      );
+      lookAt = focus;
+    } else {
+      const distance = 8.2 * Math.cos(this.pitch * 0.55);
+      desired = new THREE.Vector3(
+        target.x + Math.sin(this.yaw) * distance,
+        target.y + 2.1 + this.pitch * 5.5,
+        target.z + Math.cos(this.yaw) * distance,
+      );
+      lookAt = target;
+    }
 
     if (!this.camReady) {
       this.lobbyCamera.position.copy(desired);
-      this.camTarget.copy(target);
+      this.camTarget.copy(lookAt);
       this.camReady = true;
     } else {
       this.lobbyCamera.position.lerp(desired, 1 - Math.exp(-dt * 6));
-      this.camTarget.lerp(target, 1 - Math.exp(-dt * 9));
+      this.camTarget.lerp(lookAt, 1 - Math.exp(-dt * 9));
     }
     this.lobbyCamera.lookAt(this.camTarget);
 

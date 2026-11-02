@@ -87,10 +87,22 @@ export function createLabel(text: string): LabelHandle {
   );
   sprite.scale.set(1.6, 0.4, 1);
   // Lekkie rozproszenie wysokości, żeby nicki stojących obok siebie awatarów się nie zlepiały.
-  sprite.position.set(0, 2.7 + Math.random() * 0.28, 0);
+  sprite.position.set(0, 2.7 + Math.random() * 0.5, 0);
   sprite.renderOrder = 20;
 
   return { sprite, setText: draw };
+}
+
+/** Wspólny kontrakt dla obu stylów awatara (kulki i postacie ludzkie). */
+export interface Avatar {
+  readonly root: THREE.Group;
+  setColor(hex: string): void;
+  setLabel(text: string): void;
+  setLabelVisible(visible: boolean): void;
+  scaleLabel(distance: number): void;
+  update(elapsed: number, intensity: number): void;
+  wave(): void;
+  isWaving(): boolean;
 }
 
 export interface AvatarOptions {
@@ -99,7 +111,7 @@ export interface AvatarOptions {
   scale?: number;
 }
 
-export class BallAvatar {
+export class BallAvatar implements Avatar {
   readonly root = new THREE.Group();
 
   private readonly rig = new THREE.Group();
@@ -114,6 +126,8 @@ export class BallAvatar {
   private readonly limbMat: THREE.MeshPhysicalMaterial;
   private readonly phase = Math.random() * Math.PI * 2;
   private label: LabelHandle | undefined;
+  private lastElapsed = 0;
+  private waveStart = -100;
 
   constructor(options: AvatarOptions) {
     const makeMaterial = () =>
@@ -208,23 +222,45 @@ export class BallAvatar {
     this.root.add(this.label.sprite);
   }
 
+  setLabelVisible(visible: boolean): void {
+    if (this.label) this.label.sprite.visible = visible;
+  }
+
   scaleLabel(distance: number): void {
     if (this.label) scaleLabelToDistance(this.label, distance, 0.85);
   }
 
+  wave(): void {
+    this.waveStart = this.lastElapsed;
+  }
+
+  isWaving(): boolean {
+    return this.lastElapsed - this.waveStart < 2.2;
+  }
+
   /** intensity: 0 = stoi, 1 = biegnie. */
   update(elapsed: number, intensity: number): void {
+    this.lastElapsed = elapsed;
     const t = elapsed + this.phase;
     const walk = Math.sin(t * 7) * intensity;
     const idle = Math.sin(t * 1.8);
 
     this.armL.rotation.x = walk * 0.7;
     this.armR.rotation.x = -walk * 0.7;
+    this.armR.rotation.z = 0;
     this.legL.rotation.x = -walk * 0.85;
     this.legR.rotation.x = walk * 0.85;
 
+    if (this.isWaving()) {
+      const w = elapsed - this.waveStart;
+      this.armR.rotation.z = -1.85;
+      this.armR.rotation.x = Math.sin(w * 11) * 0.55;
+      this.rig.rotation.z = -0.05;
+    } else {
+      this.rig.rotation.z = Math.sin(t * 3.5) * 0.025 * intensity;
+    }
+
     this.rig.position.y = idle * 0.035 + Math.abs(walk) * 0.035;
-    this.rig.rotation.z = Math.sin(t * 3.5) * 0.025 * intensity;
     this.body.scale.set(1 + idle * 0.012, 1.5 - idle * 0.02, 0.9 + idle * 0.012);
     this.head.rotation.z = Math.sin(t * 1.3) * 0.04;
   }
