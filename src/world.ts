@@ -472,7 +472,7 @@ export class World {
     this.lobbyScene.add(this.centerpiece);
 
     // Portale = pozostałe gierki z katalogu
-    const portalGames = GAMES.filter((game) => game.id !== 'plaza');
+    const portalGames = GAMES.filter((game) => game.id !== 'plaza').slice(0, 3);
     // Trzy bramy stoją w rzędzie na dalszym końcu placu, zwrócone do kamery.
     const angles = [Math.PI - 0.72, Math.PI, Math.PI + 0.72];
     portalGames.forEach((game, i) => {

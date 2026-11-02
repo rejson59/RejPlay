@@ -155,34 +155,59 @@ const CATEGORY_NAMES: Record<string, string> = {
   social: 'Towarzyskie',
   race: 'Wyścigi',
   platform: 'Platformówki',
+  creative: 'Kreatywne',
 };
 
 let activeCategory = 'all';
 let searchQuery = '';
 let featuredIndex = 0;
+let sortMode = 'popular';
+let featuredPaused = false;
+
+function sortGames(games: GameInfo[]): GameInfo[] {
+  const copy = [...games];
+  switch (sortMode) {
+    case 'new':
+      return copy.sort((a, b) => b.added - a.added);
+    case 'name':
+      return copy.sort((a, b) => a.title.localeCompare(b.title, 'pl'));
+    case 'rating':
+      return copy.sort((a, b) => b.likes - a.likes);
+    default:
+      return copy.sort((a, b) => b.playing - a.playing || b.waiting - a.waiting);
+  }
+}
 
 function renderGames(): void {
   const query = searchQuery.trim().toLowerCase();
-  const visible = GAMES.filter((game) => {
-    const matchesCategory = activeCategory === 'all' || game.category === activeCategory;
-    const matchesQuery =
-      !query ||
-      `${game.title} ${game.tag} ${game.description}`.toLowerCase().includes(query);
-    return matchesCategory && matchesQuery;
-  });
+  const visible = sortGames(
+    GAMES.filter((game) => {
+      const matchesCategory = activeCategory === 'all' || game.category === activeCategory;
+      const haystack = `${game.title} ${game.tag} ${game.description} ${game.claim} ${
+        CATEGORY_NAMES[game.category] ?? ''
+      }`.toLowerCase();
+      return matchesCategory && (!query || haystack.includes(query));
+    }),
+  );
 
   gameGrid.innerHTML = visible
     .map((game) => {
       const art = game.art ? `--card-art:url('${game.art}');` : '';
+      const stats = game.ready
+        ? `<span class="game-card__stat">Ocena ${game.likes}%</span>
+           <span class="game-card__stat"><span class="dot-live"></span>${game.playing} gra teraz</span>`
+        : `<span class="game-card__stat">Ocena ${game.likes}%</span>
+           <span class="game-card__stat">${game.waiting} czeka na start</span>`;
       return `
         <article class="game-card ${game.ready ? 'game-card--ready' : ''}" style="${art}">
           <div class="game-card__art" aria-hidden="true">
-            <span class="game-card__badge">${game.ready ? 'Działa' : 'Wkrótce'}</span>
+            <span class="game-card__badge ${game.ready ? '' : 'game-card__badge--soon'}">${game.ready ? 'Działa' : 'Wkrótce'}</span>
           </div>
           <div class="game-card__body">
             <span class="game-card__tag">${escapeHtml(game.tag)}</span>
             <h3>${escapeHtml(game.title)}</h3>
             <p>${escapeHtml(game.description)}</p>
+            <div class="game-card__stats">${stats}</div>
             <div class="game-card__foot">
               <span class="game-card__players">◉ ${escapeHtml(game.players)}</span>
               <button
@@ -198,8 +223,7 @@ function renderGames(): void {
     })
     .join('');
 
-  const shelfEmpty = $('#shelf-empty');
-  shelfEmpty.hidden = visible.length > 0;
+  $('#shelf-empty').hidden = visible.length > 0;
   $('#shelf-count').textContent = `${visible.length} ${visible.length === 1 ? 'świat' : 'światy'}`;
   $('#shelf-title').textContent =
     activeCategory === 'all' ? 'Popularne teraz' : CATEGORY_NAMES[activeCategory] ?? 'Katalog';
@@ -209,14 +233,14 @@ function renderFeatured(): void {
   const game = GAMES[featuredIndex];
   $('#featured-title').textContent = game.title;
   $('#featured-tag').textContent = CATEGORY_NAMES[game.category] ?? game.tag;
-  $('#featured-desc').textContent = game.description;
-  $('#featured-meta').textContent = `${game.tag} · ${game.players}`;
+  $('#featured-desc').textContent = game.claim;
+  $('#featured-meta').textContent = `${game.tag} · ${game.players} · Ocena ${game.likes}%`;
   $('#featured-art').style.setProperty(
     '--feat-art',
     game.art ? `url('${game.art}')` : `linear-gradient(135deg, ${game.color}, ${game.accent})`,
   );
-  const play = $<HTMLButtonElement>('#featured-play');
-  play.textContent = game.ready ? 'Graj teraz →' : 'Zobacz świat →';
+  $('#featured-play').textContent = game.ready ? 'Graj teraz →' : 'Zobacz świat →';
+  $('#featured-counter').textContent = `${String(featuredIndex + 1).padStart(2, '0')} / ${String(GAMES.length).padStart(2, '0')}`;
   $('#featured-dots').innerHTML = GAMES.map(
     (entry, i) =>
       `<button type="button" class="${i === featuredIndex ? 'is-active' : ''}" data-featured="${i}" role="tab" aria-label="${escapeHtml(entry.title)}" aria-selected="${i === featuredIndex}"></button>`,
@@ -226,6 +250,74 @@ function renderFeatured(): void {
 function setFeatured(index: number): void {
   featuredIndex = (index + GAMES.length) % GAMES.length;
   renderFeatured();
+}
+
+function renderFriends(): void {
+  const friends = BOTS.slice(0, 3);
+  $('#friends-row').innerHTML = friends
+    .map(
+      (bot) => `
+        <div class="friend">
+          <span class="friend__avatar" style="--fc:${bot.color}">${escapeHtml(bot.name.slice(0, 1))}</span>
+          <span>${escapeHtml(bot.name)}</span>
+          <span class="friend__status" title="online"></span>
+        </div>`,
+    )
+    .join('');
+}
+
+function readRecent(): string[] {
+  try {
+    const raw = JSON.parse(readStored('rejplay:recent') ?? '[]') as unknown;
+    if (Array.isArray(raw)) return raw.filter((id): id is string => typeof id === 'string').slice(0, 3);
+  } catch {
+    // Uszkodzony zapis — traktujemy jako pusty.
+  }
+  return [];
+}
+
+function recordVisit(id: string): void {
+  const next = [id, ...readRecent().filter((entry) => entry !== id)].slice(0, 3);
+  store('rejplay:recent', JSON.stringify(next));
+  renderRecent();
+}
+
+function renderRecent(): void {
+  const recent = readRecent()
+    .map((id) => GAMES.find((game) => game.id === id))
+    .filter((game): game is GameInfo => Boolean(game));
+  const row = $('#recent-row');
+  if (recent.length === 0) {
+    row.innerHTML = `<div class="recent-card--empty">Jeszcze nic nie odwiedziłeś. Wybierz świat z katalogu poniżej — pojawi się tutaj, żebyś mógł szybko wrócić.</div>`;
+    return;
+  }
+  row.innerHTML = recent
+    .map((game) => {
+      const art = game.art ? `--card-art:url('${game.art}');` : '';
+      return `
+        <div class="recent-card" style="${art}">
+          <span class="recent-card__art" aria-hidden="true"></span>
+          <div class="recent-card__body">
+            <h3>${escapeHtml(game.title)}</h3>
+            <span>${escapeHtml(game.tag)} · ${game.ready ? 'grywalny' : 'zapowiedź'}</span>
+          </div>
+          <button type="button" class="btn btn--sm btn--primary" data-game="${game.id}">Wróć</button>
+        </div>`;
+    })
+    .join('');
+}
+
+/** Jedno miejsce decyduje, co robi kliknięcie kafelka z dowolnej półki. */
+function launchGame(id: string): void {
+  const game = GAMES.find((entry) => entry.id === id);
+  if (!game) return;
+  if (game.id === 'zimny-slad') {
+    openGame('home');
+  } else if (game.id === 'plaza') {
+    enterLobby();
+  } else {
+    showToast(globalToast, `„${game.title}” jest jeszcze w przygotowaniu. Dodaj ją do obserwowanych!`);
+  }
 }
 
 function renderSwatches(): void {
@@ -412,7 +504,7 @@ function setPhotoMode(enabled: boolean): void {
 function triggerWave(): void {
   if (!lobby.classList.contains('is-active')) return;
   world.wave();
-  showToast(lobbyToast, `${state.nick} macha do wszystkich 👋`);
+  showToast(lobbyToast, `${state.nick} macha do wszystkich`);
 }
 
 function takePhoto(): void {
@@ -421,7 +513,7 @@ function takePhoto(): void {
   link.href = dataUrl;
   link.download = `rejplay-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.png`;
   link.click();
-  showToast(lobbyToast, 'Zdjęcie zapisane 📸');
+  showToast(lobbyToast, 'Zdjęcie zapisane');
 }
 
 function enterLobby(): void {
@@ -437,6 +529,7 @@ function enterLobby(): void {
   world.mount(lobbyStage, 'lobby');
   renderPlayerList();
   seedChat();
+  recordVisit('plaza');
   showToast(lobbyToast, 'Plaza Kulki · WASD = ruch, E = machnięcie, C = aparat');
 }
 
@@ -449,9 +542,10 @@ function goHome(): void {
   lobby.setAttribute('aria-hidden', 'true');
   home.setAttribute('aria-hidden', 'false');
   document.body.classList.remove('in-lobby');
-  document.title = 'RejPlay — gry, które zaczynają się od postaci';
+  document.title = 'RejPlay — odkrywaj światy i graj';
   chatInput.blur();
   world.mount(heroStage, 'home');
+  renderRecent();
 }
 
 // -------------------------------------------------------------- HUD Zimny Ślad
@@ -600,6 +694,7 @@ function openGame(from: 'home' | 'lobby'): void {
   document.body.classList.add('in-game');
   document.body.classList.remove('in-lobby');
   document.title = 'Zimny Ślad · RejPlay';
+  recordVisit('zimny-slad');
   gameIntro.hidden = false;
   gameHud.hidden = true;
   gameTools.hidden = true;
@@ -622,7 +717,7 @@ function startGameRound(): void {
   lastResultSignature = '';
   world.setPreviewClose(false);
   world.mount(gameStage, 'game'); // setActive(true) → HorrorGame.start()
-  world.horror.lockPointer();
+  world.horror.beginInput();
   showToast(gameToast, 'Przytrzymaj E, aby skanować. 1 / 2 / 3 zmieniają narzędzia.');
 }
 
@@ -643,8 +738,9 @@ function exitGame(): void {
     renderPlayerList();
   } else {
     home.setAttribute('aria-hidden', 'false');
-    document.title = 'RejPlay — gry, które zaczynają się od postaci';
+    document.title = 'RejPlay — odkrywaj światy i graj';
     world.mount(heroStage, 'home');
+    renderRecent();
   }
 }
 
@@ -700,30 +796,34 @@ $('#featured-dots').addEventListener('click', (event) => {
 });
 
 $('#featured-next').addEventListener('click', () => setFeatured(featuredIndex + 1));
+$('#featured-prev').addEventListener('click', () => setFeatured(featuredIndex - 1));
+$('#featured-play').addEventListener('click', () => launchGame(GAMES[featuredIndex].id));
 
-$('#featured-play').addEventListener('click', () => {
-  const game = GAMES[featuredIndex];
-  if (game.id === 'zimny-slad') openGame('home');
-  else if (game.id === 'plaza') enterLobby();
-  else showToast(globalToast, `„${game.title}” jest jeszcze w przygotowaniu.`);
+const featured = $('#featured-card');
+featured.addEventListener('mouseenter', () => { featuredPaused = true; });
+featured.addEventListener('mouseleave', () => { featuredPaused = false; });
+
+$('#shelf-sort').addEventListener('change', (event) => {
+  sortMode = (event.target as HTMLSelectElement).value;
+  renderGames();
 });
 
 window.setInterval(() => {
   const inFullscreenView =
     document.body.classList.contains('in-lobby') || document.body.classList.contains('in-game');
-  if (!inFullscreenView && !editor.classList.contains('is-active')) {
+  if (!inFullscreenView && !editor.classList.contains('is-active') && !featuredPaused) {
     setFeatured(featuredIndex + 1);
   }
 }, 9000);
 
 gameGrid.addEventListener('click', (event) => {
   const button = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-game]');
-  if (!button) return;
-  const selected: GameInfo | undefined = GAMES.find((entry) => entry.id === button.dataset.game);
-  if (!selected) return;
-  if (selected.id === 'zimny-slad') openGame('home');
-  else if (selected.id === 'plaza') enterLobby();
-  else showToast(globalToast, `„${selected.title}” jest jeszcze w przygotowaniu.`);
+  if (button?.dataset.game) launchGame(button.dataset.game);
+});
+
+$('#recent-row').addEventListener('click', (event) => {
+  const button = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-game]');
+  if (button?.dataset.game) launchGame(button.dataset.game);
 });
 
 swatches.addEventListener('click', (event) => {
@@ -916,7 +1016,7 @@ function wireWorld(): void {
       selected ? `„${selected.title}” — ${selected.ready ? 'jesteś już w tym świecie!' : 'ta gierka powstaje.'}` : 'Portal',
     );
   });
-  world.onWave((name) => showToast(lobbyToast, `${name} macha do Ciebie 👋`));
+  world.onWave((name) => showToast(lobbyToast, `${name} macha do Ciebie`));
 }
 
 async function boot(): Promise<void> {
@@ -952,6 +1052,8 @@ async function boot(): Promise<void> {
   $('#tile-nick').textContent = state.nick;
   renderFeatured();
   renderGames();
+  renderFriends();
+  renderRecent();
   renderSwatches();
   renderPlayerList();
   renderEditor();

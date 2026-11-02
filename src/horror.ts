@@ -428,24 +428,19 @@ export class HorrorGame {
       this.endInteract();
     });
 
+    // Rozglądanie bez pointer locku: movementX/Y działa przy wolnym kursorze,
+    // dzięki czemu przyciski HUD-u i notatnika pozostają klikalne.
     document.addEventListener('mousemove', (event) => {
-      if (!this.active || this.journal || this.result) return;
-      if (document.pointerLockElement === this.canvas) {
-        this.look(event.movementX, event.movementY);
-      }
+      if (!this.active || this.journal || this.result || this.dragging) return;
+      const target = event.target as HTMLElement | null;
+      if (target?.closest('button, input, select, .game__top, .game__tools, .game__touch')) return;
+      this.look(event.movementX, event.movementY);
     });
 
-    this.canvas.addEventListener('click', () => {
-      if (!this.active || this.journal || this.result) return;
-      if (document.pointerLockElement !== this.canvas) {
-        void this.canvas.requestPointerLock?.();
-      }
-    });
-
-    // Przeciąganie palcem / myszką bez pointer locku (mobile i fallback).
+    // Przeciąganie palcem (mobile). Mysz obsługuje mousemove powyżej.
     this.canvas.addEventListener('pointerdown', (event: PointerEvent) => {
       if (!this.active || this.journal || this.result) return;
-      if (event.pointerType === 'mouse' && document.pointerLockElement === this.canvas) return;
+      if (event.pointerType === 'mouse') return;
       this.dragging = true;
       this.lastPointer = { x: event.clientX, y: event.clientY };
     });
@@ -470,17 +465,9 @@ export class HorrorGame {
     this.joystick.y = y;
   }
 
-  /** Musi być wywołane w obrębie gestu użytkownika (kliknięcie przycisku). */
-  lockPointer(): void {
-    if (!this.active || this.journal || this.result) return;
+  /** Wywołane z gestu użytkownika — odblokowuje syntezę dźwięku. */
+  beginInput(): void {
     this.unlockAudio();
-    if (document.pointerLockElement !== this.canvas) {
-      try {
-        void this.canvas.requestPointerLock?.();
-      } catch {
-        // Brak pointer locku nie blokuje gry — działa też przeciąganie.
-      }
-    }
   }
 
   setInteracting(value: boolean): void {
@@ -535,7 +522,6 @@ export class HorrorGame {
       this.interacting = false;
       this.joystick.x = 0;
       this.joystick.y = 0;
-      if (document.pointerLockElement === this.canvas) document.exitPointerLock();
     } else {
       this.start();
     }
@@ -566,7 +552,6 @@ export class HorrorGame {
     this.journal = !this.journal;
     this.interacting = false;
     this.scan = 0;
-    if (this.journal && document.pointerLockElement === this.canvas) document.exitPointerLock();
     this.hint = this.journal
       ? 'Notatnik: porównaj ślady z opisem zjaw i złóż raport.'
       : 'Szukaj śladów. Narzędzia: 1, 2, 3 — skanuj, przytrzymując E.';
@@ -601,7 +586,6 @@ export class HorrorGame {
     };
     this.journal = false;
     this.interacting = false;
-    if (document.pointerLockElement === this.canvas) document.exitPointerLock();
     this.beep(win ? 660 : 150, 0.5, 0.05);
     this.emit();
     this.onFinish(this.result);

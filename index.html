@@ -92,6 +92,17 @@
               <button type="button" class="sidebar__link" data-category="platform">
                 <span class="sidebar__ico">▤</span> Platformówki
               </button>
+              <button type="button" class="sidebar__link" data-category="creative">
+                <span class="sidebar__ico">✎</span> Kreatywne
+              </button>
+            </div>
+
+            <div class="friends">
+              <div class="friends__head">
+                <span>Znajomi online</span>
+                <span class="friends__count">3</span>
+              </div>
+              <div class="friends__row" id="friends-row"></div>
             </div>
 
             <div class="sidebar__note">
@@ -121,12 +132,29 @@
                   <div class="featured__meta" id="featured-meta"></div>
                   <div class="featured__actions">
                     <button type="button" class="btn btn--primary" id="featured-play">Graj teraz <span aria-hidden="true">→</span></button>
-                    <button type="button" class="btn btn--ghost" id="featured-next">Następny świat <span aria-hidden="true">↻</span></button>
+                    <button type="button" class="btn btn--ghost" id="featured-prev" aria-label="Poprzedni świat">←</button>
+                    <button type="button" class="btn btn--ghost" id="featured-next" aria-label="Następny świat">→</button>
+                    <span class="featured__counter" id="featured-counter">01 / 06</span>
                   </div>
                 </div>
                 <div class="featured__art" id="featured-art" aria-hidden="true"></div>
               </div>
-              <div class="featured__dots" id="featured-dots" role="tablist" aria-label="Wyróżnione światy"></div>
+              <div class="featured__footer">
+                <div class="featured__dots" id="featured-dots" role="tablist" aria-label="Wyróżnione światy"></div>
+                <span class="featured__live"><span class="dot"></span> 214 osób gra teraz na RejPlay</span>
+              </div>
+            </section>
+
+            <!-- Ostatnio odwiedzane światy -->
+            <section class="recent" id="recent">
+              <div class="shelf__head">
+                <div>
+                  <span class="section__kicker">Twój ślad</span>
+                  <h2>Ostatnio odwiedzane</h2>
+                </div>
+                <span class="shelf__count">zapisane w tej przeglądarce</span>
+              </div>
+              <div class="recent__row" id="recent-row"></div>
             </section>
 
             <!-- Siatka gierek -->
@@ -137,7 +165,16 @@
                   <h2 id="shelf-title">Popularne teraz</h2>
                 </div>
                 <div class="shelf__right">
-                  <span class="shelf__count" id="shelf-count">4 światy</span>
+                  <span class="shelf__count" id="shelf-count">6 światów</span>
+                  <label class="shelf__sort" for="shelf-sort">
+                    <span>Sortuj</span>
+                    <select id="shelf-sort" aria-label="Sortowanie katalogu">
+                      <option value="popular">Popularność</option>
+                      <option value="new">Najnowsze</option>
+                      <option value="name">Nazwa A–Z</option>
+                      <option value="rating">Najlepiej oceniane</option>
+                    </select>
+                  </label>
                 </div>
               </div>
               <div class="game-grid" id="game-grid"></div>
@@ -370,7 +407,7 @@
               narzędziami i złóż raport, zanim skończą Ci się nerwy.
             </p>
             <ul class="intro__keys">
-              <li><kbd>W A S D</kbd> ruch · <kbd>mysz</kbd> rozglądanie</li>
+              <li><kbd>W A S D</kbd> ruch · <kbd>mysz</kbd> rozglądanie (bez blokady kursora)</li>
               <li><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> narzędzia · <kbd>E</kbd> przytrzymaj, aby skanować</li>
               <li><kbd>F</kbd> latarka · <kbd>J</kbd> notatnik · <kbd>Shift</kbd> bieg</li>
             </ul>

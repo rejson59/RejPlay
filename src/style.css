@@ -1222,6 +1222,15 @@ body.in-game {
   background: #07090a;
 }
 
+/* Kursor znika nad samą sceną, ale HUD pozostaje w pełni klikalny. */
+.game.is-active .stage--game .stage__canvas { cursor: none; }
+.game__top,
+.game__tools,
+.game__touch,
+.game__journal,
+.game__result,
+.game__intro { cursor: default; }
+
 .game__vignette {
   background: radial-gradient(ellipse at 50% 50%, transparent 22%, rgba(3, 5, 6, 0.88) 100%);
 }
@@ -2171,4 +2180,145 @@ body.in-game {
   .game-grid { grid-template-columns: 1fr; }
   .game-card__art { height: 150px; }
   .facts { padding: 16px; }
+}
+
+/* ============================================================== HOME v2
+   Metryki Roblox-like, ostatnio odwiedzane, znajomi, sortowanie. */
+
+.featured__actions .btn--ghost { padding: 9px 13px; }
+.featured__counter {
+  align-self: center;
+  margin-left: 8px;
+  color: #8e918c;
+  font-size: 11px;
+  letter-spacing: 0.16em;
+}
+.featured__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 13px;
+}
+.featured__dots { margin-top: 0; justify-content: flex-start; }
+.featured__live {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--home-muted);
+  font-size: 11px;
+}
+
+.friends {
+  padding: 14px;
+  border: 1px solid var(--home-line);
+  border-radius: 8px;
+  background: #fff;
+}
+.friends__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--home-muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.friends__count { color: var(--accent-deep); font-size: 11px; }
+.friends__row { display: flex; flex-direction: column; gap: 9px; margin-top: 12px; }
+.friend { display: flex; align-items: center; gap: 8px; color: var(--home-soft); font-size: 12px; }
+.friend__avatar {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--fc);
+  color: #161a1b;
+  font-size: 10px;
+  font-weight: 700;
+}
+.friend__status { width: 6px; height: 6px; margin-left: auto; border-radius: 50%; background: #6f8a86; }
+
+.recent { margin-bottom: 38px; }
+.recent .shelf__head { margin-bottom: 14px; }
+.recent__row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.recent-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px;
+  border: 1px solid var(--home-line);
+  border-radius: 10px;
+  background: #fff;
+}
+.recent-card__art {
+  flex: none;
+  width: 84px;
+  height: 62px;
+  border-radius: 6px;
+  background-image:
+    linear-gradient(180deg, rgba(0, 0, 0, 0.05), rgba(0, 0, 0, 0.3)),
+    var(--card-art, linear-gradient(135deg, #3c4445, #222728));
+  background-size: cover;
+  background-position: center;
+}
+.recent-card__body { flex: 1; min-width: 0; }
+.recent-card__body h3 {
+  overflow: hidden;
+  font-size: 15px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.recent-card__body span { display: block; color: var(--home-muted); font-size: 10.5px; }
+.recent-card .btn { flex: none; padding: 7px 11px; font-size: 11px; }
+.recent-card--empty {
+  grid-column: 1 / -1;
+  padding: 18px;
+  border: 1px dashed var(--home-line-strong);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--home-muted);
+  font-size: 12.5px;
+}
+
+.shelf__right { display: flex; align-items: center; gap: 12px; }
+.shelf__sort { display: inline-flex; align-items: center; gap: 7px; color: var(--home-muted); font-size: 11px; }
+.shelf__sort select {
+  padding: 7px 10px;
+  border: 1px solid var(--home-line);
+  border-radius: 6px;
+  outline: none;
+  background: #fff;
+  color: var(--home-text);
+  font-size: 12px;
+}
+.shelf__sort select:focus { border-color: var(--accent-deep); }
+
+.game-card__stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 10px;
+  color: var(--home-muted);
+  font-size: 10.5px;
+}
+.game-card__stat { display: inline-flex; align-items: center; gap: 5px; }
+.dot-live { width: 5px; height: 5px; border-radius: 50%; background: #6f8a86; }
+.game-card__badge--soon { background: rgba(15, 18, 19, 0.55); }
+
+@media (max-width: 1180px) {
+  .recent__row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 760px) {
+  .friends,
+  .sidebar__note { display: none; }
+  .featured__footer { justify-content: center; }
+  .featured__live { display: none; }
+  .featured__counter { margin-left: 2px; }
+  .recent__row { grid-template-columns: 1fr; }
+  .shelf__head { flex-wrap: wrap; }
+  .shelf__right { width: 100%; justify-content: space-between; }
 }

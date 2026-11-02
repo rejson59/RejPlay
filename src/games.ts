@@ -1,3 +1,5 @@
+export type GameCategory = 'horror' | 'social' | 'race' | 'platform' | 'creative';
+
 export interface GameInfo {
   id: string;
   title: string;
@@ -8,10 +10,17 @@ export interface GameInfo {
   accent: string;
   art?: string;
   ready: boolean;
-  category: 'horror' | 'social' | 'race' | 'platform';
+  category: GameCategory;
+  /** Procent pozytywnych ocen, liczba grających, liczba oczekujących, kolejność dodania. */
+  likes: number;
+  playing: number;
+  waiting: number;
+  added: number;
+  /** Krótki claim używany w karuzeli wyróżnionych światów. */
+  claim: string;
 }
 
-/** Katalog gierek. Na etapie prototypu dane są statyczne — później przyjdzie tu Supabase. */
+/** Katalog światów. Na etapie prototypu dane są statyczne — później przyjdzie tu Supabase. */
 export const GAMES: GameInfo[] = [
   {
     id: 'zimny-slad',
@@ -25,6 +34,11 @@ export const GAMES: GameInfo[] = [
     art: '/art/house.jpg',
     ready: true,
     category: 'horror',
+    likes: 94,
+    playing: 128,
+    waiting: 0,
+    added: 6,
+    claim: 'Pierwsze pełne dochodzenie na RejPlay. Tylko latarka, trzy narzędzia i nerwy.',
   },
   {
     id: 'plaza',
@@ -38,28 +52,79 @@ export const GAMES: GameInfo[] = [
     art: '/art/plaza.jpg',
     ready: true,
     category: 'social',
+    likes: 91,
+    playing: 86,
+    waiting: 0,
+    added: 5,
+    claim: 'Miejsce, w którym zaczyna się każda rozgrywka. Machnij do kogoś i zrób zdjęcie.',
   },
   {
     id: 'wyscig',
     title: 'Kulkowy Wyścig',
-    description: 'Tocz się po torze, zbieraj przyspieszenia i wyprzedzaj znajomych na ostatniej prostej.',
+    description: 'Tocz się po mokrym torze, zbieraj przyspieszenia i wyprzedzaj znajomych na ostatniej prostej.',
     tag: '3D · Wyścigi',
     players: 'do 8 graczy',
     color: '#8a5f4c',
     accent: '#a08a5c',
+    art: '/art/race.jpg',
     ready: false,
     category: 'race',
+    likes: 88,
+    playing: 0,
+    waiting: 342,
+    added: 4,
+    claim: 'Betowy tor o zmierzchu. Każdy zakręt zostawia ślad na mokrym betonie.',
   },
   {
     id: 'skok',
     title: 'Skok nad Kropkami',
-    description: 'Platformówka z jedną zasadą: skacz od kulki do kulki i nie spadnij z plazy.',
+    description: 'Platformówka z jedną zasadą: skacz od kamienia do kamienia i nie spadnij w mgłę.',
     tag: '3D · Platformer',
     players: '1–6 graczy',
     color: '#4d6660',
     accent: '#6f6250',
+    art: '/art/obby.jpg',
     ready: false,
     category: 'platform',
+    likes: 85,
+    playing: 0,
+    waiting: 219,
+    added: 3,
+    claim: 'Mosty nad mgłą, latarnie co kilka skoków i zero drugich szans.',
+  },
+  {
+    id: 'miasto',
+    title: 'Miasto Kulek',
+    description: 'Mały brutalistyczny kwartał do spacerów, spotkań i wspólnego odkrywania zakątków.',
+    tag: '3D · Miasto',
+    players: 'do 16 graczy',
+    color: '#6b7076',
+    accent: '#8a7250',
+    art: '/art/city.jpg',
+    ready: false,
+    category: 'social',
+    likes: 82,
+    playing: 0,
+    waiting: 187,
+    added: 2,
+    claim: 'Deszcz, beton i ciepłe okna. Otwarte spacery dla całej ekipy.',
+  },
+  {
+    id: 'pracownia',
+    title: 'Pracownia Światów',
+    description: 'Warsztat twórcy: układaj własne pomieszczenia, testuj je i publikuj jako nową gierkę.',
+    tag: 'Kreator · UGC',
+    players: '1–4 twórców',
+    color: '#7c6a55',
+    accent: '#4f5b5c',
+    art: '/art/studio.jpg',
+    ready: false,
+    category: 'creative',
+    likes: 79,
+    playing: 0,
+    waiting: 411,
+    added: 1,
+    claim: 'Od szkicu na stole do grywalnego świata. Edytor świata w przygotowaniu.',
   },
 ];
 

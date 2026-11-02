@@ -17,10 +17,18 @@ Jasny, neutralny ekran odkrywania gier — wzorem układu Robloxa, ale we
 własnej, stonowanej oprawie (bez neonów i „vibe coded” gradientów):
 
 - górny pasek z wyszukiwarką (`/` focus), nickiem i przyciskiem wejścia do lobby,
-- lewy pasek z nawigacją i kategoriami: Horror, Towarzyskie, Wyścigi, Platformówki,
-- karuzela wyróżnionych światów (rotuje co 9 s, można przełączać kropkami),
-- siatka kafelków gier z okładkami, metryką graczy i statusem `Działa` / `Wkrótce`,
-- kafelek z live podglądem postaci oraz szybka konfiguracja nicku, stylu i koloru.
+- lewy pasek z nawigacją, kategoriami (Horror, Towarzyskie, Wyścigi, Platformówki,
+  Kreatywne) i panelem „Znajomi online",
+- karuzela wyróżnionych światów: 6 slajdów z własnymi claimami, licznikiem `01 / 06`,
+  strzałkami, kropkami i pauzą po najechaniu,
+- sekcja **„Ostatnio odwiedzane"** — zapisuje 3 ostatnie światy w `localStorage`
+  (`rejplay:recent`) i pozwala jednym kliknięciem do nich wrócić,
+- siatka **6 kafelków**, każdy z własną, wygenerowaną okładką, metrykami w stylu
+  platformy (`Ocena 94%`, `128 gra teraz` albo `342 czeka na start`), liczbą graczy
+  i statusem `Działa` / `Wkrótce`,
+- sortowanie: Popularność / Najnowsze / Nazwa A–Z / Najlepiej oceniane,
+- kafelek z live podglądem postaci, szybka konfiguracja nicku / stylu / koloru
+  oraz blok „Jak to działa".
 
 **Klimat konkretnej gry nie rozlewa się na tło całej strony** — grafiki horroru
 pojawiają się tylko w kafelku wyróżnionym i miniaturce gry.
@@ -77,7 +85,7 @@ zanim skończą się nerwy.
 | Zdarzenia | migotanie latarki, zimno, stuknięcie, półprzezroczysta sylwetka |
 | Raport | `J` → wybierz zjawę zgodną ze śladami; pomyłka kosztuje 24 nerwy |
 
-Sterowanie: `WASD` + mysz (pointer lock), `Shift` bieg, `F` latarka, `J` notatnik,
+Sterowanie: `WASD` + mysz (`movementX/Y`, bez pointer locku — HUD pozostaje klikalny), `Shift` bieg, `F` latarka, `J` notatnik,
 `Esc` / `← Wyjdź` powrót do lobby. Na dotyku działa joystick i przyciski
 `Skanuj`, `Narzędzie`, `Notatnik`, `Latarka`.
 
@@ -128,7 +136,8 @@ src/human.ts          ładowanie Rocketbox GLB, tekstury, animacje, barwienie
 src/avatar.ts         klasyczny awatar z sześciu kulek + etykiety
 src/horror.ts         Zimny Ślad: geometria domu, silnik, HUD-state, dźwięk
 public/characters/    8 modeli Rocketbox GLB + tekstury + biblioteki animacji
-public/art/           3 własne, wygenerowane grafiki (hero, dom, plaza)
+public/art/           7 własnych, wygenerowanych grafik (hero, dom, plaza,
+                      tor, platformy, miasto, pracownia)
 ```
 
 ---
@@ -140,8 +149,9 @@ public/art/           3 własne, wygenerowane grafiki (hero, dom, plaza)
   konwersji w repozytorium `KunalSiyag/gridfall` (MIT), które w `PROVENANCE.json`
   wskazuje na commit Rocketbox `0943055…`. Pełna treść licencji:
   `public/characters/LICENSE-rocketbox-MIT.txt`.
-- **Grafiki** w `public/art/` (`hero.jpg`, `house.jpg`, `plaza.jpg`) są
-  wygenerowanymi, oryginalnymi ilustracjami dla tego prototypu.
+- **Grafiki** w `public/art/` (`hero.jpg`, `house.jpg`, `plaza.jpg`, `race.jpg`,
+  `obby.jpg`, `city.jpg`, `studio.jpg`) są wygenerowanymi, oryginalnymi
+  ilustracjami dla tego prototypu.
 - **Dźwięki** w grze są syntetyzowane w locie (`AudioContext`), bez plików audio.
 - Three.js, Vite i TypeScript — własne licencje open source w `node_modules`.
 
