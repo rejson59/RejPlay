@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="pl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0a0c18" />
+    <meta
+      name="description"
+      content="RejPlay — przeglądarkowa platforma do grania i tworzenia mini gierek. Wejdź do lobby i pobiegaj awatarem z sześciu kulek."
+    />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3CradialGradient id='g' cx='35%25' cy='30%25'%3E%3Cstop offset='0' stop-color='%23c9b8ff'/%3E%3Cstop offset='1' stop-color='%237c5cff'/%3E%3C/radialGradient%3E%3C/defs%3E%3Ccircle cx='32' cy='32' r='27' fill='url(%23g)'/%3E%3C/svg%3E"
+    />
+    <title>RejPlay — Twoje mini gierki w przeglądarce</title>
+  </head>
+  <body>
+    <div id="app">
+      <!-- ============ EKRAN GŁÓWNY ============ -->
+      <section id="home" class="screen home">
+        <header class="topbar wrap">
+          <a class="brand" href="#top" aria-label="RejPlay — strona główna">
+            <span class="brand__orb" aria-hidden="true"></span>
+            <span>Rej<span class="brand__accent">Play</span></span>
+          </a>
+
+          <nav class="nav" aria-label="Nawigacja główna">
+            <a href="#games">Gry</a>
+            <a href="#avatar">Awatar</a>
+            <button type="button" class="nav__link" data-action="open-info">Jak to działa</button>
+          </nav>
+
+          <div class="topbar__right">
+            <span class="status-pill"><span class="dot"></span> Wersja demo</span>
+            <button type="button" class="btn btn--sm btn--primary" data-action="enter-lobby">
+              Wejdź do lobby
+            </button>
+          </div>
+        </header>
+
+        <main id="top">
+          <section class="hero wrap">
+            <div class="hero__copy">
+              <span class="eyebrow">
+                <span class="eyebrow__spark" aria-hidden="true"></span>
+                Platforma do grania i tworzenia · bez instalacji
+              </span>
+
+              <h1>
+                Twoje mini gierki.<br />
+                <span class="gradient-text">Twój świat z kulek.</span>
+              </h1>
+
+              <p class="lead">
+                Wchodzisz na stronę i od razu grasz z innymi. Zaczynamy od lobby oraz awatara
+                złożonego z sześciu kulek — dokładnie tak, jak to wymyśliłeś: jedna na głowę,
+                po jednej na ręce, jedna wydłużona na ciało i dwie na nogi.
+              </p>
+
+              <div class="creator card">
+                <div class="creator__head">
+                  <span class="creator__title">Skonfiguruj swoją kulkę</span>
+                  <span class="creator__hint">podgląd na żywo →</span>
+                </div>
+
+                <label class="field" for="nick">
+                  <span>Twój nick</span>
+                  <input
+                    id="nick"
+                    type="text"
+                    maxlength="16"
+                    autocomplete="nickname"
+                    spellcheck="false"
+                    placeholder="Kulka_42"
+                  />
+                </label>
+
+                <div class="field">
+                  <span>Kolor awatara</span>
+                  <div class="swatches" id="swatches" role="group" aria-label="Kolor awatara"></div>
+                </div>
+
+                <div class="creator__actions">
+                  <button type="button" class="btn btn--primary" data-action="enter-lobby">
+                    Wejdź do lobby <span aria-hidden="true">→</span>
+                  </button>
+                  <a class="btn btn--ghost" href="#games">Zobacz gry</a>
+                </div>
+              </div>
+
+              <div class="hero__stats">
+                <div><strong>6</strong><span>kulek na awatara</span></div>
+                <div><strong>0</strong><span>plików do pobrania</span></div>
+                <div><strong>3D</strong><span>prosto w przeglądarce</span></div>
+              </div>
+            </div>
+
+            <div class="hero__visual">
+              <div class="hero__glow" aria-hidden="true"></div>
+              <div id="hero-stage" class="stage stage--hero" aria-label="Trójwymiarowy podgląd awatara"></div>
+
+              <span class="visual__label">Podgląd awatara · przeciągnij, żeby obrócić</span>
+              <span class="visual__badge visual__badge--head">1 × głowa</span>
+              <span class="visual__badge visual__badge--arms">2 × ręce</span>
+              <span class="visual__badge visual__badge--body">1 × ciało</span>
+              <span class="visual__badge visual__badge--legs">2 × nogi</span>
+              <span class="visual__footer">6 kulek · 1 awatar · nieskończenie wiele gier</span>
+            </div>
+          </section>
+
+          <section id="games" class="games wrap">
+            <div class="section__head">
+              <div>
+                <span class="section__kicker">Katalog</span>
+                <h2>Gierki na start</h2>
+                <p class="section__sub">
+                  Jedna działa już teraz. Reszta to miejsca, w które rozrośnie się platforma.
+                </p>
+              </div>
+              <span class="section__badge">4 światy w planach</span>
+            </div>
+            <div class="game-grid" id="game-grid"></div>
+          </section>
+
+          <section id="avatar" class="recipe wrap">
+            <div class="section__head">
+              <div>
+                <span class="section__kicker">Przepis na awatara</span>
+                <h2>Sześć kulek i gotowe</h2>
+                <p class="section__sub">
+                  Żadnych skomplikowanych modeli, rigów i importów. Każda część to jedna kula,
+                  więc awatar jest lekki, wszędzie taki sam i łatwy do pokolorowania.
+                </p>
+              </div>
+            </div>
+            <div class="recipe__grid">
+              <article class="recipe__item">
+                <span class="recipe__num">01</span>
+                <span class="recipe__orb recipe__orb--head" aria-hidden="true"></span>
+                <h3>Głowa</h3>
+                <p>Jedna kulka na samej górze. Opcjonalnie miejsce na nick nad nią.</p>
+              </article>
+              <article class="recipe__item">
+                <span class="recipe__num">02</span>
+                <span class="recipe__orb recipe__orb--arms" aria-hidden="true"></span>
+                <h3>Ręce</h3>
+                <p>Po jednej kulce z każdej strony. Machają, kiedy biegniesz.</p>
+              </article>
+              <article class="recipe__item">
+                <span class="recipe__num">03</span>
+                <span class="recipe__orb recipe__orb--body" aria-hidden="true"></span>
+                <h3>Ciało</h3>
+                <p>Jedna kulka rozciągnięta w pionie — jedyna, która nie jest idealnie okrągła.</p>
+              </article>
+              <article class="recipe__item">
+                <span class="recipe__num">04</span>
+                <span class="recipe__orb recipe__orb--legs" aria-hidden="true"></span>
+                <h3>Nogi</h3>
+                <p>Dwie kulki na dole. Toczą się w przeciwnych kierunkach przy ruchu.</p>
+              </article>
+            </div>
+          </section>
+        </main>
+
+        <footer class="footer wrap">
+          <span><strong>RejPlay</strong> · prototyp vertical slice 0</span>
+          <span>Zbudowane z Three.js i Vite · bez backendu, bez kont, bez instalacji</span>
+        </footer>
+      </section>
+
+      <!-- ============ LOBBY ============ -->
+      <section id="lobby" class="lobby" aria-hidden="true" aria-label="Lobby Plaza Kulki">
+        <div id="lobby-stage" class="stage stage--lobby"></div>
+        <div class="lobby__vignette" aria-hidden="true"></div>
+
+        <header class="lobby__top">
+          <button type="button" class="btn btn--sm btn--glass" id="back-home">← Ekran główny</button>
+          <div class="lobby__title">
+            <span>RejPlay · Lobby</span>
+            <h2>Plaza Kulki</h2>
+          </div>
+          <div class="status-pill status-pill--glass">
+            <span class="dot dot--green"></span>
+            <span id="online-count">5 graczy online</span>
+          </div>
+        </header>
+
+        <aside class="panel panel--players">
+          <h3>Gracze <span class="panel__count" id="player-count">5</span></h3>
+          <ul id="player-list"></ul>
+        </aside>
+
+        <aside class="panel panel--chat">
+          <h3>Czat <span class="panel__tag">demo · lokalny</span></h3>
+          <div class="chat__log" id="chat-log" aria-live="polite"></div>
+          <form id="chat-form" autocomplete="off">
+            <input id="chat-input" type="text" maxlength="80" placeholder="Napisz coś..." aria-label="Wiadomość na czacie" />
+            <button type="submit" aria-label="Wyślij wiadomość">→</button>
+          </form>
+        </aside>
+
+        <div class="controls-hint card">
+          <div><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd><span>ruch</span></div>
+          <div><span class="controls-hint__glyph">↔</span><span>przeciągnij: kamera</span></div>
+          <div><kbd>Spacja</kbd><span>skok</span></div>
+          <p>Kliknij kolorowy portal, żeby wybrać gierkę.</p>
+        </div>
+
+        <div class="touch-controls" id="touch-controls" hidden>
+          <div class="joystick" id="joystick" aria-label="Sterowanie ruchem">
+            <div class="joystick__knob" id="joystick-knob"></div>
+          </div>
+          <button type="button" class="jump-btn" id="jump-btn">Skok</button>
+        </div>
+
+        <div class="toast toast--lobby" id="lobby-toast" role="status"></div>
+      </section>
+
+      <div class="toast toast--global" id="global-toast" role="status"></div>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
