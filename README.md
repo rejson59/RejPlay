@@ -1,100 +1,174 @@
 # RejPlay
 
-Moje mini gierki :) — przeglądarkowa platforma do grania i tworzenia. Prototyp
-(vertical slice 0): **ekran główny + lobby 3D z realistycznymi postaciami**, bez
-backendu, bez kont, bez instalacji.
+Przeglądarkowy prototyp platformy do grania w małe gry 3D. Wchodzisz na stronę,
+przeglądasz katalog światów, tworzysz własną postać, spotykasz się w lobby i
+uruchamiasz pierwszą pełną grę: **Zimny Ślad**.
+
+Bez instalacji, bez konta i bez backendu — całość to statyczna aplikacja Vite +
+Three.js z jednym współdzielonym kontekstem WebGL.
+
+---
+
+## Co działa teraz
+
+### Strona główna (katalog w stylu platformy)
+
+Jasny, neutralny ekran odkrywania gier — wzorem układu Robloxa, ale we
+własnej, stonowanej oprawie (bez neonów i „vibe coded” gradientów):
+
+- górny pasek z wyszukiwarką (`/` focus), nickiem i przyciskiem wejścia do lobby,
+- lewy pasek z nawigacją i kategoriami: Horror, Towarzyskie, Wyścigi, Platformówki,
+- karuzela wyróżnionych światów (rotuje co 9 s, można przełączać kropkami),
+- siatka kafelków gier z okładkami, metryką graczy i statusem `Działa` / `Wkrótce`,
+- kafelek z live podglądem postaci oraz szybka konfiguracja nicku, stylu i koloru.
+
+**Klimat konkretnej gry nie rozlewa się na tło całej strony** — grafiki horroru
+pojawiają się tylko w kafelku wyróżnionym i miniaturce gry.
+
+### Edytor postaci
+
+`Edytor` w górnym pasku, `Edytuj postać` na stronie głównej lub `Edytuj wygląd`
+na podglądzie. Zmiany widać natychmiast na modelu 3D i zapisują się w
+`localStorage` (`rejplay:appearance`). Dostępne:
+
+| Grupa | Opcje |
+| --- | --- |
+| Sylwetka i fryzura | 6 rigowanych modeli Rocketbox (Alicja, Marek, Ewa, Tomek, Nina, Iza) |
+| Odcień skóry | 6 tonów, od bardzo jasnej do ciemnej |
+| Kolor włosów | czarny, ciemny brąz, brąz, blond, rudy, siwy |
+| Ubranie | oryginał + 5 stonowanych barw |
+
+Barwy są nakładane na **sklonowane per instancja materiały** tekstur, więc
+zachowane zostają cienie, fałdy ubioru i detale twarzy, a pokolorowanie jednej
+postaci nie przebarwia pozostałych. Edytor zbliża kamerę i chowa piedestał
+podglądu.
+
+### Lobby `Plaza Kulki`
+
+Przebudowane z neonowego placu na spokojną, filmową scenę: ziarnisty beton,
+ciepłe latarnie, zimne światło księżyca, kamienny obelisk i trzy **fizyczne
+bramy z plakatami** zamiast świecących pierścieni. Kliknięcie plakatu lub
+przycisku `Zimny Ślad · graj` uruchamia grę.
+
+- 5 postaci (Ty + 4 boty), listy graczy, demo czatu,
+- `WASD` / strzałki, `Spacja` (skok), przeciąganie myszą (kamera), sterowanie dotykowe,
+- `E` lub przycisk **Machaj** — gest bez VR,
+- `C` lub **Aparat** — wirtualna kamera orbitująca wokół postaci, `Zrób zdjęcie`
+  zapisuje PNG.
+
+### Zimny Ślad — pierwsza grywalna gra
+
+**Oryginalna, autorska gra dochodzeniowa.** Inspiracją jest sam gatunek, a nie
+konkretny tytuł: nie używamy nazwy *Phasmophobia*, jej duchów, lore'u, interfejsu,
+dźwięków ani assetów Kinetic Games. Wszystkie nazwy, opisy zjaw, dowody,
+dźwięki (synteza WebAudio) i geometria domu są napisane od zera.
+
+Pierwszoosobowe dochodzenie w domu przy Wrzosowej 12. Cztery pokoje, korytarz,
+latarka i trzy narzędzia. Zbierasz ślady, otwierasz notatnik i składasz raport,
+zanim skończą się nerwy.
+
+| Element | Opis |
+| --- | --- |
+| Narzędzia | `1` Termometr · `2` Miernik pola · `3` Rejestrator |
+| Skan | przytrzymaj `E` przez ~1,2 s — wynik: `wykryto` albo `brak śladu` |
+| Dowody | Zimny punkt, Zakłócenia pola, Szepty |
+| Zjawy | Mara, Iskra, Szron, Cisza — każda ma własny, unikalny zestaw śladów |
+| Nerwy | maleją z czasem, szybciej po ciemku i w trakcie zjawisk |
+| Zdarzenia | migotanie latarki, zimno, stuknięcie, półprzezroczysta sylwetka |
+| Raport | `J` → wybierz zjawę zgodną ze śladami; pomyłka kosztuje 24 nerwy |
+
+Sterowanie: `WASD` + mysz (pointer lock), `Shift` bieg, `F` latarka, `J` notatnik,
+`Esc` / `← Wyjdź` powrót do lobby. Na dotyku działa joystick i przyciski
+`Skanuj`, `Narzędzie`, `Notatnik`, `Latarka`.
+
+---
+
+## Sterowanie — skrót
+
+| Klawisz | Akcja |
+| --- | --- |
+| `/` | focus na wyszukiwarce gier (strona główna) |
+| `W A S D`, strzałki | ruch w lobby i w grze |
+| `Spacja` | skok w lobby |
+| `E` | machnięcie (lobby) / skanowanie, przytrzymaj (gra) |
+| `C` | tryb wirtualnego aparatu (lobby) |
+| `1` `2` `3` | wybór narzędzia (gra) |
+| `F` | latarka (gra) |
+| `J` / `Tab` | notatnik (gra) |
+| `Shift` | bieg (gra) |
+| `Esc` | zamknięcie edytora / wyjście z gry / powrót na stronę główną |
+
+---
 
 ## Uruchomienie
 
 ```bash
 npm install
-npm run dev
+npm run dev        # http://localhost:5173
+npm run typecheck  # tsc --noEmit
+npm run build      # dist/
+npm run preview
 ```
 
-Vite startuje na `0.0.0.0:5173`. Inne komendy: `npm run build` (typecheck + build),
-`npm run preview`. Przy starcie wczytywane są modele postaci (~11 MB z `public/`) —
-pojawia się ekran „Wczytywanie postaci…". Jeśli pliki się nie wczytają, aplikacja
-automatycznie wraca do klasycznych awatarów z kulek.
+Wymagany Node 20+. Modele 3D i grafiki są już w `public/`, więc aplikacja nie
+pobiera niczego z zewnętrznych CDN w trakcie działania.
 
-## Co działa
-
-- **Dwa style awatarów** — przełącznik na ekranie głównym:
-  - `Realistyczne` (domyślny): teksturowane postacie ludzkie z rigiem i animacjami
-    motion capture (idle, chód, machanie).
-  - `Kulki · klasyk`: oryginalny awatar z 6 kulek (1 głowa, 2 ręce, 1 wydłużona
-    na ciało, 2 nogi). Oba style trwają jednocześnie w jednym „slocie" gracza,
-    więc przełączenie jest natychmiastowe.
-- **Home screen** — żywy podgląd 3D wybranej postaci (przeciągnij, żeby obrócić),
-  konfigurator nicku, koloru i stylu (zapis w `localStorage`), katalog 4 gierek.
-- **Lobby „Plaza Kulki"** — okrągła plaza, 4 boty z własnymi postaciami i nickami,
-  portale do przyszłych gierek, HUD z listą graczy i czatem demo.
-- **Gesty bez VR** (pomysł z VRChat) — `E` lub przycisk „Machaj" odtwarza klip
-  motion capture `wave`; boty też co jakiś czas machają same. Nad awatarem pojawia
-  się komunikat, a gest widać z każdej kamery.
-- **Tryb kamery** — `C` włącza wirtualną kamerę: HUD znika, pojawia się wizjer,
-  przeciąganie ustawia kadr, kółko myszki robi zoom, `E` pozwala machnąć do zdjęcia,
-  a „Zrób zdjęcie" zapisuje PNG (`renderer` ma `preserveDrawingBuffer`).
-- **Sterowanie** — `WASD` / strzałki, `Spacja` = skok, przeciągnięcie = kamera,
-  `Esc` = wyjście. Na dotyku: joystick, skok, machanie i kamera.
-
-## Jak bardzo „realistyczne"? — uczciwie
-
-Użyte postacie to **prawdziwe, fototeksturowane modele ludzi** (skany z biblioteki
-Microsoft Rocketbox): twarze, ubrania, włosy, normal mapy, szkielet i animacje
-motion capture. To ogromny skok względem kulek, ale **to nie jest „dosłownie jak
-w prawdziwym życiu"** i warto wiedzieć dlaczego:
-
-| | Mamy teraz | „Jak w życiu" (MetaHuman / skan 4K) |
-|---|---|---|
-| Model | ~300–400 KB siatki + 4 tekstury JPG | 50–200 MB na postać, 4K/8K PBR |
-| Skóra | standard PBR + normal mapa | subsurface scattering, mikro-detale, włosy jako hair cards |
-| Twarz | statyczna, bez mimiki | 50+ blendshapeów, śledzenie twarzy, sync ust |
-| Koszt | działa na laptopie w WebGL | często wymaga dedykowanego GPU / Unreal + pixel streaming |
-| Licencja | MIT, do użytku także komercyjnego | płatne licencje, zakaz redystrybucji surowych assetów |
-
-Dodatkowo: nawet VRChat i Roblox **celowo** unikają fotorealizmu (uncanny valley,
-wydajność, moderacja, wizerunek najmłodszych użytkowników). Jeśli kiedyś
-zdecydujesz się na poziom MetaHuman, wystarczy dostarczyć własny plik GLB —
-`src/human.ts` ma już gotowy pipeline (GLTFLoader → tekstury → SkeletonUtils →
-AnimationMixer), więc podmiana modeli nie wymaga przerabiania lobby.
-
-## Assety i licencja
-
-Modele, tekstury i animacje w `public/characters/` pochodzą z
-[Microsoft Rocketbox Avatar Library](https://github.com/microsoft/Microsoft-Rocketbox)
-(MIT, Copyright © 2020 Microsoft), w konwersji do glTF z repozytorium
-`KunalSiyag/gridfall` (również MIT). Pełna treść licencji:
-[`public/characters/LICENSE-rocketbox-MIT.txt`](public/characters/LICENSE-rocketbox-MIT.txt).
-Wszystkie pliki są w repozytorium, więc aplikacja nie pobiera niczego z zewnątrz.
+---
 
 ## Struktura
 
 ```
-index.html          ekran główny + lobby (HUD, gesty, wizjer, ładowanie)
-src/main.ts         UI, stan gracza, style, czat, gesty, tryb kamery, dotyk
-src/world.ts        jeden WebGLRenderer, dwie sceny, ruch, kamera, portale, foto
-src/character.ts    „slot" gracza trzymający oba style awatara
-src/human.ts        ładowanie modeli Rocketbox + AnimationMixer (idle/walk/wave)
-src/avatar.ts       awatar z 6 kulek + etykiety z nickiem
-src/games.ts        dane gierek, paleta, boty
-src/style.css       cały interfejs
-public/characters/  modele GLB, tekstury, biblioteki animacji, licencja
+index.html            katalog, lobby, ekran gry, edytor, overlay startowy
+src/style.css         jasny katalog + ciemne, filmowe widoki pełnoekranowe
+src/main.ts           stan UI, wyszukiwarka, kategorie, karuzela, HUD gry, boot
+src/games.ts          katalog światów, paleta, presety wyglądu, boty
+src/world.ts          jeden renderer, 3 sceny (home / lobby / gra), kamery, input
+src/character.ts      slot gracza: awatar realistyczny + klasyczny, wygląd
+src/human.ts          ładowanie Rocketbox GLB, tekstury, animacje, barwienie
+src/avatar.ts         klasyczny awatar z sześciu kulek + etykiety
+src/horror.ts         Zimny Ślad: geometria domu, silnik, HUD-state, dźwięk
+public/characters/    8 modeli Rocketbox GLB + tekstury + biblioteki animacji
+public/art/           3 własne, wygenerowane grafiki (hero, dom, plaza)
 ```
 
-Stack: **Vite + TypeScript + Three.js**. Jeden kontekst WebGL jest przenoszony
-między podglądem na home screenie a lobby.
+---
 
-## Co dalej
+## Asset i licencje
 
-1. **Prawdziwy multiplayer** — Colyseus (Node + WebSocket), `packages/shared` ze
-   wspólnymi typami wiadomości (również dla gestów: „ktoś machnął"), boty zastępują
-   gracze z serwera. ⚠️ Serwera WS nie wolno stawiać na Vercel/serverless.
-2. **Supabase** — Auth, katalog gier, leaderboardy, zapis świata w Storage.
-3. **Edytor światów** — `TransformControls`, publikowanie scen jako JSON.
-   To moment, w którym RejPlay staje się platformą UGC.
-4. **Wybór postaci przez gracza** — zamiast jednego modelu na slot: galeria
-   awatarów, zapis wyboru w profilu, własny GLB wrzucany przez użytkownika
-   (wymaga walidacji rozmiaru i moderacji).
-5. Dopiero na końcu: czat sieciowy z moderacją, profil, ekonomia (RODO/regulamin).
+- **Postacie**: [Microsoft Rocketbox](https://github.com/microsoft/Microsoft-Rocketbox)
+  — MIT, `Copyright (c) 2020 Microsoft`. Pliki GLB i tekstury pochodzą z
+  konwersji w repozytorium `KunalSiyag/gridfall` (MIT), które w `PROVENANCE.json`
+  wskazuje na commit Rocketbox `0943055…`. Pełna treść licencji:
+  `public/characters/LICENSE-rocketbox-MIT.txt`.
+- **Grafiki** w `public/art/` (`hero.jpg`, `house.jpg`, `plaza.jpg`) są
+  wygenerowanymi, oryginalnymi ilustracjami dla tego prototypu.
+- **Dźwięki** w grze są syntetyzowane w locie (`AudioContext`), bez plików audio.
+- Three.js, Vite i TypeScript — własne licencje open source w `node_modules`.
 
-Dane gracza, boty, czat i gesty są obecnie lokalne i oznaczone jako demo.
+### Uczciwie o „realistycznych postaciach”
+
+| Mamy | Czego nie mamy |
+| --- | --- |
+| Rigowane, teksturowane sylwetki 1,75 m, mapy albedo/normal/alpha | Skanu fotogrametrycznego konkretnej osoby |
+| Animacje motion capture: idle, chód, machanie | Mimiki twarzy i tracking dłoni z kamery |
+| 6 sylwetek, kolor skóry / włosów / ubioru | Pełnego kreatora twarzy, wagi, wieku |
+| Jeden wspólny renderer i PBR-owe światła | Metahuman / silnika typu Unreal w przeglądarce |
+
+To najwierniejszy realistyczny wygląd możliwy w lekkim prototypie bez setek
+megabajtów assetów. `podgląd kamery` z wątku VRChat zinterpretowaliśmy jako
+**wirtualną kamerę orbitującą + machnięcie z klawiatury** — nie dodajemy
+`getUserMedia`, zgód na kamerę ani rozpoznawania gestów bez wyraźnej decyzji.
+
+---
+
+## Roadmapa (poza tym slice'm)
+
+- Prawdziwe pokoje multiplayer (Colyseus / WebSocket) zamiast botów,
+- profile, znajomi, zapis postaci i świata w bazie (Supabase),
+- edytor świata i piaskownica UGC z bezpiecznym skryptowaniem (QuickJS/WASM),
+- fizyka (Rapier), kolejne gry z katalogu, system osiągnięć,
+- optymalizacja: LOD modeli, code-splitting Three.js, lazy load scen gry.
+
+`Kontynuuj` — zachowujemy dotychczasowe commity, realistyczne awatary, machanie,
+aparat, lobby i katalog. Kolejne światy powstają jako osobne sceny, nie jako
+motyw przewodni całej strony.

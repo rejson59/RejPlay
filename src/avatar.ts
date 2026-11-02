@@ -60,18 +60,22 @@ export function createLabel(text: string): LabelHandle {
 
   const draw = (value: string): void => {
     ctx.clearRect(0, 0, 320, 80);
-    ctx.fillStyle = 'rgba(12, 15, 34, 0.84)';
-    roundedRect(ctx, 8, 10, 304, 60, 26);
+    ctx.fillStyle = 'rgba(14, 17, 18, 0.9)';
+    roundedRect(ctx, 8, 10, 304, 60, 18);
     ctx.fill();
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.24)';
+    ctx.strokeStyle = 'rgba(200, 160, 106, 0.42)';
     ctx.lineWidth = 2;
     ctx.stroke();
-    ctx.font = '600 33px ui-sans-serif, system-ui, -apple-system, sans-serif';
-    ctx.fillStyle = '#f4f5ff';
+    let size = 32;
+    ctx.font = `600 ${size}px ui-sans-serif, system-ui, -apple-system, sans-serif`;
+    while (ctx.measureText(value).width > 282 && size > 18) {
+      size -= 2;
+      ctx.font = `600 ${size}px ui-sans-serif, system-ui, -apple-system, sans-serif`;
+    }
+    ctx.fillStyle = '#e8e4dc';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    const short = value.length > 15 ? `${value.slice(0, 14)}…` : value;
-    ctx.fillText(short, 160, 42);
+    ctx.fillText(value, 160, 42, 286);
     texture.needsUpdate = true;
   };
 

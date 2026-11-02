@@ -4,6 +4,21 @@ import { HumanAvatar, type HumanAssets } from './human';
 
 export type AvatarStyle = 'human' | 'balls';
 
+/** Wygląd wybierany w edytorze postaci. */
+export interface Appearance {
+  model: number;
+  skin: string;
+  hair: string;
+  outfit: string;
+}
+
+export const DEFAULT_APPEARANCE: Appearance = {
+  model: 0,
+  skin: '#f3ddc3',
+  hair: '#4b3020',
+  outfit: '#ffffff',
+};
+
 export interface CharacterOptions {
   color: string;
   label?: string;
@@ -11,6 +26,7 @@ export interface CharacterOptions {
   assets: HumanAssets | null;
   templateIndex: number;
   style: AvatarStyle;
+  appearance?: Appearance;
 }
 
 /**
@@ -21,26 +37,40 @@ export class Character implements Avatar {
   readonly root = new THREE.Group();
 
   private readonly balls: BallAvatar;
-  private readonly human: HumanAvatar | null;
+  private readonly assets: HumanAssets | null;
+  private readonly colorHex: string;
+  private readonly labelText: string | undefined;
+  private human: HumanAvatar | null;
+  private templateIndex: number;
+  private appearance: Appearance;
   private style: AvatarStyle;
 
   constructor(options: CharacterOptions) {
+    this.assets = options.assets;
+    this.colorHex = options.color;
+    this.labelText = options.label;
+    this.templateIndex = options.templateIndex;
+    this.appearance = options.appearance ?? DEFAULT_APPEARANCE;
+    this.style = options.style;
+
     this.balls = new BallAvatar({
       color: options.color,
       label: options.label,
       scale: options.scale,
     });
-    this.human = options.assets
-      ? new HumanAvatar(options.assets, options.templateIndex, {
-          color: options.color,
-          label: options.label,
-        })
-      : null;
-
+    this.human = this.makeHuman();
     this.root.add(this.balls.root);
     if (this.human) this.root.add(this.human.root);
-    this.style = options.style;
     this.applyStyle();
+  }
+
+  private makeHuman(): HumanAvatar | null {
+    if (!this.assets) return null;
+    return new HumanAvatar(this.assets, this.templateIndex, {
+      color: this.colorHex,
+      label: this.labelText,
+      appearance: this.appearance,
+    });
   }
 
   get activeStyle(): AvatarStyle {
@@ -60,6 +90,25 @@ export class Character implements Avatar {
     const human = this.activeStyle === 'human';
     this.balls.root.visible = !human;
     if (this.human) this.human.root.visible = human;
+  }
+
+  /** Zmiana kolorów bez przebudowy, zmiana modelu (fryzury) z przebudową. */
+  setAppearance(appearance: Appearance): void {
+    this.appearance = appearance;
+    if (!this.assets) return;
+    if (appearance.model !== this.templateIndex) {
+      this.templateIndex = appearance.model;
+      const wasVisible = this.human?.root.visible ?? false;
+      if (this.human) this.root.remove(this.human.root);
+      this.human = this.makeHuman();
+      if (this.human) {
+        this.root.add(this.human.root);
+        this.human.root.visible = wasVisible;
+      }
+      this.applyStyle();
+    } else {
+      this.human?.setAppearance(appearance);
+    }
   }
 
   setColor(hex: string): void {

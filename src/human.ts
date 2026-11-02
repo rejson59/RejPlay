@@ -7,6 +7,7 @@ import {
   type Avatar,
   type LabelHandle,
 } from './avatar';
+import type { Appearance } from './character';
 
 /**
  * Realistyczne postacie: Microsoft Rocketbox (MIT), przekonwertowane do glTF.
@@ -19,6 +20,8 @@ const AVATAR_NAMES = [
   'Male_Adult_01',
   'Business_Female_01',
   'Male_Adult_02',
+  'Female_Adult_03',
+  'Female_Adult_05',
 ] as const;
 
 export interface HumanTemplate {
@@ -125,6 +128,12 @@ type State = 'idle' | 'walk' | 'wave';
 export interface HumanAvatarOptions {
   color: string;
   label?: string;
+  appearance: Appearance;
+}
+
+interface TintedMaterial {
+  kind: 'head' | 'body' | 'hair';
+  material: THREE.MeshStandardMaterial;
 }
 
 export class HumanAvatar implements Avatar {
@@ -134,6 +143,7 @@ export class HumanAvatar implements Avatar {
   private readonly mixer: THREE.AnimationMixer;
   private readonly actions: Record<State, THREE.AnimationAction>;
   private readonly accentMaterial: THREE.MeshStandardMaterial;
+  private readonly tinted: TintedMaterial[] = [];
   private readonly label: LabelHandle | undefined;
   private state: State = 'idle';
   private readonly weights: Record<State, number> = { idle: 1, walk: 0, wave: 0 };
@@ -146,15 +156,28 @@ export class HumanAvatar implements Avatar {
     this.model = cloneSkeleton(template.scene) as THREE.Group;
     this.root.add(this.model);
 
-    // Kolor gracza jako delikatna obręcz pod stopami (nie farbujemy skóry).
+    // Materiały klonujemy per instancja, żeby barwienie jednej postaci
+    // nie zmieniało wszystkich awatarów używających tego samego modelu.
+    this.model.traverse((object) => {
+      if (!(object instanceof THREE.Mesh)) return;
+      const material = (object.material as THREE.MeshStandardMaterial).clone();
+      object.material = material;
+      const label = material.name.toLowerCase();
+      if (label.includes('head')) this.tinted.push({ kind: 'head', material });
+      else if (label.includes('body')) this.tinted.push({ kind: 'body', material });
+      else if (label.includes('opacity')) this.tinted.push({ kind: 'hair', material });
+    });
+    this.setAppearance(options.appearance);
+
+    // Kolor gracza jako matowa, stonowana obręcz pod stopami.
     this.accentMaterial = new THREE.MeshStandardMaterial({
       color: options.color,
       emissive: options.color,
-      emissiveIntensity: 0.85,
-      roughness: 0.4,
+      emissiveIntensity: 0.08,
+      roughness: 0.9,
     });
     const ring = new THREE.Mesh(
-      new THREE.TorusGeometry(0.43, 0.022, 8, 48),
+      new THREE.TorusGeometry(0.43, 0.018, 8, 48),
       this.accentMaterial,
     );
     ring.rotation.x = Math.PI / 2;
@@ -191,6 +214,26 @@ export class HumanAvatar implements Avatar {
   setColor(hex: string): void {
     this.accentMaterial.color.set(hex);
     this.accentMaterial.emissive.set(hex);
+  }
+
+  /** Barwi tekstury: skóra (głowa), włosy (karty alpha), ubranie (ciało). */
+  setAppearance(appearance: Appearance): void {
+    for (const entry of this.tinted) {
+      const hex =
+        entry.kind === 'head'
+          ? appearance.skin
+          : entry.kind === 'body'
+            ? appearance.outfit
+            : appearance.hair;
+      entry.material.color.set(hex);
+      // Mapa kart włosów jest ciemna, więc sam mnożnik barwy byłby prawie
+      // niewidoczny. Delikatna emisja pozwala zobaczyć wybrany kolor fryzury.
+      if (entry.kind === 'hair') {
+        entry.material.emissive.set(hex);
+        entry.material.emissiveIntensity = 0.28;
+      }
+      entry.material.needsUpdate = true;
+    }
   }
 
   setLabel(text: string): void {

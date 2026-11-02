@@ -3,185 +3,239 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#0a0c18" />
+    <meta name="theme-color" content="#f1f0ec" />
     <meta
       name="description"
-      content="RejPlay — przeglądarkowa platforma do grania i tworzenia mini gierek. Wejdź do lobby i pobiegaj awatarem z sześciu kulek."
+      content="RejPlay — przeglądarkowa platforma gier 3D. Odkrywaj światy, edytuj realistyczną postać, spotkaj się w lobby i zagraj w Zimny Ślad."
     />
     <link
       rel="icon"
-      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3CradialGradient id='g' cx='35%25' cy='30%25'%3E%3Cstop offset='0' stop-color='%23c9b8ff'/%3E%3Cstop offset='1' stop-color='%237c5cff'/%3E%3C/radialGradient%3E%3C/defs%3E%3Ccircle cx='32' cy='32' r='27' fill='url(%23g)'/%3E%3C/svg%3E"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%23141819'/%3E%3Cpath d='M18 46V18h16a9 9 0 0 1 0 18h-8l12 10' fill='none' stroke='%23c8a06a' stroke-width='5' stroke-linecap='square'/%3E%3C/svg%3E"
     />
-    <title>RejPlay — Twoje mini gierki w przeglądarce</title>
+    <title>RejPlay — odkrywaj światy i graj</title>
   </head>
   <body>
     <div id="app">
-      <!-- ============ EKRAN GŁÓWNY ============ -->
+      <!-- ======================= EKRAN GŁÓWNY ======================= -->
       <section id="home" class="screen home">
-        <header class="topbar wrap">
-          <a class="brand" href="#top" aria-label="RejPlay — strona główna">
-            <span class="brand__orb" aria-hidden="true"></span>
-            <span>Rej<span class="brand__accent">Play</span></span>
-          </a>
+        <header class="topbar">
+          <div class="topbar__inner wrap">
+            <a class="brand" href="#top" aria-label="RejPlay — strona główna">
+              <span class="brand__mark" aria-hidden="true">R</span>
+              <span>Rej<span>Play</span></span>
+            </a>
 
-          <nav class="nav" aria-label="Nawigacja główna">
-            <a href="#games">Gry</a>
-            <a href="#avatar">Awatar</a>
-            <button type="button" class="nav__link" data-action="open-info">Jak to działa</button>
-          </nav>
+            <div class="search">
+              <span class="search__icon" aria-hidden="true">⌕</span>
+              <input
+                id="game-search"
+                type="search"
+                placeholder="Szukaj gier i światów..."
+                aria-label="Szukaj gier"
+                autocomplete="off"
+              />
+              <span class="search__hint">/</span>
+            </div>
 
-          <div class="topbar__right">
-            <span class="status-pill"><span class="dot"></span> Wersja demo</span>
-            <button type="button" class="btn btn--sm btn--primary" data-action="enter-lobby">
-              Wejdź do lobby
-            </button>
+            <nav class="nav" aria-label="Nawigacja główna">
+              <a href="#top">Start</a>
+              <a href="#games">Gry</a>
+              <a href="#avatar">Postać</a>
+              <button type="button" class="nav__link" data-action="open-info">Jak to działa</button>
+            </nav>
+
+            <div class="topbar__right">
+              <button type="button" class="profile-chip" data-action="open-editor" title="Edytuj postać">
+                <span class="profile-chip__avatar" id="chip-avatar" aria-hidden="true">K</span>
+                <span class="profile-chip__name" id="chip-nick">Kulka_24</span>
+              </button>
+              <button type="button" class="btn btn--sm btn--primary" data-action="enter-lobby">
+                Wejdź do lobby
+              </button>
+            </div>
           </div>
         </header>
 
-        <main id="top">
-          <section class="hero wrap">
-            <div class="hero__copy">
-              <span class="eyebrow">
-                <span class="eyebrow__spark" aria-hidden="true"></span>
-                Platforma do grania i tworzenia · bez instalacji
-              </span>
+        <div class="home-layout wrap" id="top">
+          <!-- --------------------------- lewy pasek --------------------------- -->
+          <aside class="sidebar" aria-label="Nawigacja po katalogu">
+            <div class="sidebar__group">
+              <span class="sidebar__label">Przeglądaj</span>
+              <a class="sidebar__link is-active" href="#top" data-nav="start">
+                <span class="sidebar__ico">▦</span> Strona główna
+              </a>
+              <a class="sidebar__link" href="#games" data-nav="games">
+                <span class="sidebar__ico">◈</span> Wszystkie gry
+              </a>
+              <button type="button" class="sidebar__link" data-action="open-editor">
+                <span class="sidebar__ico">◉</span> Edytor postaci
+              </button>
+              <button type="button" class="sidebar__link" data-action="enter-lobby">
+                <span class="sidebar__ico">◎</span> Lobby 3D
+              </button>
+            </div>
 
-              <h1>
-                Twoje mini gierki.<br />
-                <span class="gradient-text">Postacie, które żyją.</span>
-              </h1>
+            <div class="sidebar__group">
+              <span class="sidebar__label">Kategorie</span>
+              <button type="button" class="sidebar__link is-active" data-category="all">
+                <span class="sidebar__ico">·</span> Wszystkie
+              </button>
+              <button type="button" class="sidebar__link" data-category="horror">
+                <span class="sidebar__ico">◐</span> Horror
+              </button>
+              <button type="button" class="sidebar__link" data-category="social">
+                <span class="sidebar__ico">○○</span> Towarzyskie
+              </button>
+              <button type="button" class="sidebar__link" data-category="race">
+                <span class="sidebar__ico">→</span> Wyścigi
+              </button>
+              <button type="button" class="sidebar__link" data-category="platform">
+                <span class="sidebar__ico">▤</span> Platformówki
+              </button>
+            </div>
 
-              <p class="lead">
-                Wchodzisz na stronę i od razu grasz z innymi. W lobby stoją teksturowane postacie
-                z animacjami motion capture: machnij do kogoś z klawiatury, bez VR, i zrób zdjęcie
-                w trybie kamery. Awatary z sześciu kulek zostają jako styl klasyczny.
-              </p>
+            <div class="sidebar__note">
+              <span class="dot"></span>
+              RejPlay · v0.2<br />
+              Prototyp bez kont i bez instalacji
+            </div>
+          </aside>
 
-              <div class="creator card">
-                <div class="creator__head">
-                  <span class="creator__title">Skonfiguruj swoją kulkę</span>
-                  <span class="creator__hint">podgląd na żywo →</span>
-                </div>
+          <!-- ----------------------------- treść ----------------------------- -->
+          <main class="home-main">
+            <div class="home-heading">
+              <div>
+                <h1>Odkryj światy RejPlay</h1>
+                <p>Gry 3D w przeglądarce. Wybierz świat, dostosuj postać i wchodź.</p>
+              </div>
+              <span class="home-heading__badge"><span class="dot"></span> 2 światy grywalne</span>
+            </div>
 
-                <label class="field" for="nick">
-                  <span>Twój nick</span>
-                  <input
-                    id="nick"
-                    type="text"
-                    maxlength="16"
-                    autocomplete="nickname"
-                    spellcheck="false"
-                    placeholder="Kulka_42"
-                  />
-                </label>
-
-                <div class="field">
-                  <span>Styl postaci</span>
-                  <div class="style-switch" id="style-switch" role="group" aria-label="Styl awatara">
-                    <button type="button" class="style-switch__btn is-active" data-style="human">
-                      Realistyczne
-                    </button>
-                    <button type="button" class="style-switch__btn" data-style="balls">
-                      Kulki · klasyk
-                    </button>
+            <!-- Wyróżniony świat: obraz jest tylko w kafelku, nigdy w tle strony -->
+            <section class="featured" aria-label="Wyróżniony świat">
+              <div class="featured__card" id="featured-card">
+                <div class="featured__content">
+                  <span class="featured__eyebrow">Wyróżniony świat · <span id="featured-tag">Horror</span></span>
+                  <h2 id="featured-title">Zimny Ślad</h2>
+                  <p id="featured-desc"></p>
+                  <div class="featured__meta" id="featured-meta"></div>
+                  <div class="featured__actions">
+                    <button type="button" class="btn btn--primary" id="featured-play">Graj teraz <span aria-hidden="true">→</span></button>
+                    <button type="button" class="btn btn--ghost" id="featured-next">Następny świat <span aria-hidden="true">↻</span></button>
                   </div>
                 </div>
+                <div class="featured__art" id="featured-art" aria-hidden="true"></div>
+              </div>
+              <div class="featured__dots" id="featured-dots" role="tablist" aria-label="Wyróżnione światy"></div>
+            </section>
 
-                <div class="field">
-                  <span>Kolor awatara</span>
-                  <div class="swatches" id="swatches" role="group" aria-label="Kolor awatara"></div>
+            <!-- Siatka gierek -->
+            <section class="shelf" id="games">
+              <div class="shelf__head">
+                <div>
+                  <span class="section__kicker">Katalog</span>
+                  <h2 id="shelf-title">Popularne teraz</h2>
+                </div>
+                <div class="shelf__right">
+                  <span class="shelf__count" id="shelf-count">4 światy</span>
+                </div>
+              </div>
+              <div class="game-grid" id="game-grid"></div>
+              <p class="shelf__empty" id="shelf-empty" hidden>Nie znaleziono świata o tej nazwie. Spróbuj innej frazy.</p>
+            </section>
+
+            <!-- Postać + konfiguracja -->
+            <section class="home-lower" id="avatar">
+              <div class="character-tile">
+                <div class="character-tile__stage" id="hero-visual">
+                  <div id="hero-stage" class="stage stage--hero" aria-label="Trójwymiarowy podgląd awatara"></div>
+                  <span class="character-tile__label">Podgląd na żywo · przeciągnij, żeby obrócić</span>
+                  <span class="character-tile__footer" id="visual-footer">Postać 3D · animacje motion capture</span>
+                  <button type="button" class="character-tile__edit" data-action="open-editor">Edytuj wygląd ↗</button>
+                </div>
+                <div class="character-tile__info">
+                  <span class="section__kicker">Twoja postać</span>
+                  <h2 id="tile-nick">Kulka_24</h2>
+                  <p>
+                    Sześć sylwetek, odcień skóry, kolor włosów i ubioru nakładane na teksturowane
+                    modele 3D. Zmiany widać od razu w podglądzie, lobby i grze.
+                  </p>
+                  <div class="character-tile__actions">
+                    <button type="button" class="btn btn--primary" data-action="open-editor">Edytuj postać</button>
+                    <button type="button" class="btn btn--ghost" data-action="enter-lobby">Wejdź do lobby</button>
+                  </div>
+                </div>
+              </div>
+
+              <div class="setup-tile">
+                <div class="creator card">
+                  <div class="creator__head">
+                    <span class="creator__title">Szybka konfiguracja</span>
+                    <span class="creator__hint">zapisane lokalnie</span>
+                  </div>
+
+                  <label class="field" for="nick">
+                    <span>Twój nick</span>
+                    <input
+                      id="nick"
+                      type="text"
+                      maxlength="16"
+                      autocomplete="nickname"
+                      spellcheck="false"
+                      placeholder="Kulka_42"
+                    />
+                  </label>
+
+                  <div class="field">
+                    <span>Styl postaci</span>
+                    <div class="style-switch" id="style-switch" role="group" aria-label="Styl awatara">
+                      <button type="button" class="style-switch__btn is-active" data-style="human">Realistyczny</button>
+                      <button type="button" class="style-switch__btn" data-style="balls">Kulki · klasyk</button>
+                    </div>
+                  </div>
+
+                  <div class="field">
+                    <span>Akcent kolorystyczny</span>
+                    <div class="swatches" id="swatches" role="group" aria-label="Kolor awatara"></div>
+                  </div>
+
+                  <p class="creator__note">
+                    Machnięcie <kbd>E</kbd> · aparat <kbd>C</kbd> · bez VR. Klasyczny awatar
+                    z sześciu kulek zostaje jako styl alternatywny.
+                  </p>
                 </div>
 
-                <div class="creator__actions">
-                  <button type="button" class="btn btn--primary" data-action="enter-lobby">
-                    Wejdź do lobby <span aria-hidden="true">→</span>
-                  </button>
-                  <a class="btn btn--ghost" href="#games">Zobacz gry</a>
+                <div class="facts">
+                  <div><strong>6</strong><span>sylwetek</span></div>
+                  <div><strong>18</strong><span>barw</span></div>
+                  <div><strong>1</strong><span>renderer WebGL</span></div>
+                  <p>
+                    Modele: Microsoft Rocketbox (MIT). To rigowane postacie 3D, nie
+                    fotogrametria konkretnej osoby. Wszystko działa bez backendu i kont.
+                  </p>
                 </div>
               </div>
+            </section>
 
-              <div class="hero__stats">
-                <div><strong>2</strong><span>style awatarów</span></div>
-                <div><strong>0</strong><span>plików do pobrania</span></div>
-                <div><strong>3D</strong><span>prosto w przeglądarce</span></div>
+            <section class="how" id="how">
+              <span class="section__kicker">Jak to działa</span>
+              <h2>Jedna przeglądarka, jeden awatar, wiele światów</h2>
+              <div class="how__grid">
+                <div><span>01</span><h3>Stwórz postać</h3><p>Wybierz sylwetkę, skórę, włosy i ubranie w edytorze. Ustawienia zapisują się w przeglądarce.</p></div>
+                <div><span>02</span><h3>Wejdź do lobby</h3><p>Plaza Kulki to wspólny punkt zbiórki: pomachaj znajomym i zrób zdjęcie w trybie kamery.</p></div>
+                <div><span>03</span><h3>Wybierz świat</h3><p>Kliknij kafelek gry. Zimny Ślad to pierwsza pełna, grywalna produkcja platformy.</p></div>
               </div>
-            </div>
-
-            <div class="hero__visual" id="hero-visual">
-              <div class="hero__glow" aria-hidden="true"></div>
-              <div id="hero-stage" class="stage stage--hero" aria-label="Trójwymiarowy podgląd awatara"></div>
-
-              <span class="visual__label">Podgląd postaci · przeciągnij, żeby obrócić</span>
-              <span class="visual__badge visual__badge--head">1 × głowa</span>
-              <span class="visual__badge visual__badge--arms">2 × ręce</span>
-              <span class="visual__badge visual__badge--body">1 × ciało</span>
-              <span class="visual__badge visual__badge--legs">2 × nogi</span>
-              <span class="visual__footer" id="visual-footer">Postać 3D · animacje motion capture · gesty bez VR</span>
-            </div>
-          </section>
-
-          <section id="games" class="games wrap">
-            <div class="section__head">
-              <div>
-                <span class="section__kicker">Katalog</span>
-                <h2>Gierki na start</h2>
-                <p class="section__sub">
-                  Jedna działa już teraz. Reszta to miejsca, w które rozrośnie się platforma.
-                </p>
-              </div>
-              <span class="section__badge">4 światy w planach</span>
-            </div>
-            <div class="game-grid" id="game-grid"></div>
-          </section>
-
-          <section id="avatar" class="recipe wrap">
-            <div class="section__head">
-              <div>
-                <span class="section__kicker">Styl klasyczny</span>
-                <h2>Sześć kulek i gotowe</h2>
-                <p class="section__sub">
-                  Domyślnie w lobby stoją realistyczne postacie. W każdej chwili możesz wrócić
-                  do awatara z sześciu kulek: jedna głowa, dwie ręce, jedna wydłużona na ciało
-                  i dwie nogi. Lekki, wszędzie taki sam i łatwy do pokolorowania.
-                </p>
-              </div>
-            </div>
-            <div class="recipe__grid">
-              <article class="recipe__item">
-                <span class="recipe__num">01</span>
-                <span class="recipe__orb recipe__orb--head" aria-hidden="true"></span>
-                <h3>Głowa</h3>
-                <p>Jedna kulka na samej górze. Opcjonalnie miejsce na nick nad nią.</p>
-              </article>
-              <article class="recipe__item">
-                <span class="recipe__num">02</span>
-                <span class="recipe__orb recipe__orb--arms" aria-hidden="true"></span>
-                <h3>Ręce</h3>
-                <p>Po jednej kulce z każdej strony. Machają, kiedy biegniesz.</p>
-              </article>
-              <article class="recipe__item">
-                <span class="recipe__num">03</span>
-                <span class="recipe__orb recipe__orb--body" aria-hidden="true"></span>
-                <h3>Ciało</h3>
-                <p>Jedna kulka rozciągnięta w pionie — jedyna, która nie jest idealnie okrągła.</p>
-              </article>
-              <article class="recipe__item">
-                <span class="recipe__num">04</span>
-                <span class="recipe__orb recipe__orb--legs" aria-hidden="true"></span>
-                <h3>Nogi</h3>
-                <p>Dwie kulki na dole. Toczą się w przeciwnych kierunkach przy ruchu.</p>
-              </article>
-            </div>
-          </section>
-        </main>
+            </section>
+          </main>
+        </div>
 
         <footer class="footer wrap">
-          <span><strong>RejPlay</strong> · prototyp vertical slice 0</span>
-          <span>Zbudowane z Three.js i Vite · bez backendu, bez kont, bez instalacji</span>
+          <span><strong>RejPlay</strong> · vertical slice 0.2</span>
+          <span>Three.js · Vite · bez backendu, bez kont, bez instalacji</span>
         </footer>
       </section>
 
-      <!-- ============ LOBBY ============ -->
+      <!-- ============================ LOBBY ============================ -->
       <section id="lobby" class="lobby" aria-hidden="true" aria-label="Lobby Plaza Kulki">
         <div id="lobby-stage" class="stage stage--lobby"></div>
         <div class="lobby__vignette" aria-hidden="true"></div>
@@ -193,7 +247,7 @@
             <h2>Plaza Kulki</h2>
           </div>
           <div class="status-pill status-pill--glass">
-            <span class="dot dot--green"></span>
+            <span class="dot"></span>
             <span id="online-count">5 graczy online</span>
           </div>
         </header>
@@ -214,16 +268,19 @@
 
         <div class="controls-hint card">
           <div><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd><span>ruch</span></div>
-          <div><span class="controls-hint__glyph">↔</span><span>przeciągnij: kamera</span></div>
           <div><kbd>Spacja</kbd><span>skok</span></div>
           <div><kbd>E</kbd><span>machnięcie</span></div>
           <div><kbd>C</kbd><span>tryb kamery</span></div>
-          <p>Kliknij kolorowy portal, żeby wybrać gierkę.</p>
+          <div><kbd>przeciągnij</kbd><span>obrót kamery</span></div>
+          <p>Kliknij plakat przy bramie, żeby wybrać świat.</p>
         </div>
 
         <div class="lobby__tools" id="lobby-tools">
           <button type="button" class="btn btn--sm btn--glass" id="wave-btn">Machaj <kbd>E</kbd></button>
-          <button type="button" class="btn btn--sm btn--glass" id="camera-btn">Kamera <kbd>C</kbd></button>
+          <button type="button" class="btn btn--sm btn--glass" id="camera-btn">Aparat <kbd>C</kbd></button>
+          <button type="button" class="btn btn--sm btn--accent" id="play-horror">
+            Zimny Ślad · graj <span aria-hidden="true">→</span>
+          </button>
         </div>
 
         <div class="touch-controls" id="touch-controls" hidden>
@@ -240,7 +297,7 @@
             <span class="photo__corner photo__corner--bl"></span>
             <span class="photo__corner photo__corner--br"></span>
           </div>
-          <div class="photo__top">TRYB KAMERY · przeciągnij, żeby ustawić kadr · kółko myszki = zoom</div>
+          <div class="photo__top">TRYB APARATU · przeciągnij, żeby ustawić kadr · kółko myszki = zoom</div>
           <div class="photo__bottom">
             <button type="button" class="btn btn--primary" id="photo-shoot">Zrób zdjęcie</button>
             <button type="button" class="btn btn--glass" id="photo-wave">Machaj</button>
@@ -251,10 +308,138 @@
         <div class="toast toast--lobby" id="lobby-toast" role="status"></div>
       </section>
 
+      <!-- ========================= ZIMNY ŚLAD ========================= -->
+      <section id="game" class="game" aria-hidden="true" aria-label="Zimny Ślad">
+        <div id="game-stage" class="stage stage--game"></div>
+        <div class="game__vignette" aria-hidden="true"></div>
+        <div class="game__grain" aria-hidden="true"></div>
+
+        <header class="game__top">
+          <button type="button" class="btn btn--sm btn--glass" id="game-leave">← Wyjdź</button>
+          <div class="game__title">
+            <span>ZIMNY ŚLAD</span>
+            <small>Wrzosowa 12 · dochodzenie nocne</small>
+          </div>
+          <div class="game__timer" id="game-timer">00:00</div>
+        </header>
+
+        <div class="game__crosshair" aria-hidden="true"></div>
+
+        <div class="game__hud" id="game-hud">
+          <div class="hud__nerves">
+            <span>Nerwy</span>
+            <div class="hud__bar"><i id="hud-nerves-bar"></i></div>
+            <b id="hud-nerves">100</b>
+          </div>
+          <div class="hud__evidence" id="hud-evidence"></div>
+          <div class="hud__tool">
+            <div class="hud__tool-head">
+              <span id="hud-tool-name">Termometr</span>
+              <span id="hud-reading">0%</span>
+            </div>
+            <div class="hud__bar hud__bar--signal"><i id="hud-reading-bar"></i></div>
+            <div class="hud__scan"><i id="hud-scan-bar"></i></div>
+          </div>
+          <div class="hud__hint" id="hud-hint"></div>
+        </div>
+
+        <div class="game__tools" id="game-tools"></div>
+
+        <div class="game__touch" id="game-touch" hidden>
+          <div class="joystick joystick--game" id="game-joystick" aria-label="Sterowanie ruchem">
+            <div class="joystick__knob" id="game-joystick-knob"></div>
+          </div>
+          <div class="game__touch-buttons">
+            <button type="button" id="game-scan-btn">Skanuj</button>
+            <button type="button" id="game-tool-btn">Narzędzie</button>
+            <button type="button" id="game-journal-btn">Notatnik</button>
+            <button type="button" id="game-light-btn">Latarka</button>
+          </div>
+        </div>
+
+        <div class="game__journal" id="game-journal" hidden></div>
+        <div class="game__result" id="game-result" hidden></div>
+
+        <div class="game__intro" id="game-intro">
+          <div class="intro__card">
+            <span class="section__kicker">Autorska gra dochodzeniowa</span>
+            <h2>Zimny Ślad</h2>
+            <p>
+              Dom przy Wrzosowej 12 jest pusty od lat, ale coś w nim zostawia ślady.
+              Wejdź z latarką, przeszukaj cztery pokoje, zbierz dowody trzema
+              narzędziami i złóż raport, zanim skończą Ci się nerwy.
+            </p>
+            <ul class="intro__keys">
+              <li><kbd>W A S D</kbd> ruch · <kbd>mysz</kbd> rozglądanie</li>
+              <li><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> narzędzia · <kbd>E</kbd> przytrzymaj, aby skanować</li>
+              <li><kbd>F</kbd> latarka · <kbd>J</kbd> notatnik · <kbd>Shift</kbd> bieg</li>
+            </ul>
+            <p class="intro__note">
+              Oryginalna gra RejPlay. Nie zawiera nazw, postaci ani materiałów z innych
+              gier — inspiracją jest sam gatunek dochodzeniowego horroru.
+            </p>
+            <div class="intro__actions">
+              <button type="button" class="btn btn--primary" id="game-start">Rozpocznij dochodzenie</button>
+              <button type="button" class="btn btn--ghost" id="game-cancel">Wróć do lobby</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="toast toast--game" id="game-toast" role="status"></div>
+      </section>
+
+      <!-- ========================= EDYTOR ========================= -->
+      <div id="editor" class="editor" aria-hidden="true">
+        <div class="editor__backdrop" data-action="close-editor"></div>
+        <div class="editor__panel" role="dialog" aria-modal="true" aria-labelledby="editor-title">
+          <header class="editor__head">
+            <div>
+              <span class="section__kicker">Edytor postaci</span>
+              <h2 id="editor-title">Wygląd</h2>
+            </div>
+            <button type="button" class="editor__close" data-action="close-editor" aria-label="Zamknij edytor">×</button>
+          </header>
+
+          <div class="editor__body">
+            <div class="editor__preview">
+              <div id="editor-stage" class="stage stage--editor"></div>
+              <span class="editor__preview-label">Podgląd · przeciągnij, żeby obrócić</span>
+            </div>
+
+            <div class="editor__controls">
+              <section class="editor__group">
+                <h3>Sylwetka i fryzura</h3>
+                <div class="option-grid option-grid--models" id="model-list"></div>
+              </section>
+              <section class="editor__group">
+                <h3>Odcień skóry</h3>
+                <div class="option-grid" id="skin-list"></div>
+              </section>
+              <section class="editor__group">
+                <h3>Kolor włosów</h3>
+                <div class="option-grid" id="hair-list"></div>
+              </section>
+              <section class="editor__group">
+                <h3>Ubranie</h3>
+                <div class="option-grid" id="outfit-list"></div>
+              </section>
+              <p class="editor__hint">
+                Zmiany zapisują się automatycznie i dotyczą też postaci w lobby oraz w grze.
+                Kolor tekstur jest modyfikowany, więc zachowane są cienie, fałdy i detale twarzy.
+              </p>
+              <div class="editor__actions">
+                <button type="button" class="btn btn--ghost" id="editor-reset">Przywróć domyślne</button>
+                <button type="button" class="btn btn--primary" data-action="close-editor">Gotowe</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div class="toast toast--global" id="global-toast" role="status"></div>
 
       <div class="boot" id="boot-overlay">
-        <span class="boot__orb" aria-hidden="true"></span>
+        <span class="boot__mark" aria-hidden="true">R</span>
         <span>Wczytywanie postaci…</span>
       </div>
     </div>
