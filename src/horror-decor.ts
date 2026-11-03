@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import type { QualityProfile } from './performance';
 
 /**
  * Wystrój „Demonofobii”. Wszystkie tekstury powstają w canvas w locie — nie
@@ -840,6 +841,7 @@ class Builder {
 
 export interface Decor {
   update(dt: number, elapsed: number, flicker: number): void;
+  setQuality(profile: QualityProfile): void;
 }
 
 /** Buduje całą scenę i zwraca lekką animację kurzu / świateł. */
@@ -860,20 +862,42 @@ export function buildDecor(
   const dust = builder.buildDust();
   const lights = builder.lights;
   const position = dust.geometry.attributes.position as THREE.BufferAttribute;
+  // Kurz aktualizujemy maks. 30 razy na sekundę zamiast przy każdej klatce —
+  // oszczędza CPU i przegryzanie bufora na telefonach z ekranem 120 Hz.
+  let dustTimer = 0;
+  let lastFlicker = 0;
+  const lightBase = lights.map((_, i) => (i === 0 ? 7 : 3.4));
 
   return {
     update(dt: number, elapsed: number, flicker: number): void {
-      for (let i = 0; i < position.count; i += 1) {
-        let y = position.getY(i) + dt * (0.05 + (i % 5) * 0.008);
-        if (y > 3.05) y = 0.05;
-        position.setY(i, y);
-        position.setX(i, position.getX(i) + Math.sin(elapsed * 0.3 + i) * dt * 0.006);
+      if (dust.visible) {
+        dustTimer += dt;
+        if (dustTimer >= 1 / 30) {
+          const step = dustTimer;
+          dustTimer = 0;
+          for (let i = 0; i < position.count; i += 1) {
+            let y = position.getY(i) + step * (0.05 + (i % 5) * 0.008);
+            if (y > 3.05) y = 0.05;
+            position.setY(i, y);
+            position.setX(i, position.getX(i) + Math.sin(elapsed * 0.3 + i) * step * 0.006);
+          }
+          position.needsUpdate = true;
+        }
       }
-      position.needsUpdate = true;
-      for (let i = 0; i < lights.length; i += 1) {
-        const base = i === 0 ? 7 : 3.4;
-        lights[i].intensity = base * (flicker > 0 && Math.random() > 0.5 ? 0.45 : 1);
+      // Intensywność świateł ruszamy tylko wtedy, gdy naprawdę migoczą —
+      // inaczej co klatkę wysyłalibyśmy niezmienione wartości do GPU.
+      if (flicker > 0) {
+        for (let i = 0; i < lights.length; i += 1) {
+          lights[i].intensity = lightBase[i] * (Math.random() > 0.5 ? 0.45 : 1);
+        }
+      } else if (lastFlicker > 0) {
+        for (let i = 0; i < lights.length; i += 1) lights[i].intensity = lightBase[i];
       }
+      lastFlicker = flicker;
+    },
+    setQuality(profile: QualityProfile): void {
+      dust.visible = profile.dust;
+      if (!profile.dust) dustTimer = 0;
     },
   };
 }

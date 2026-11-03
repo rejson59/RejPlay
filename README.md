@@ -99,6 +99,44 @@ w `public/mediapipe/` (zero CDN, zero danych opuszcza przeglądarkę). W grze pa
 kamerki się chowa, ale **tracking działa dalej**. To **nie** jest wirtualny
 aparat / tryb kamery (`C` usunięty); jedynym zdjęciem jest `P` (foto-dowód).
 
+**Realizm ruchu dłoni (v0.4).** Surowe kąty z 21 punktów przechodzą przez
+wiązadłowy model palca: DIP jest częściowo sprzężony z PIP, sąsiednie palce
+lekko pociągają się przy zaciskaniu, a kciuk ma własne osie i limity. Do tego
+`HandAnimator` używa **SmoothDamp** (stabilny nawet przy 2–3 klatkach na
+sekundę), mikro-drżenia przy bezruchu, opóźnienia nadgarstka i chwytu
+spoczynkowego, gdy dłoń znika z kadru — nie ma już zamrożonej ani nagle
+otwartej dłoni. Narzędzie i dłonie reagują z opóźnieniem na obrót głowy, skan
+i bieg.
+
+### Płynność, telefony i tablety (v0.4)
+
+`src/performance.ts` mierzy średni czas klatki (EMA, z histerezą i ignorowaniem
+przerw > 250 ms po powrocie z innej karty) i dobiera profil: `oszczędna`
+(DPR ≤ 1, bez cieni, bez kurzu/ziarna, limit 45 fps, bez MSAA), `wysoka` i
+`auto`. W górnym pasku **„Jakość”** można wymusić profil; wybór zapisuje się w
+`localStorage` (`rejplay:quality`). Słabe urządzenia startują bez antyaliasu i z
+lżejszą kamerą MediaPipe (480×360 / 24 fps / `modelComplexity: 0`).
+
+Żeby nie było przycięć:
+
+- brak alokacji w pętli (wspólne wektory i kwaterniony, stany animacji bez
+  tworzenia obiektów na klatkę),
+- `preserveDrawingBuffer: false` — `capturePhoto()` robi własny, jawny render
+  dopiero w momencie zdjęcia,
+- `IntersectionObserver` pomija render home, gdy scena jest poza ekranem,
+- kurz aktualizuje się najwyżej 30×/s, migotanie świateł tylko przy zmianie
+  stanu, 8 rekwizytów CC0 ładuje się równolegle jednym `Promise.all()`,
+- bufor, cienie i materiały zmieniają się wyłącznie przy zmianie profilu.
+
+**Dotyk:** `body.has-touch` chowa pasek narzędzi dla klawiatury (dubluje
+przyciski), a sześć przycisków akcji ma min. 44×44 px (tablety 52 px) i obsługuje
+przytrzymanie (`Bieg`, `Skanuj`). Uwzględniamy `env(safe-area-inset-*)`,
+`100dvh` i `touch-action: none`; osobne breakpointy dla pionu, poziomu
+≤ 560 px i tabletu w pionie trzymają HUD w górnych rogach, a joystick i przyciski
+na dole. Viewmodel dostosowuje FOV, rozstaw i skalę dłoni do proporcji ekranu —
+na wąskim telefonie dłonie nie znikają poza kadrem ani nie zasłaniają połowy
+ekranu. Hybrydowe wykrywanie dotyku obsługuje też tablety z myszą.
+
 ### Lobby `Atrium` i multiplayer
 
 Spokojna, filmowa scena: beton, ciepłe latarnie, księżyc, obelisk, brama.
@@ -158,7 +196,8 @@ trzy narzędzia, sześć zjaw.
   światłem + narzędzie z żywym ekranem LCD, sondą/anteną/mikrofonem,
 - ruch: bezwładność, wygładzone rozglądanie, kołysanie głowy, przechył,
   kroki zsynchronizowane z krokiem, FOV przy biegu, podniesienie narzędzia przy
-  skanie.
+  skanie; na dotyku czułość rozglądania jest wyższa, bo palec pokonuje krótszą
+  drogę niż mysz.
 
 | Element | Opis |
 | --- | --- |
@@ -172,7 +211,9 @@ trzy narzędzia, sześć zjaw.
 | Raport | `J` / `Tab` → wybierz zjawę; pomyłka kosztuje 24 nerwy |
 
 Sterowanie: `WASD` + mysz (`movementX/Y`, bez pointer locku), `Shift` bieg,
-`F` latarka, `Esc` / `← Wyjdź` powrót. Na dotyku: joystick i przyciski.
+`F` latarka, `Esc` / `← Wyjdź` powrót. Na dotyku: joystick + `Skanuj`, `Bieg`,
+`Foto`, `Narzędzie`, `Notatnik`, `Latarka` (przyciski trzymane palcem mają
+wizualny stan wciśnięcia).
 
 ---
 
@@ -226,6 +267,7 @@ src/style.css                  jasny/ciemny katalog + widoki pełnoekranowe
 src/main.ts                    stan UI, motyw, samouczek, HUD, kamerka, online, boot
 src/games.ts                   jedna gra + lobby, 13 modeli, 8 strojów (męskie/damskie), boty
 src/world.ts                   jeden renderer, 3 sceny + viewmodel, awatary zdalnych graczy
+src/performance.ts             adaptacyjna jakość: profile, EMA klatek, DPR, cienie, limit fps
 src/character.ts               slot gracza: rigowana postać + zastępnik
 src/human.ts                   13 GLB, maski głowy/ubrania, retarget dłoni, kolory skóry
 src/hand-tracking.ts           getUserMedia + MediaPipe Hands: 21 punktów obu dłoni
@@ -275,6 +317,7 @@ public/art/                    house.jpg — jedyna okładka
 | Kolor skóry na twarzy i dłoniach, kolor włosów na całej głowie | Pełnego kreatora twarzy, wagi, wieku |
 | 21 punktów → 15 stawów + pozycja nadgarstka 3D, 2 dłonie naraz | Śledzenia łokcia i ramion (jest nadgarstek) |
 | 8 gotowych modeli CC0 z PBR, jeden renderer, światła PBR | Metahuman / silnika typu Unreal w przeglądarce |
+| Auto jakość (DPR, cienie, kurz, fps) i układ dotykowy na telefon/tablet | Profilowania na realnym GPU i fizycznych urządzeniach |
 | Prawdziwych graczy, czat i profile w Supabase | Serwerowego autorytatywnego world state / anty-cheat |
 
 ---

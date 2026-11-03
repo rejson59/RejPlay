@@ -1079,11 +1079,8 @@ body.in-game {
   transform: translateX(-50%);
 }
 
-.touch-controls {
-  opacity: 0;
-  pointer-events: none;
-}
-
+/* BUGFIX v0.4: ta reguła zasłaniała joystick w lobby (opacity: 0 +
+   pointer-events: none). Sterowanie dotykowe było widoczne tylko w grze. */
 .touch-controls {
   position: absolute;
   z-index: 12;
@@ -2838,4 +2835,215 @@ body[data-theme='dark'] .live-card__cta { background: #c8a06a; color: #141819; }
   color: #4fb98a;
   font-size: 9px;
   line-height: 1;
+}
+
+
+/* ============================================================== v0.4
+   Wydajność adaptacyjna + wygodna obsługa na telefonach i tabletach.
+   Reguły są na końcu, żeby nadpisać wcześniejsze breakpointy. */
+
+.quality-toggle {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 13px;
+  border: 1px solid var(--home-line);
+  border-radius: 100px;
+  background: var(--home-surface);
+  color: var(--home-soft);
+  font-size: 12px;
+  white-space: nowrap;
+  transition: border-color 0.2s ease, color 0.2s ease, background 0.2s ease;
+}
+.quality-toggle:hover { border-color: var(--accent); color: var(--home-text); }
+.quality-toggle__ico { font-size: 14px; line-height: 1; }
+@media (max-width: 1160px) {
+  .quality-toggle__label { display: none; }
+  .quality-toggle { padding: 8px 10px; }
+}
+
+/* Palec nie może przewijać strony ani wywołać pinch-zoom nad sceną 3D. */
+.stage--game,
+.stage--game .stage__canvas { touch-action: none; }
+.game,
+.lobby {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+@supports (height: 100dvh) {
+  .lobby.is-active,
+  .game.is-active { height: 100dvh; }
+}
+
+/* Wcięcia dla notcha / gestu systemowego na iOS. */
+.game__touch {
+  padding-left: max(24px, env(safe-area-inset-left));
+  padding-right: max(24px, env(safe-area-inset-right));
+}
+.touch-controls { bottom: max(26px, calc(env(safe-area-inset-bottom) + 10px)); }
+.game__top { padding-top: max(22px, env(safe-area-inset-top)); }
+
+/* Sześć przycisków w dwóch rzędach, każdy co najmniej 44×44 px. */
+.game__touch-buttons {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+.game__touch-buttons button {
+  min-width: 44px;
+  min-height: 44px;
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1.1;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+  transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
+}
+.game__touch-buttons button.is-held {
+  border-color: var(--accent);
+  background: rgba(200, 160, 106, 0.24);
+  color: #e4c99e;
+}
+.game__touch-buttons button:active {
+  border-color: var(--accent);
+  background: rgba(200, 160, 106, 0.18);
+}
+
+/* Profil oszczędny: zrzucamy najdroższe efekty CSS (feTurbulence, blur). */
+body.is-low-quality .game__grain { display: none; }
+body.is-low-quality .game__vignette { opacity: 0.72; }
+body.is-low-quality .tool-btn,
+body.is-low-quality .hud__nerves,
+body.is-low-quality .hud__evidence,
+body.is-low-quality .hud__tool,
+body.is-low-quality .btn--glass,
+body.is-low-quality .editor__panel,
+body.is-low-quality .game__journal,
+body.is-low-quality .game__result,
+body.is-low-quality .game__intro { backdrop-filter: none; }
+
+/* Tablety z dotykiem: większe cele, wygodniejszy joystick. */
+@media (pointer: coarse) and (min-width: 761px) {
+  .joystick { width: 128px; height: 128px; }
+  .joystick__knob { width: 54px; height: 54px; }
+  .game__touch-buttons button { min-height: 50px; font-size: 13px; }
+  .jump-btn { padding: 14px 22px; font-size: 13px; }
+}
+
+/* Telefon w poziomie: HUD nie może zająć połowy wysokości ekranu. */
+@media (max-height: 560px) and (orientation: landscape) {
+  .game__top { padding: 8px 14px 8px max(14px, env(safe-area-inset-left)); }
+  .game__title small { display: none; }
+  .game__timer { font-size: 12px; }
+  .hud__nerves { top: 46px; left: 12px; padding: 6px 10px; font-size: 11px; }
+  .hud__evidence {
+    top: 84px; left: 12px; width: 148px; padding: 6px 8px; font-size: 10px;
+  }
+  .hud__tool { right: 12px; bottom: 96px; width: 148px; padding: 7px; }
+  .hud__hint {
+    bottom: 92px; left: 50%; max-width: 42%; font-size: 10px;
+  }
+  .game__tools { bottom: 6px; gap: 4px; width: calc(100% - 24px); }
+  .tool-btn { min-width: 0; flex: 1 1 0; padding: 5px 7px; font-size: 10px; }
+  .tool-btn span:not(b) { display: none; }
+  .game__touch { bottom: 44px; padding: 0 12px; }
+  .joystick--game { width: 84px; height: 84px; }
+  .joystick--game .joystick__knob { width: 34px; height: 34px; }
+  .game__touch-buttons { gap: 5px; }
+  .game__touch-buttons button { min-height: 36px; padding: 4px 6px; font-size: 10px; }
+  .touch-controls { bottom: 52px; left: 12px; }
+  .touch-controls .joystick { width: 84px; height: 84px; }
+  .game__journal, .game__result, .game__intro { padding: 10px; }
+}
+
+/* Wąski telefon w pionie: czytele HUD ponad przyciskami. */
+@media (max-width: 420px) and (orientation: portrait) {
+  .hud__hint { bottom: 196px; max-width: calc(100% - 24px); font-size: 11px; }
+  .hud__tool { bottom: 206px; }
+  .game__touch-buttons { gap: 6px; }
+  .game__touch-buttons button { padding: 7px 5px; font-size: 11px; }
+  .game__touch { bottom: 92px; }
+}
+
+/* ============================================================== v0.4 / dotyk
+   Układ HUD pod palce: pasek narzędzi dla klawiatury dubluje przyciski
+   dotykowe, więc na urządzeniach z dotykiem go chowamy. Dzięki temu dół
+   ekranu należy wyłącznie do joysticka i sześciu przycisków akcji. */
+body.has-touch .game__tools { display: none !important; }
+body.has-touch .toast--game {
+  max-width: min(460px, calc(100% - 40px));
+  padding: 9px 14px;
+  font-size: 12px;
+}
+
+@media (pointer: coarse) and (orientation: portrait) and (max-width: 1100px) {
+  .game__top { gap: 8px; padding: 12px; }
+  .game__title small { display: none; }
+  .game__title > span { font-size: 13px; }
+  .hud__nerves {
+    top: 68px; left: 12px; right: auto; bottom: auto;
+    padding: 7px 10px;
+  }
+  .hud__tool {
+    top: 68px; right: 12px; bottom: auto; left: auto;
+    width: 132px; padding: 8px;
+  }
+  .hud__evidence {
+    top: 126px; left: 12px; width: 154px;
+    padding: 8px 10px; font-size: 11px;
+  }
+  .hud__hint {
+    bottom: 216px; left: 12px; right: 12px;
+    max-width: none; transform: none;
+    font-size: 11px; text-align: center;
+  }
+  .game__touch { bottom: 14px; padding: 0 12px; }
+  .game__touch-buttons { gap: 6px; }
+  .game__touch-buttons button { min-height: 46px; padding: 7px 4px; font-size: 11px; }
+  .toast--game { bottom: 292px; }
+}
+
+@media (pointer: coarse) and (orientation: landscape) and (max-height: 560px) {
+  .hud__tool {
+    top: 60px; right: 12px; bottom: auto; left: auto;
+    width: 136px; padding: 7px;
+  }
+  .hud__hint { bottom: 112px; max-width: 40%; font-size: 10px; }
+  .game__touch { bottom: 8px; }
+  .toast--game { bottom: 150px; }
+}
+
+/* Tablet w pionie: ten sam układ, ale większe cele i czytelniejszy HUD. */
+@media (pointer: coarse) and (orientation: portrait) and (min-width: 761px) {
+  .hud__nerves, .hud__tool { top: 78px; padding: 10px 14px; font-size: 13px; }
+  .hud__tool { width: 168px; }
+  .hud__evidence {
+    top: 142px; width: 190px; padding: 12px 14px; font-size: 12px;
+  }
+  .hud__hint { bottom: 236px; font-size: 13px; }
+  .game__touch-buttons button { min-height: 52px; font-size: 13px; }
+  .joystick--game, .touch-controls .joystick { width: 128px; height: 128px; }
+  .joystick--game .joystick__knob { width: 54px; height: 54px; }
+  .toast--game { bottom: 312px; font-size: 13px; }
+}
+
+/* Przełącznik jakości wydłużył górny pasek o ~120 px; na 1440 px ostatni
+   przycisk wychodził poza .wrap. Zmniejszamy odstępy zamiast ucinać tekst. */
+@media (max-width: 1500px) {
+  .home .topbar__right { gap: 8px; }
+  .home .nav { gap: 14px; }
+}
+
+/* Na laptopach (≤ 1400 px) etykiety trzech przełączników zjadłyby miejsce
+   potrzebne na przycisk „Wejdź do lobby”. Zostają ikony + title/aria-label. */
+@media (max-width: 1400px) {
+  .quality-toggle__label,
+  .theme-toggle__label,
+  .icon-toggle__label { display: none; }
+  .quality-toggle, .theme-toggle, .icon-toggle { padding: 8px 10px; }
+}
+@media (max-width: 900px) {
+  .home .search { max-width: 170px; }
 }

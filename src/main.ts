@@ -131,6 +131,8 @@ const gameTools = $('#game-tools');
 const gameJournal = $('#game-journal');
 const gameResult = $('#game-result');
 const gameTouch = $('#game-touch');
+const qualityToggle = $('#quality-toggle');
+const qualityLabel = $('#quality-label');
 const gameTimer = $('#game-timer');
 const hudNerves = $('#hud-nerves');
 const hudNervesBar = $('#hud-nerves-bar');
@@ -354,6 +356,7 @@ async function openHands(): Promise<void> {
   try {
     await handTracker.start();
     handPanel.classList.add('is-on');
+    syncHandOverlay();
   } catch (error) {
     handPanel.classList.remove('is-on');
     handReadout.textContent = 'Kamerka niedostępna';
@@ -371,6 +374,11 @@ function closeHands(): void {
   handStatus.textContent = 'Obraz nie opuszcza przeglądarki.';
   handStatus.classList.remove('is-error');
   syncHandButtons();
+}
+
+/** W grze panel kamerki jest schowany — nie rysujemy nieużywanego szkieletu 2D. */
+function syncHandOverlay(): void {
+  handTracker.setOverlayVisible(!game.classList.contains('is-active'));
 }
 
 function renderSwatches(): void {
@@ -871,6 +879,7 @@ function openGame(from: 'home' | 'lobby'): void {
   // steruje dłońmi first-person. Wyłączenie trackingu zabiłoby 1:1 w grze.
   if (handTracker.active) {
     handPanel.setAttribute('aria-hidden', 'true');
+    syncHandOverlay();
     showToast(gameToast, 'Kamerka działa — palce sterują dłońmi w grze 1:1.');
   }
   gameReturn = from;
@@ -909,6 +918,7 @@ function startGameRound(): void {
   world.setPreviewClose(false);
   world.mount(gameStage, 'game'); // setActive(true) → HorrorGame.start()
   world.horror.beginInput();
+  syncHandOverlay();
   online.event('game_start');
   showToast(gameToast, 'Przytrzymaj E, aby skanować. 1 / 2 / 3 zmieniają narzędzia.');
 }
@@ -922,6 +932,7 @@ function exitGame(): void {
   gameResult.hidden = true;
   gameIntro.hidden = true;
   handPanel.setAttribute('aria-hidden', handTracker.active ? 'false' : 'true');
+  syncHandOverlay();
   online.update({ mode: gameReturn === 'lobby' ? 'lobby' : 'home' });
   if (gameReturn === 'lobby') {
     lobby.classList.add('is-active');
@@ -976,6 +987,17 @@ window.addEventListener('keydown', (event) => {
 
 $('#featured-play').addEventListener('click', () => launchGame(GAMES[0].id));
 $('#theme-toggle').addEventListener('click', () => applyTheme(state.theme === 'dark' ? 'light' : 'dark'));
+
+let worldReady = false;
+function syncQualityLabel(): void {
+  if (worldReady) qualityLabel.textContent = world.qualityControl.buttonLabel;
+}
+qualityToggle.addEventListener('click', () => {
+  if (!worldReady) return;
+  world.qualityControl.cycle();
+  syncQualityLabel();
+  showToast(globalToast, `${world.qualityControl.buttonLabel} — działa od razu, także w grze.`);
+});
 
 handToggles.forEach((button) => {
   button.addEventListener('click', () => {
@@ -1137,14 +1159,23 @@ window.addEventListener('keydown', (event) => {
 
 // ---------------------------------------------------------- sterowanie dotykowe
 
-const coarse = window.matchMedia('(pointer: coarse)').matches;
+/**
+ * Nie ufamy tylko `(pointer: coarse)`: tablet z podpiętą myszą zgłasza fine,
+ * a telefon w trybie desktopu — odwrotnie. Kontrolki włączamy też przy
+ * pierwszym dotknięciu ekranu, więc hybrydowe urządzenia dostają oba światy.
+ */
+const touchCapable = window.matchMedia('(pointer: coarse)').matches
+  || (navigator.maxTouchPoints ?? 0) > 0
+  || 'ontouchstart' in window;
+let touchEnabled = false;
 
 function bindJoystick(
   element: HTMLElement,
   knob: HTMLElement,
   onChange: (x: number, y: number) => void,
 ): void {
-  let active = false;
+  // Jeden palec na joystick, drugi może jednocześnie rozglądać się po ekranie.
+  let pointerId: number | null = null;
   const update = (event: PointerEvent): void => {
     const rect = element.getBoundingClientRect();
     let dx = (event.clientX - (rect.left + rect.width / 2)) / (rect.width / 2);
@@ -1154,26 +1185,56 @@ function bindJoystick(
     knob.style.transform = `translate(calc(-50% + ${dx * rect.width * 0.3}px), calc(-50% + ${dy * rect.height * 0.3}px))`;
     onChange(dx, -dy);
   };
-  const reset = (): void => {
-    active = false;
+  const reset = (event?: PointerEvent): void => {
+    if (event && pointerId !== null && event.pointerId !== pointerId) return;
+    pointerId = null;
     knob.style.transform = 'translate(-50%, -50%)';
     onChange(0, 0);
   };
   element.addEventListener('pointerdown', (event) => {
-    active = true;
-    element.setPointerCapture(event.pointerId);
+    if (pointerId !== null) return;
+    pointerId = event.pointerId;
+    try { element.setPointerCapture(event.pointerId); } catch { /* brak wsparcia */ }
     update(event);
   });
   element.addEventListener('pointermove', (event) => {
-    if (active) update(event);
+    if (event.pointerId === pointerId) update(event);
   });
-  element.addEventListener('pointerup', reset);
-  element.addEventListener('pointercancel', reset);
+  element.addEventListener('pointerup', (event) => reset(event));
+  element.addEventListener('pointercancel', (event) => reset(event));
+  element.addEventListener('lostpointercapture', () => reset());
 }
 
-function bindTouchControls(): void {
+/** Przytrzymanie: przechwytuje palec, więc zjazd poza przycisk nie przerywa akcji. */
+function bindHoldButton(button: HTMLButtonElement, down: () => void, up: () => void): void {
+  let active = false;
+  const release = (event?: PointerEvent): void => {
+    if (!active) return;
+    if (event && button.hasPointerCapture?.(event.pointerId)) {
+      try { button.releasePointerCapture(event.pointerId); } catch { /* jw. */ }
+    }
+    active = false;
+    button.classList.remove('is-held');
+    up();
+  };
+  button.addEventListener('pointerdown', (event) => {
+    if (active) return;
+    active = true;
+    button.classList.add('is-held');
+    try { button.setPointerCapture(event.pointerId); } catch { /* jw. */ }
+    down();
+  });
+  button.addEventListener('pointerup', (event) => release(event));
+  button.addEventListener('pointercancel', (event) => release(event));
+  button.addEventListener('lostpointercapture', () => release());
+}
+
+function enableTouchControls(): void {
+  if (touchEnabled || !worldReady) return;
+  touchEnabled = true;
   touchControls.hidden = false;
   gameTouch.hidden = false;
+  document.body.classList.add('has-touch');
 
   bindJoystick(joystick, joystickKnob, (x, y) => {
     if (game.classList.contains('is-active')) world.horror.setJoystick(x, y);
@@ -1185,16 +1246,26 @@ function bindTouchControls(): void {
     world.horror.setJoystick(x, y);
   });
 
-  const scanButton = $<HTMLButtonElement>('#game-scan-btn');
-  scanButton.addEventListener('pointerdown', () => world.horror.setInteracting(true));
-  scanButton.addEventListener('pointerup', () => world.horror.setInteracting(false));
-  scanButton.addEventListener('pointercancel', () => world.horror.setInteracting(false));
-  scanButton.addEventListener('pointerleave', () => world.horror.setInteracting(false));
-
+  bindHoldButton(
+    $<HTMLButtonElement>('#game-scan-btn'),
+    () => world.horror.setInteracting(true),
+    () => world.horror.setInteracting(false),
+  );
+  bindHoldButton(
+    $<HTMLButtonElement>('#game-sprint-btn'),
+    () => world.horror.setSprint(true),
+    () => world.horror.setSprint(false),
+  );
+  $<HTMLButtonElement>('#game-photo-btn').addEventListener('click', () => world.horror.photo());
   $('#game-tool-btn').addEventListener('click', () => world.horror.cycleTool());
   $('#game-journal-btn').addEventListener('click', () => world.horror.toggleJournal());
   $('#game-light-btn').addEventListener('click', () => world.horror.toggleFlashlight());
 }
+
+// Hybryda (tablet + mysz): pierwsze dotknięcie ekranu dołącza kontrolki.
+window.addEventListener('pointerdown', (event) => {
+  if (event.pointerType !== 'mouse' && !touchEnabled) enableTouchControls();
+}, { capture: true, passive: true });
 
 // ------------------------------------------------------------------ inicjalizacja
 
@@ -1237,6 +1308,10 @@ async function boot(): Promise<void> {
     onHorrorPhoto: captureGamePhoto,
   });
   wireWorld();
+  worldReady = true;
+  syncQualityLabel();
+  // Auto może zmienić profil w trakcie gry — odświeżamy etykietę raz na sekundę.
+  window.setInterval(syncQualityLabel, 1000);
   online.onStatus = (status) => {
     onlineStatus = status;
     renderPlayerList();
@@ -1286,7 +1361,7 @@ async function boot(): Promise<void> {
   applyTheme(state.theme);
   world.mount(heroStage, 'home');
 
-  if (coarse) bindTouchControls();
+  if (touchCapable) enableTouchControls();
 
   if (!assets) {
     showToast(globalToast, 'Nie udało się wczytać modeli postaci — używam neutralnego podglądu zastępczego.');
