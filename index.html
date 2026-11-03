@@ -2,11 +2,11 @@
 <html lang="pl" data-theme="light">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#f1f0ec" />
     <meta
       name="description"
-      content="RejPlay — przeglądarkowa platforma 3D z jedną grą dochodzeniową Demonofobia, wspólnym lobby Atrium, multiplayerem przez Supabase Realtime, edytorem postaci i śledzeniem dłoni 1:1 przez kamerę."
+      content="RejPlay — przeglądarkowa platforma 3D z jedną grą dochodzeniową Demonofobia, wspólnym lobby Atrium, multiplayerem przez Supabase Realtime, edytorem postaci, śledzeniem dłoni 1:1 przez kamerę oraz adaptacyjną jakością na telefony i tablety."
     />
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='15' fill='%23141a1c'/%3E%3Cpath d='M32 9 55 32 32 55 9 32Z' fill='none' stroke='%23c8a06a' stroke-width='3' stroke-linejoin='round'/%3E%3Cpath d='M27 23 42 32 27 41Z' fill='%23e4c99e'/%3E%3Ccircle cx='32' cy='9' r='4.2' fill='%23e4c99e'/%3E%3C/svg%3E" />
     <title>RejPlay — Demonofobia i Atrium 3D</title>
@@ -104,6 +104,10 @@
                 <span class="theme-toggle__ico" aria-hidden="true">☾</span>
                 <span class="theme-toggle__label">Tryb ciemny</span>
               </button>
+              <button type="button" class="quality-toggle" id="quality-toggle" title="Jakość grafiki: auto / oszczędna / wysoka">
+                <span class="quality-toggle__ico" aria-hidden="true">◈</span>
+                <span class="quality-toggle__label" id="quality-label">Jakość: auto</span>
+              </button>
               <button type="button" class="profile-chip" data-action="open-editor" title="Edytuj postać">
                 <span class="profile-chip__avatar" id="chip-avatar" aria-hidden="true">K</span>
                 <span class="profile-chip__name" id="chip-nick">Gracz</span>
@@ -167,7 +171,7 @@
 
             <div class="sidebar__note">
               <span class="dot"></span>
-              RejPlay · v0.3<br />
+              RejPlay · v0.4<br />
               Multiplayer bez logowania
             </div>
           </aside>
@@ -189,7 +193,7 @@
             <section class="live-strip" aria-label="Co nowego w RejPlay">
               <article><span class="live-strip__icon">◎</span><div><b>Wspólne Atrium</b><small>Pozycje i awatary graczy przez Supabase Realtime</small></div></article>
               <article><span class="live-strip__icon">✋</span><div><b>Dłonie 1:1</b><small>21 punktów dłoni, 15 stawów, pozycja nadgarstka w 3D</small></div></article>
-              <article><span class="live-strip__icon">▣</span><div><b>Realistyczne rekwizyty</b><small>Gotowe modele CC0 z teksturami PBR w domu</small></div></article>
+              <article><span class="live-strip__icon">◈</span><div><b>Płynność i dotyk</b><small>Auto jakość, cienie i DPR · wygodny HUD na telefonach i tabletach</small></div></article>
             </section>
 
             <!-- Wyróżniony świat: obraz jest tylko w kafelku, nigdy w tle strony -->
@@ -332,7 +336,7 @@
         </div>
 
         <footer class="footer wrap">
-          <span><strong>RejPlay</strong> · vertical slice 0.3</span>
+          <span><strong>RejPlay</strong> · vertical slice 0.4</span>
           <span>Three.js · Vite · Supabase Realtime · GitHub Pages</span>
         </footer>
       </section>
@@ -437,6 +441,8 @@
           </div>
           <div class="game__touch-buttons">
             <button type="button" id="game-scan-btn">Skanuj</button>
+            <button type="button" id="game-sprint-btn">Bieg</button>
+            <button type="button" id="game-photo-btn">Foto</button>
             <button type="button" id="game-tool-btn">Narzędzie</button>
             <button type="button" id="game-journal-btn">Notatnik</button>
             <button type="button" id="game-light-btn">Latarka</button>

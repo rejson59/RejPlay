@@ -5,7 +5,8 @@ import type { HumanAssets } from './human';
 import type { Appearance } from './character';
 import { CHARACTER_MODELS } from './games';
 import { loadRealProps } from './real-props';
-import { neutralHandPosePair, type HandPosePair } from './hand-pose';
+import { neutralHandPosePair, type HandMotion, type HandPosePair } from './hand-pose';
+import type { QualityProfile } from './performance';
 
 /**
  * „Demonofobia” — autorska, pierwszoosobowa gra dochodzeniowa.
@@ -161,6 +162,23 @@ export class HorrorGame {
   private appearance: Appearance;
   private skin = '#d3a377';
   private readonly velocity = new THREE.Vector3();
+  private readonly forward = new THREE.Vector3();
+  private readonly right = new THREE.Vector3();
+  private readonly leftMotion: HandMotion = {
+    time: 0, sway: 0, turn: 0, grip: 0.22, scan: 0, sprint: 0, side: 'L',
+  };
+  private readonly rightMotion: HandMotion = {
+    time: 0, sway: 0, turn: 0, grip: 1, scan: 0, sprint: 0, side: 'R',
+  };
+  private lookVelocity = 0;
+  private lastYaw = 0;
+  private lookScale = 1;
+  private touchSprint = false;
+  private quality: QualityProfile | null = null;
+  private viewportAspect = 16 / 9;
+  private viewFov = 60;
+  private propsGroup: THREE.Group | null = null;
+  private propsLoading = false;
   private screenTimer = 0;
   private lastStep = 0;
   private lastToolIndex = -1;
@@ -223,7 +241,7 @@ export class HorrorGame {
     this.flashlight = new THREE.SpotLight(0xffe4bd, 62, 19, 0.56, 0.65, 1.3);
     this.flashlight.position.set(0.16, -0.14, 0);
     this.flashlight.target.position.set(0, -0.06, -1);
-    this.flashlight.castShadow = true;
+    this.flashlight.castShadow = false; // włączane dopiero w aktywnej rundzie
     this.flashlight.shadow.mapSize.set(512, 512);
     this.flashlight.shadow.camera.near = 0.2;
     this.flashlight.shadow.camera.far = 19;
@@ -253,9 +271,8 @@ export class HorrorGame {
       });
     }
     this.decor = buildDecor(this.scene, WALL_SEGMENTS);
-    // Gotowe, realistyczne modele CC0 (Poly Haven) — dokładane asynchronicznie,
-    // więc nawet przy braku sieci gra uruchamia się natychmiast.
-    void loadRealProps(this.scene);
+    // Gotowe modele CC0 (Poly Haven) ładujemy dopiero przy pierwszej rundzie:
+    // nie dokładamy 8 requestów do startu strony głównej.
   }
 
   /**
@@ -298,6 +315,7 @@ export class HorrorGame {
           base,
         })
         : new FallbackViewHand(side, this.skin, base);
+      hand.setViewport(this.viewportAspect, this.viewFov);
       if (side === 'L') this.leftHand = hand;
       else this.rightHand = hand;
     }
@@ -343,6 +361,55 @@ export class HorrorGame {
   setHandPose(pair: HandPosePair): void {
     this.handPoses.L = pair.L;
     this.handPoses.R = pair.R;
+  }
+
+  /** Proporcje ekranu → dłonie pierwszoosobowe nie uciekają poza kadr. */
+  setViewport(aspect: number): void {
+    this.viewportAspect = aspect;
+    // Wąski ekran w pionie ma bardzo małe pole widzenia w poziomie —
+    // poszerzamy FOV viewmodelu, żeby obie dłonie zmieściły się w kadrze.
+    this.viewFov = THREE.MathUtils.clamp(60 + Math.max(0, 0.9 - aspect) * 34, 60, 78);
+    if (Math.abs(this.viewCamera.fov - this.viewFov) > 0.1) {
+      this.viewCamera.fov = this.viewFov;
+      this.viewCamera.updateProjectionMatrix();
+    }
+    this.leftHand.setViewport(aspect, this.viewFov);
+    this.rightHand.setViewport(aspect, this.viewFov);
+  }
+
+  /** Jakość renderingu ustawiana przez World (adaptacyjnie lub ręcznie). */
+  setQuality(profile: QualityProfile): void {
+    this.quality = profile;
+    this.syncFlashlightShadow();
+    this.decor?.setQuality(profile);
+    if (this.propsGroup) this.propsGroup.visible = profile.props;
+  }
+
+  private syncFlashlightShadow(): void {
+    // Cień z latarki to jedyna dynamiczna mapa cieni w grze. Gdy latarka jest
+    // zgaszona albo profil oszczędny, nie ma sensu jej renderować.
+    this.flashlight.castShadow = Boolean(
+      this.active && this.flashlightOn && (this.quality?.shadows ?? true),
+    );
+  }
+
+  private ensureProps(): void {
+    if (this.propsLoading || this.quality?.props === false) return;
+    this.propsLoading = true;
+    void loadRealProps(this.scene).then((group) => {
+      this.propsGroup = group;
+      if (this.quality && !this.quality.props) group.visible = false;
+    }).catch(() => { this.propsLoading = false; });
+  }
+
+  /** Czułość rozglądania: na dotyku palec pokonuje krótszą drogę niż mysz. */
+  setLookSensitivity(scale: number): void {
+    this.lookScale = THREE.MathUtils.clamp(scale, 0.6, 2);
+  }
+
+  /** Przycisk „Bieg” na ekranie dotykowym. */
+  setSprint(active: boolean): void {
+    this.touchSprint = active;
   }
 
   private buildApparition(): void {
@@ -417,21 +484,29 @@ export class HorrorGame {
       if (event.pointerType === 'mouse') return;
       this.dragging = true;
       this.lastPointer = { x: event.clientX, y: event.clientY };
+      // Przechwytujemy palec: rozglądanie nie urwie się, gdy przesunie się
+      // nad HUD, przycisk albo poza sam canvas.
+      try { this.canvas.setPointerCapture(event.pointerId); } catch { /* brak wsparcia */ }
     });
     this.canvas.addEventListener('pointermove', (event: PointerEvent) => {
       if (!this.dragging || !this.active || this.journal || this.result) return;
       this.look((event.clientX - this.lastPointer.x) * 1.4, (event.clientY - this.lastPointer.y) * 1.4);
       this.lastPointer = { x: event.clientX, y: event.clientY };
     });
-    const endDrag = (): void => { this.dragging = false; };
+    const endDrag = (event: PointerEvent): void => {
+      this.dragging = false;
+      try { this.canvas.releasePointerCapture(event.pointerId); } catch { /* jw. */ }
+    };
     this.canvas.addEventListener('pointerup', endDrag);
     this.canvas.addEventListener('pointercancel', endDrag);
   }
 
   look(dx: number, dy: number): void {
     if (!this.active || this.journal || this.result) return;
-    this.yawTarget -= dx * 0.0022;
-    this.pitchTarget = THREE.MathUtils.clamp(this.pitchTarget - dy * 0.0022, -1.2, 1.2);
+    this.yawTarget -= dx * 0.0022 * this.lookScale;
+    this.pitchTarget = THREE.MathUtils.clamp(
+      this.pitchTarget - dy * 0.0022 * this.lookScale, -1.2, 1.2,
+    );
   }
 
   setJoystick(x: number, y: number): void {
@@ -489,6 +564,10 @@ export class HorrorGame {
     this.huntCooldown = 26;
     this.photos = 0;
     this.lastFrameTime = 0;
+    this.lastYaw = 0;
+    this.lookVelocity = 0;
+    this.touchSprint = false;
+    this.ensureProps();
     this.keys.clear();
     this.joystick.x = 0;
     this.joystick.y = 0;
@@ -500,6 +579,7 @@ export class HorrorGame {
   /** Wywoływane przez World przy zmianie trybu. */
   setActive(active: boolean): void {
     this.active = active;
+    this.syncFlashlightShadow();
     if (!active) {
       this.keys.clear();
       this.interacting = false;
@@ -529,6 +609,7 @@ export class HorrorGame {
   toggleFlashlight(): void {
     if (!this.active || this.result) return;
     this.flashlightOn = !this.flashlightOn;
+    this.syncFlashlightShadow();
     this.beep(this.flashlightOn ? 380 : 260, 0.05, 0.02);
     this.emit();
   }
@@ -665,12 +746,17 @@ export class HorrorGame {
     const magnitude = Math.hypot(ix, iy);
     if (magnitude > 1) { ix /= magnitude; iy /= magnitude; }
 
-    const sprint = this.keys.has('ShiftLeft') || this.keys.has('ShiftRight');
+    const sprint = this.keys.has('ShiftLeft') || this.keys.has('ShiftRight') || this.touchSprint;
     const speed = sprint ? 3.9 : 2.45;
-    const forward = new THREE.Vector3(-Math.sin(this.yaw), 0, -Math.cos(this.yaw));
-    const right = new THREE.Vector3(Math.cos(this.yaw), 0, -Math.sin(this.yaw));
+    // Bez alokacji wektorów co klatkę: te dwa są polami klasy.
+    this.forward.set(-Math.sin(this.yaw), 0, -Math.cos(this.yaw));
+    this.right.set(Math.cos(this.yaw), 0, -Math.sin(this.yaw));
+    const forward = this.forward;
+    const right = this.right;
     const wishX = (forward.x * iy + right.x * ix) * speed;
     const wishZ = (forward.z * iy + right.z * ix) * speed;
+    this.lookVelocity = dt > 0 ? THREE.MathUtils.clamp((this.yaw - this.lastYaw) / dt, -6, 6) : 0;
+    this.lastYaw = this.yaw;
     // Bezwładność: rozpędzanie i hamowanie mają różne czasy, bez „ślizgu”.
     const accel = magnitude > 0.02 ? 8.5 : 12;
     const k = 1 - Math.exp(-dt * accel);
@@ -718,13 +804,21 @@ export class HorrorGame {
     }
   }
 
-  /** Dłonie i narzędzie reagują na ruch, skan i odczyt z kamerki. */
+  /** Dłonie i narzędzie reagują na krok, obrót głowy, skan i odczyt z kamerki. */
   private updateViewmodel(realDt: number): void {
     const sway = this.moving ? Math.sin(this.bob) : Math.sin(this.elapsed * 1.3) * 0.12;
-    this.leftHand.apply(this.handPoses.L, realDt, sway);
-    this.rightHand.apply(this.handPoses.R, realDt, -sway);
+    const sprint = (this.keys.has('ShiftLeft') || this.keys.has('ShiftRight') || this.touchSprint) ? 1 : 0;
+    const turn = this.lookVelocity;
+    const L = this.leftMotion;
+    const R = this.rightMotion;
+    L.time = this.elapsed; L.sway = sway; L.turn = turn; L.sprint = sprint; L.scan = 0;
+    R.time = this.elapsed; R.sway = -sway; R.turn = turn; R.sprint = sprint; R.scan = this.scan;
+    this.leftHand.apply(this.handPoses.L, realDt, L);
+    this.rightHand.apply(this.handPoses.R, realDt, R);
+    // Narzędzie ma własną bezwładność: przy szybkim skręcie zostaje w tyle.
     this.toolView.root.position.y = 0.23 + this.scan * 0.05 + Math.sin(this.elapsed * 2) * 0.003;
-    this.toolView.root.rotation.z = -0.22 + sway * 0.035;
+    this.toolView.root.position.x = -0.055 - THREE.MathUtils.clamp(turn * 0.007, -0.025, 0.025);
+    this.toolView.root.rotation.z = -0.22 + sway * 0.035 + THREE.MathUtils.clamp(turn * 0.012, -0.06, 0.06);
     this.screenTimer -= realDt;
     if (this.screenTimer <= 0) {
       this.screenTimer = 0.12;

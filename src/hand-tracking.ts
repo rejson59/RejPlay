@@ -8,6 +8,7 @@
  */
 
 import type { NormalizedLandmark, TrackedHand } from './hand-pose';
+import { lowPowerDevice } from './performance';
 
 const CONNECTIONS: Array<[number, number]> = [
   [0, 1], [1, 2], [2, 3], [3, 4],
@@ -83,6 +84,9 @@ export class HandTracker {
   private frame = 0;
   private sending = false;
   private running = false;
+  private readonly lowPower = lowPowerDevice();
+  private overlay = true;
+  private lastSend = 0;
 
   constructor(options: HandTrackerOptions) {
     this.video = options.video;
@@ -90,6 +94,12 @@ export class HandTracker {
     this.context = options.canvas.getContext('2d')!;
     this.onFrame = options.onFrame;
     this.onStatus = options.onStatus;
+  }
+
+  /** W grze panel kamerki jest ukryty — nie rysujemy wtedy szkieletu 2D. */
+  setOverlayVisible(visible: boolean): void {
+    this.overlay = visible;
+    if (!visible) this.context.clearRect(0, 0, this.canvas.width, this.canvas.height);
   }
 
   get active(): boolean {
@@ -106,8 +116,13 @@ export class HandTracker {
       throw new Error('Kamerka wymaga bezpiecznego połączenia (HTTPS) i zgody przeglądarki.');
     }
     this.status('Czekam na zgodę na kamerę…');
+    const width = this.lowPower ? 480 : 640;
+    const height = this.lowPower ? 360 : 480;
     this.stream = await navigator.mediaDevices.getUserMedia({
-      video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' },
+      video: {
+        width: { ideal: width }, height: { ideal: height },
+        frameRate: { ideal: 30, max: 30 }, facingMode: 'user',
+      },
       audio: false,
     });
     this.video.srcObject = this.stream;
@@ -120,7 +135,10 @@ export class HandTracker {
     const hands = new Hands({ locateFile: (file) => `${MP_BASE}${file}` });
     hands.setOptions({
       maxNumHands: 2,
-      modelComplexity: 1,
+      // Na słabszych telefonach lżejszy model + wygładzanie czasowe MediaPipe
+      // dają mniej drżących palców przy mniejszym zużyciu CPU.
+      modelComplexity: this.lowPower ? 0 : 1,
+      smoothLandmarks: true,
       minDetectionConfidence: 0.6,
       minTrackingConfidence: 0.6,
     });
@@ -133,7 +151,10 @@ export class HandTracker {
 
   private async tick(): Promise<void> {
     if (!this.running) return;
-    if (this.hands && this.video.readyState >= 2 && !this.sending) {
+    const now = performance.now();
+    const minGap = 1000 / (this.lowPower ? 24 : 30);
+    if (this.hands && this.video.readyState >= 2 && !this.sending && now - this.lastSend >= minGap) {
+      this.lastSend = now;
       this.sending = true;
       try {
         await this.hands.send({ image: this.video });
@@ -150,28 +171,35 @@ export class HandTracker {
     const ctx = this.context;
     const w = this.canvas.width;
     const h = this.canvas.height;
-    ctx.clearRect(0, 0, w, h);
     const aspect = w / Math.max(h, 1);
     const landmarks = results.multiHandLandmarks ?? [];
     const tracked: TrackedHand[] = [];
 
+    // Rysowanie szkieletu 2D jest potrzebne tylko w panelu kamerki. W grze
+    // oszczędzamy pełne czyszczenie canvasu 640×480 przy każdym odczycie.
+    if (this.overlay) {
+      ctx.clearRect(0, 0, w, h);
+      landmarks.forEach((hand, i) => {
+        const color = HAND_COLORS[i % HAND_COLORS.length];
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = color;
+        for (const [a, b] of CONNECTIONS) {
+          ctx.beginPath();
+          ctx.moveTo(hand[a].x * w, hand[a].y * h);
+          ctx.lineTo(hand[b].x * w, hand[b].y * h);
+          ctx.stroke();
+        }
+        ctx.fillStyle = i === 0 ? '#e4c99e' : '#a8d0d2';
+        for (let p = 0; p < hand.length; p += 1) {
+          ctx.beginPath();
+          // Koniuszki palców wyróżnione — to je śledzimy najdokładniej.
+          ctx.arc(hand[p].x * w, hand[p].y * h, p % 4 === 0 && p > 0 ? 4.2 : 2.6, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      });
+    }
+
     landmarks.forEach((hand, i) => {
-      const color = HAND_COLORS[i % HAND_COLORS.length];
-      ctx.lineWidth = 2;
-      ctx.strokeStyle = color;
-      for (const [a, b] of CONNECTIONS) {
-        ctx.beginPath();
-        ctx.moveTo(hand[a].x * w, hand[a].y * h);
-        ctx.lineTo(hand[b].x * w, hand[b].y * h);
-        ctx.stroke();
-      }
-      ctx.fillStyle = i === 0 ? '#e4c99e' : '#a8d0d2';
-      for (let p = 0; p < hand.length; p += 1) {
-        ctx.beginPath();
-        // Koniuszki palców wyróżnione — to je śledzimy najdokładniej.
-        ctx.arc(hand[p].x * w, hand[p].y * h, p % 4 === 0 && p > 0 ? 4.2 : 2.6, 0, Math.PI * 2);
-        ctx.fill();
-      }
       const raw = results.multiHandedness?.[i];
       tracked.push({
         label: raw?.label === 'Right' ? 'Right' : 'Left',

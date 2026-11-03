@@ -5,8 +5,8 @@ import { getOutfit, outfitBody } from './games';
 import type { HumanAssets, HumanTemplate } from './human';
 import type { Appearance } from './character';
 import {
-  blendPose,
-  neutralHandPose,
+  HandAnimator,
+  type HandMotion,
   type HandPose,
 } from './hand-pose';
 
@@ -147,7 +147,11 @@ export class AvatarViewHand {
   private readonly base: THREE.Vector3;
   private readonly side: 'L' | 'R';
   private readonly assets: HumanAssets;
-  private readonly pose: HandPose = neutralHandPose();
+  private readonly animator = new HandAnimator({ idle: true });
+  // Scratch — 15 stawów × 2 dłonie nie może alokować 60 kwaternionów co klatkę.
+  private readonly qRest = new THREE.Quaternion();
+  private readonly qCurl = new THREE.Quaternion();
+  private readonly qSpread = new THREE.Quaternion();
   private model: THREE.Group | null = null;
   private rigs: FingerRig[] = [];
   private material: THREE.MeshStandardMaterial | null = null;
@@ -158,6 +162,23 @@ export class AvatarViewHand {
     this.assets = options.assets;
     this.root.position.copy(this.base);
     this.rebuild();
+  }
+
+  /**
+   * Na wąskim ekranie w pionie kamera ma znacznie mniejsze pole widzenia
+   * w poziomie — dłonie z x = ±0.33 znikały poza kadrem. Przesuwamy je
+   * proporcjonalnie do aspectu i zmniejszamy cały viewmodel.
+   */
+  setViewport(aspect: number, fov = 60): void {
+    const halfH = Math.tan(THREE.MathUtils.degToRad(fov) / 2) * 0.62;
+    const halfW = halfH * Math.max(0.3, aspect);
+    const portrait = aspect < 0.85;
+    const x = portrait ? halfW * 0.78 : THREE.MathUtils.clamp(halfW * 0.60, 0.10, 0.33);
+    const y = portrait ? -halfH * 0.80 : -THREE.MathUtils.clamp(halfH * 1.12, 0.26, 0.40);
+    this.base.set(this.side === 'L' ? -x : x, y, -0.62);
+    // W pionie dłoń musi być wyraźnie mniejsza, inaczej zasłania pół ekranu.
+    this.root.scale.setScalar(portrait ? 0.34 : THREE.MathUtils.clamp(aspect / 1.45, 0.6, 1));
+    this.root.position.copy(this.base);
   }
 
   private rebuild(): void {
@@ -247,39 +268,41 @@ export class AvatarViewHand {
     this.material.needsUpdate = true;
   }
 
-  /** 15 stawów + pozycja nadgarstka w 3D, wygładzane co klatkę. */
-  apply(target: HandPose, dt: number, sway = 0): void {
-    const k = 1 - Math.exp(-dt * 17);
-    blendPose(this.pose, target.present ? target : neutralHandPose(), k);
+  /**
+   * 15 stawów + pozycja nadgarstka w 3D. Sprężyna daje bezwładność, a kontekst
+   * ruchu (krok, obrót kamery, chwyt, skan) dokłada opóźnienie i mikro-ruch.
+   */
+  apply(target: HandPose, dt: number, motion: HandMotion): void {
+    const pose = this.animator.step(target, dt, motion);
 
     for (let f = 0; f < 5; f += 1) {
       for (let j = 0; j < 3; j += 1) {
         const rig = this.rigs[f * 3 + j];
         if (!rig) continue;
-        const curl = rig.rest
-          .clone()
-          .multiply(new THREE.Quaternion().setFromAxisAngle(rig.curlAxis, this.pose.curl[f][j]));
+        this.qRest.copy(rig.rest);
+        this.qRest.multiply(this.qCurl.setFromAxisAngle(rig.curlAxis, pose.curl[f][j]));
         if (j === 0) {
-          curl.multiply(
-            new THREE.Quaternion().setFromAxisAngle(rig.normalAxis, -this.pose.spread[f] * 0.7),
-          );
+          this.qRest.multiply(this.qSpread.setFromAxisAngle(rig.normalAxis, -pose.spread[f] * 0.7));
         }
-        rig.bone.quaternion.copy(curl);
+        rig.bone.quaternion.copy(this.qRest);
       }
     }
 
-    // Trójwymiarowe pozycjonowanie nadgarstka: ruch dłoni w kadrze przesuwa
-    // całą dłoń awatara w lewo/prawo, góra/dół oraz bliżej/dalej kamery.
-    const w = this.pose.wrist;
+    // Trójwymiarowe pozycjonowanie nadgarstka. Limity nie pozwalają dłoniom
+    // przeciąć się na środku ekranu ani uciec poza kadr.
+    const w = pose.wrist;
+    const dx = THREE.MathUtils.clamp(w.x * 0.075, -0.085, 0.085);
+    const dy = THREE.MathUtils.clamp(w.y * 0.075, -0.09, 0.09);
+    const turn = THREE.MathUtils.clamp(motion.turn * 0.016, -0.045, 0.045);
     this.root.position.set(
-      this.base.x + w.x * (this.side === 'L' ? 0.075 : 0.075),
-      this.base.y + w.y * 0.075,
+      this.base.x + dx + turn,
+      this.base.y + dy + Math.abs(motion.sway) * 0.006,
       this.base.z + w.z * 0.055,
     );
     this.root.rotation.set(
-      this.pose.pitch * 0.3,
-      this.pose.yaw * 0.7 - this.pose.roll * 0.25 + sway * 0.04,
-      this.pose.roll * 0.18,
+      pose.pitch * 0.3 + turn * 0.08,
+      pose.yaw * 0.7 - pose.roll * 0.25 + motion.sway * 0.04 - turn * 0.55,
+      pose.roll * 0.18 + turn * 0.22,
     );
   }
 }
@@ -295,7 +318,7 @@ export class FallbackViewHand {
   private readonly bases: THREE.Group[] = [];
   private readonly side: number;
   private readonly base: THREE.Vector3;
-  private readonly pose: HandPose = neutralHandPose();
+  private readonly animator = new HandAnimator({ idle: true });
 
   constructor(side: 'L' | 'R', skin: string, base: THREE.Vector3) {
     this.side = side === 'L' ? 1 : -1;
@@ -339,28 +362,40 @@ export class FallbackViewHand {
     }
   }
 
+  setViewport(aspect: number, fov = 60): void {
+    const halfH = Math.tan(THREE.MathUtils.degToRad(fov) / 2) * 0.62;
+    const halfW = halfH * Math.max(0.3, aspect);
+    const portrait = aspect < 0.85;
+    const x = portrait ? halfW * 0.78 : THREE.MathUtils.clamp(halfW * 0.60, 0.10, 0.33);
+    const y = portrait ? -halfH * 0.80 : -THREE.MathUtils.clamp(halfH * 1.12, 0.26, 0.40);
+    this.base.set(this.side > 0 ? -x : x, y, -0.62);
+    this.root.scale.setScalar(portrait ? 0.34 : THREE.MathUtils.clamp(aspect / 1.45, 0.6, 1));
+    this.root.position.copy(this.base);
+  }
+
   setSkin(hex: string): void {
     this.material.color.set(hex);
   }
 
-  apply(target: HandPose, dt: number, sway = 0): void {
-    const k = 1 - Math.exp(-dt * 17);
-    const t = target.present ? target : neutralHandPose();
-    blendPose(this.pose, t, k);
+  apply(target: HandPose, dt: number, motion: HandMotion): void {
+    const pose = this.animator.step(target, dt, motion);
     for (let f = 0; f < 5; f += 1) {
       for (let j = 0; j < 3; j += 1) {
-        this.joints[f][j].rotation.x = this.pose.curl[f][j] * (j === 0 ? 0.85 : 1);
+        this.joints[f][j].rotation.x = pose.curl[f][j] * (j === 0 ? 0.85 : 1);
       }
       this.bases[f].rotation.z =
-        (f === 0 ? -this.side * 0.92 : 0) - this.side * this.pose.spread[f] * 0.7;
+        (f === 0 ? -this.side * 0.92 : 0) - this.side * pose.spread[f] * 0.7;
     }
+    const w = pose.wrist;
+    const turn = THREE.MathUtils.clamp(motion.turn * 0.016, -0.045, 0.045);
     this.root.position.set(
-      this.base.x + this.pose.wrist.x * 0.075,
-      this.base.y + this.pose.wrist.y * 0.075,
-      this.base.z + this.pose.wrist.z * 0.055,
+      this.base.x + THREE.MathUtils.clamp(w.x * 0.075, -0.085, 0.085) + turn,
+      this.base.y + THREE.MathUtils.clamp(w.y * 0.075, -0.09, 0.09) + Math.abs(motion.sway) * 0.006,
+      this.base.z + w.z * 0.055,
     );
-    this.root.rotation.y = -this.pose.roll * 0.4 + this.pose.yaw * 0.5 + sway * 0.04;
-    this.root.rotation.x = this.pose.pitch * 0.35;
+    this.root.rotation.y = -pose.roll * 0.4 + pose.yaw * 0.5 + motion.sway * 0.04 - turn * 0.55;
+    this.root.rotation.x = pose.pitch * 0.35;
+    this.root.rotation.z = turn * 0.22;
   }
 }
 

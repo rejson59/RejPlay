@@ -39,7 +39,9 @@ export async function loadRealProps(scene: THREE.Scene): Promise<THREE.Group> {
   const loader = new GLTFLoader();
   const group = new THREE.Group();
   group.name = 'real-props-cc0';
-  for (const prop of PROPS) {
+  // Równolegle: 8 małych plików nie może układać się w 8 następujących po
+  // sobie round-tripów. Kolejność w grupie jest stała dzięki Promise.all.
+  const roots = await Promise.all(PROPS.map(async (prop) => {
     try {
       const gltf = await loader.loadAsync(`${BASE}assets/props/${prop.file}.glb`);
       const root = gltf.scene;
@@ -58,11 +60,13 @@ export async function loadRealProps(scene: THREE.Scene): Promise<THREE.Group> {
           material.needsUpdate = true;
         }
       });
-      group.add(root);
+      return root;
     } catch {
       // Pojedynczy brakujący plik nie może zatrzymać całej gry.
+      return null;
     }
-  }
+  }));
+  for (const root of roots) if (root) group.add(root);
   scene.add(group);
   return group;
 }

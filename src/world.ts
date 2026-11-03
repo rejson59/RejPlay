@@ -6,6 +6,12 @@ import { HorrorGame, type HorrorResult, type HorrorState } from './horror';
 import { BOTS, GAMES, PALETTE } from './games';
 import { posesFromHands, type HandPosePair, type TrackedHand } from './hand-pose';
 import type { OnlinePeer } from './online';
+import {
+  QualityManager,
+  deviceHints,
+  initialProfile,
+  type QualityProfile,
+} from './performance';
 
 export type Mode = 'home' | 'lobby' | 'game';
 
@@ -119,6 +125,19 @@ export class World {
   private readonly keys = new Set<string>();
   private readonly joystick = { x: 0, y: 0 };
   private readonly camTarget = new THREE.Vector3();
+  private readonly qualityManager: QualityManager;
+  private readonly shadowLights: THREE.DirectionalLight[] = [];
+  private readonly vForward = new THREE.Vector3();
+  private readonly vRight = new THREE.Vector3();
+  private readonly vDirection = new THREE.Vector3();
+  private readonly vToTarget = new THREE.Vector3();
+  private readonly vDesired = new THREE.Vector3();
+  private readonly vLookAt = new THREE.Vector3();
+  private readonly vTarget = new THREE.Vector3();
+  private visibilityObserver: IntersectionObserver | null = null;
+  private stageVisible = true;
+  private lastRenderAt = 0;
+  private shadowsEnabled: boolean | null = null;
 
   private container: HTMLElement | null = null;
   private mode: Mode = 'home';
@@ -149,13 +168,18 @@ export class World {
     onHorrorPhoto?: () => void;
   }) {
     this.assets = options.assets;
+    const initial = initialProfile();
     this.renderer = new THREE.WebGLRenderer({
-      antialias: true,
+      // Antyaliasingu nie da się przełączyć po utworzeniu kontekstu, więc
+      // słabe urządzenia startują bez MSAA (oszczędność całej klatki).
+      antialias: initial.antialias,
       alpha: true,
       powerPreference: 'high-performance',
-      preserveDrawingBuffer: true, // potrzebne do zapisu zdjęć z trybu kamery
+      // Zdjęcie zapisujemy po własnym, jawnym renderze w capturePhoto(),
+      // więc nie musimy trzymać bufora klatki przy każdym rysowaniu.
+      preserveDrawingBuffer: false,
     });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, initial.maxDpr));
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -187,9 +211,12 @@ export class World {
       appearance: options.appearance,
     });
 
+    this.horror.setLookSensitivity(deviceHints().coarse ? 1.15 : 1);
     this.buildHero();
     this.buildLobby();
     this.bindInput();
+    this.collectShadowLights();
+    this.qualityManager = new QualityManager((profile, dpr) => this.applyQuality(profile, dpr));
 
     this.resizeObserver = new ResizeObserver(() => this.resize());
     window.addEventListener('resize', () => this.resize());
@@ -204,6 +231,15 @@ export class World {
     this.container = container;
     this.resizeObserver.disconnect();
     this.resizeObserver.observe(container);
+    this.visibilityObserver?.disconnect();
+    this.stageVisible = true;
+    if (typeof IntersectionObserver !== 'undefined') {
+      this.visibilityObserver = new IntersectionObserver(
+        (entries) => { this.stageVisible = entries[0]?.isIntersecting ?? true; },
+        { threshold: 0.01 },
+      );
+      this.visibilityObserver.observe(container);
+    }
     this.setMode(mode);
     this.resize();
   }
@@ -314,6 +350,11 @@ export class World {
     return this.assets !== null;
   }
 
+  /** Przycisk „Jakość” w górnym pasku. */
+  get qualityControl(): QualityManager {
+    return this.qualityManager;
+  }
+
   /** Machnięcie bez VR — mechanicznym odpowiednikiem gestu z kamerki. */
   wave(): void {
     if (this.mode === 'game') return;
@@ -369,6 +410,46 @@ export class World {
   }
 
   // ------------------------------------------------------------------- scenes
+
+  private collectShadowLights(): void {
+    for (const scene of [this.heroScene, this.lobbyScene, this.gameScene]) {
+      scene.traverse((object) => {
+        const light = object as THREE.DirectionalLight;
+        if (light.isLight && light.castShadow && light.shadow) this.shadowLights.push(light);
+      });
+    }
+  }
+
+  private refreshShadowMaterials(): void {
+    // Przełączenie renderer.shadowMap.enabled wymaga rekompilacji programów.
+    for (const scene of [this.heroScene, this.lobbyScene, this.gameScene]) {
+      scene.traverse((object) => {
+        const material = (object as THREE.Mesh).material;
+        if (!material) return;
+        if (Array.isArray(material)) material.forEach((m) => { m.needsUpdate = true; });
+        else material.needsUpdate = true;
+      });
+    }
+  }
+
+  private applyQuality(profile: QualityProfile, dpr: number): void {
+    if (Math.abs(this.renderer.getPixelRatio() - dpr) > 0.01) this.renderer.setPixelRatio(dpr);
+    if (this.shadowsEnabled !== profile.shadows) {
+      this.shadowsEnabled = profile.shadows;
+      this.renderer.shadowMap.enabled = profile.shadows;
+      this.refreshShadowMaterials();
+    }
+    for (const light of this.shadowLights) {
+      light.castShadow = profile.shadows;
+      if (light.shadow.mapSize.x !== profile.shadowSize) {
+        light.shadow.mapSize.set(profile.shadowSize, profile.shadowSize);
+        light.shadow.map?.dispose();
+        light.shadow.map = null;
+      }
+    }
+    this.horror.setQuality(profile);
+    document.body.classList.toggle('is-low-quality', profile.level === 'low');
+  }
 
   private buildHero(): void {
     this.heroScene.add(new THREE.AmbientLight(0xb9c0c4, 0.75));
@@ -737,16 +818,28 @@ export class World {
     const width = Math.max(1, this.container.clientWidth);
     const height = Math.max(1, this.container.clientHeight);
     this.renderer.setSize(width, height, false);
+    const aspect = width / height;
     for (const camera of [this.heroCamera, this.lobbyCamera, this.horror.camera, this.horror.viewCamera]) {
-      camera.aspect = width / height;
+      camera.aspect = aspect;
       camera.updateProjectionMatrix();
     }
+    this.horror.setViewport(aspect);
   }
 
   // --------------------------------------------------------------------- loop
 
   private frame(): void {
+    const now = performance.now();
+    // Ekrany 90/120 Hz nie muszą rysować 120 klatek 3D na sekundę.
+    if (now - this.lastRenderAt < this.qualityManager.minFrameMs) return;
+    const realDt = this.lastRenderAt ? (now - this.lastRenderAt) / 1000 : 1 / 60;
+    this.lastRenderAt = now;
     const dt = Math.min(this.clock.getDelta(), 0.05);
+    this.qualityManager.sample(realDt);
+
+    // Podgląd postaci na stronie głównej jest często poza ekranem. Nie ma
+    // sensu odpalać pełnego renderu WebGL, dopóki użytkownik nie doscrolluje.
+    if (this.mode === 'home' && !this.stageVisible) return;
     this.elapsed += dt;
 
     if (this.mode === 'home') {
@@ -810,9 +903,12 @@ export class World {
       iy /= magnitude;
     }
 
-    const forward = new THREE.Vector3(-Math.sin(this.yaw), 0, -Math.cos(this.yaw));
-    const right = new THREE.Vector3(Math.cos(this.yaw), 0, -Math.sin(this.yaw));
-    const direction = forward.multiplyScalar(iy).add(right.multiplyScalar(ix));
+    this.vForward.set(-Math.sin(this.yaw), 0, -Math.cos(this.yaw));
+    this.vRight.set(Math.cos(this.yaw), 0, -Math.sin(this.yaw));
+    const direction = this.vDirection
+      .copy(this.vForward)
+      .multiplyScalar(iy)
+      .addScaledVector(this.vRight, ix);
     if (direction.lengthSq() > 0) direction.normalize();
 
     const position = this.player.root.position;
@@ -873,7 +969,7 @@ export class World {
         bot.target = this.pickBotTarget();
         bot.timer = 3 + Math.random() * 3;
       }
-      const toTarget = bot.target.clone().sub(botPosition);
+      const toTarget = this.vToTarget.copy(bot.target).sub(botPosition);
       toTarget.y = 0;
       const distance = toTarget.length();
       let moving = 0;
@@ -916,17 +1012,14 @@ export class World {
 
     this.centerpiece.rotation.y = Math.sin(this.elapsed * 0.08) * 0.05;
 
-    const target = new THREE.Vector3(position.x, position.y + 1.3, position.z);
-    let desired: THREE.Vector3;
-    let lookAt: THREE.Vector3;
-
+    const target = this.vTarget.set(position.x, position.y + 1.3, position.z);
     const distance = 8.2 * Math.cos(this.pitch * 0.55);
-    desired = new THREE.Vector3(
+    const desired = this.vDesired.set(
       target.x + Math.sin(this.yaw) * distance,
       target.y + 2.1 + this.pitch * 5.5,
       target.z + Math.cos(this.yaw) * distance,
     );
-    lookAt = target;
+    const lookAt = this.vLookAt.copy(target);
 
     if (!this.camReady) {
       this.lobbyCamera.position.copy(desired);

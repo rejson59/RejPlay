@@ -10,7 +10,7 @@ import {
 import type { Appearance } from './character';
 import { CHARACTER_MODELS, getOutfit, OUTFITS, outfitBody } from './games';
 import {
-  blendPose,
+  HandAnimator,
   neutralHandPosePair,
   type HandPosePair,
 } from './hand-pose';
@@ -434,6 +434,12 @@ export async function loadHumanAssets(): Promise<HumanAssets> {
   };
 }
 
+// Kwaterniony robocze współdzielone przez wszystkie awatary (pętla jest
+// sekwencyjna, więc nie ma ryzyka reentrancji).
+const Q_REST = new THREE.Quaternion();
+const Q_CURL = new THREE.Quaternion();
+const Q_SPREAD = new THREE.Quaternion();
+
 interface FingerRig {
   bone: THREE.Object3D;
   rest: THREE.Quaternion;
@@ -473,9 +479,13 @@ export class HumanAvatar implements Avatar {
   private waveStart = -100;
   private waveDuration = 2.8;
   private handTargets: HandPosePair = neutralHandPosePair();
-  private handCurrent: HandPosePair = neutralHandPosePair();
+  private readonly handAnimators: Record<'L' | 'R', HandAnimator> = {
+    L: new HandAnimator(), R: new HandAnimator(),
+  };
   private readonly handRigs: Record<'L' | 'R', FingerRig[]> = { L: [], R: [] };
   private handOverride = false;
+  /** Po zniknięciu dłoni palce wracają do animacji płynnie, nie skokiem. */
+  private handFade = 0;
 
   constructor(assets: HumanAssets, templateIndex: number, options: HumanAvatarOptions) {
     this.assets = assets;
@@ -619,32 +629,30 @@ export class HumanAvatar implements Avatar {
 
   private applyHandPose(dt: number): void {
     const active = this.handTargets.L.present || this.handTargets.R.present;
-    if (!active) {
+    if (active) this.handFade = 0.42;
+    else this.handFade = Math.max(0, this.handFade - dt);
+    if (this.handFade <= 0) {
       // Bez dłoni w kadrze kości wracają pod kontrolę animacji idle/walk/emote.
       this.handOverride = false;
       return;
     }
-    const k = 1 - Math.exp(-dt * 18);
-    blendPose(this.handCurrent.L, this.handTargets.L, k);
-    blendPose(this.handCurrent.R, this.handTargets.R, k);
     this.handOverride = true;
 
+    // Wspólne scratch kwaterniony: 6 awatarów × 45 stawów nie alokuje już
+    // setek obiektów na klatkę (to była główna przyczyna przycięć GC).
     for (const side of ['L', 'R'] as const) {
-      const pose = this.handCurrent[side];
+      const pose = this.handAnimators[side].step(this.handTargets[side], dt);
       const rigs = this.handRigs[side];
       for (let f = 0; f < 5; f += 1) {
         for (let j = 0; j < 3; j += 1) {
           const rig = rigs[f * 3 + j];
           if (!rig) continue;
-          const curl = rig.rest.clone().multiply(
-            new THREE.Quaternion().setFromAxisAngle(rig.curlAxis, pose.curl[f][j]),
-          );
+          Q_REST.copy(rig.rest);
+          Q_REST.multiply(Q_CURL.setFromAxisAngle(rig.curlAxis, pose.curl[f][j]));
           if (j === 0) {
-            curl.multiply(
-              new THREE.Quaternion().setFromAxisAngle(rig.normalAxis, -pose.spread[f] * 0.7),
-            );
+            Q_REST.multiply(Q_SPREAD.setFromAxisAngle(rig.normalAxis, -pose.spread[f] * 0.7));
           }
-          rig.bone.quaternion.copy(curl);
+          rig.bone.quaternion.copy(Q_REST);
         }
       }
     }
@@ -706,11 +714,9 @@ export class HumanAvatar implements Avatar {
     this.lastElapsed = elapsed;
     const desired: State = this.isWaving() ? 'emote' : intensity > 0.12 ? 'walk' : 'idle';
     this.state = desired;
-    const target: Record<State, number> = { idle: 0, walk: 0, emote: 0 };
-    target[desired] = 1;
     const k = 1 - Math.exp(-dt * 9);
     for (const key of ['idle', 'walk', 'emote'] as const) {
-      this.weights[key] += (target[key] - this.weights[key]) * k;
+      this.weights[key] += ((key === desired ? 1 : 0) - this.weights[key]) * k;
     }
     this.idle.setEffectiveWeight(this.weights.idle);
     this.walk.setEffectiveWeight(this.weights.walk);
