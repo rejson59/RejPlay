@@ -100,7 +100,7 @@ const clamp = THREE.MathUtils.clamp;
 /**
  * Jak bardzo dłoń ma „kleić się” do odczytu. 1 = domyślne 1:1, niżej =
  * bardziej płynnie (przy drżącej kamerce), wyżej = jeszcze mniejsze opóźnienie.
- * Ustawienie jest globalne, bo ten sam odczyt zasila awatara, grę i Atrium.
+ * Ustawienie jest globalne, bo ten sam odczyt zasila awatara, grę i Lobby.
  */
 let wristResponsiveness = 1;
 
@@ -205,7 +205,7 @@ export function computeHandPose(hand: TrackedHand, aspect = 4 / 3): HandPose {
 
   for (let f = 0; f < 5; f += 1) {
     const chain = CHAINS[f];
-    const seg = chain.slice(0, -1).map((from, i) => dir(chain[i], chain[i + 1]));
+    const seg = chain.slice(0, -1).map((_, i) => dir(chain[i], chain[i + 1]));
     for (let j = 0; j < 3; j += 1) {
       pose.curl[f][j] = jointAngle(seg[j], seg[j + 1], j, f === 0);
     }

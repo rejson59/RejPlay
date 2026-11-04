@@ -1,68 +1,87 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import { lowPowerDevice } from './performance';
 
 /**
- * Gotowe, darmowe assety 3D (CC0 / MIT) w realisticznym stylu postaci.
+ * Gotowe, darmowe assety 3D (CC0 / CC-BY 4.0 / MIT) dla całej platformy.
  *
- * Źródło: repozytorium GridFall (KunalSiyag/gridfall, MIT), katalog
- * `models/real/`. Tekstury pochodzą z Poly Haven (CC0 1.0), a geometria
- * pojazdów i małych rekwizytów jest proceduralna autorów GridFall.
- * Wszystkie pliki .glb mają tekstury OSADZONE — działają bez CDN i offline.
- * Noty: public/assets/LICENSE-polyhaven-cc0.txt,
- *       public/assets/LICENSE-gridfall-MIT.txt.
+ * v0.7: biblioteka jest wielogrowa. `public/assets/props/` to rekwizyty
+ * parkowe używane też w Demonofobii, a `public/assets/library/` zawiera
+ * meble, postacie, zwierzęta, pojazdy, budynki i przedmioty dla kolejnych
+ * światów. Pełny katalog z licencjami: public/assets/ASSETS.json,
+ * public/assets/LICENSE-*.txt, src/asset-catalog.ts.
  *
- * Modele są w skali „miejskiej” (1 jednostka ≈ 20 m), stąd mnożnik 11–18.
+ * GridFall (MIT) + tekstury Poly Haven (CC0); Khronos glTF Sample Assets
+ * (CC0 / CC-BY 4.0, tekstury zmniejszone do 512 px, bufory meshopt).
+ * Wszystkie pliki mają tekstury OSADZONE — działają bez CDN i offline.
  */
 
 const BASE = import.meta.env.BASE_URL;
 
 interface SceneryProp {
+  /** Ścieżka względem public/assets/ — jedno źródło prawdy dla obu katalogów. */
   file: string;
   scale: number;
   position: [number, number, number];
   rotation?: number;
 }
 
+/** Układ parku: alejki, klomby i altana są w park.ts, tu dokładamy modele GLB. */
 const LOBBY_PROPS: SceneryProp[] = [
-  { file: 'tree_oak', scale: 15, position: [-9.4, 0, -2.6] },
-  { file: 'tree_birch', scale: 14, position: [9.6, 0, 1.8] },
-  { file: 'tree_round', scale: 13, position: [-6.4, 0, 8.4] },
-  { file: 'fountain', scale: 12, position: [-6.8, 0, -5.6] },
-  { file: 'bench_modern', scale: 16, position: [-6.0, 0, 3.4], rotation: -0.5 },
-  { file: 'bench_modern', scale: 16, position: [6.1, 0, 6.0], rotation: 2.7 },
-  { file: 'lamp_double', scale: 11, position: [-10.0, 0, 1.2], rotation: 0.3 },
-  { file: 'lamp_street', scale: 11, position: [10.0, 0, -6.2], rotation: -0.4 },
-  { file: 'planter_round', scale: 16, position: [-4.7, 0, 4.4] },
-  { file: 'tree_bush', scale: 16, position: [4.4, 0, -4.8] },
-  { file: 'utility_box', scale: 14, position: [9.6, 0, 4.6], rotation: 1.2 },
-  { file: 'bollard', scale: 16, position: [-2.2, 0, 6.7] },
-  { file: 'bollard', scale: 16, position: [2.2, 0, 6.7] },
+  // Korony drzew wokół polany.
+  { file: 'props/tree_oak.glb', scale: 15, position: [-9.4, 0, -2.6] },
+  { file: 'props/tree_birch.glb', scale: 14, position: [9.6, 0, 1.8] },
+  { file: 'props/tree_round.glb', scale: 13, position: [-6.4, 0, 8.4] },
+  { file: 'library/roslinnosc/tree_conifer.glb', scale: 14, position: [7.6, 0, -7.8] },
+  { file: 'library/roslinnosc/tree_poplar.glb', scale: 13, position: [-9.8, 0, 6.8] },
+  { file: 'library/roslinnosc/tree_small.glb', scale: 15, position: [9.8, 0, 8.0] },
+  { file: 'props/tree_bush.glb', scale: 15, position: [4.4, 0, -4.8] },
+  { file: 'props/tree_bush.glb', scale: 15, position: [-4.2, 0, -8.6] },
+  { file: 'library/roslinnosc/tree_hedge.glb', scale: 15, position: [-8.4, 0, -7.4], rotation: 0.4 },
+  { file: 'library/roslinnosc/tree_hedge.glb', scale: 15, position: [8.6, 0, 5.8], rotation: 1.2 },
+  // Woda, ławki i donice.
+  { file: 'props/fountain.glb', scale: 12, position: [-6.8, 0, -5.6] },
+  { file: 'props/bench_modern.glb', scale: 16, position: [-5.6, 0, 3.4], rotation: -0.5 },
+  { file: 'props/bench_modern.glb', scale: 16, position: [5.7, 0, 6.0], rotation: 2.7 },
+  { file: 'props/planter_round.glb', scale: 16, position: [-4.7, 0, 4.4] },
+  { file: 'props/planter_round.glb', scale: 16, position: [4.7, 0, -4.4] },
+  // Światła i mała architektura miejska.
+  { file: 'props/lamp_double.glb', scale: 11, position: [-10.0, 0, 1.2], rotation: 0.3 },
+  { file: 'props/lamp_street.glb', scale: 11, position: [10.0, 0, -6.2], rotation: -0.4 },
+  { file: 'props/lamp_classic.glb', scale: 11, position: [3.4, 0, 9.4] },
+  { file: 'library/ulica/bike_rack.glb', scale: 16, position: [-2.9, 0, 9.6] },
+  { file: 'library/ulica/street_sign.glb', scale: 16, position: [2.9, 0, 9.4], rotation: -0.5 },
+  { file: 'library/ulica/parking_meter.glb', scale: 16, position: [9.4, 0, 4.6] },
+  { file: 'props/trash_bin.glb', scale: 14, position: [-7.2, 0, 6.4] },
+  { file: 'props/bollard.glb', scale: 16, position: [-2.2, 0, 6.7] },
+  { file: 'props/bollard.glb', scale: 16, position: [2.2, 0, 6.7] },
 ];
 
+/** Podwórko Demonofobii pozostaje nocne i ciasne — to osobny świat gry. */
 const YARD_PROPS: SceneryProp[] = [
-  { file: 'lamp_street', scale: 11, position: [-3.3, 0, 11.2], rotation: Math.PI / 2 },
-  { file: 'tree_birch', scale: 13, position: [-3.5, 0, 16.4] },
-  { file: 'tree_bush', scale: 16, position: [-2.9, 0, 10.6] },
-  { file: 'tree_bush', scale: 16, position: [3.3, 0, 16.9] },
-  { file: 'barrier_concrete', scale: 13, position: [-3.4, 0, 17.4], rotation: Math.PI / 2 },
-  { file: 'cone', scale: 16, position: [-1.9, 0, 10.1] },
-  { file: 'cone', scale: 16, position: [1.9, 0, 10.1] },
-  { file: 'trash_bin_wheelie', scale: 14, position: [3.3, 0, 10.4] },
-  { file: 'aircon_unit', scale: 13, position: [7.9, 0.9, 8.6], rotation: Math.PI },
-  { file: 'hydrant', scale: 16, position: [-3.4, 0, 13.4] },
+  { file: 'props/lamp_street.glb', scale: 11, position: [-3.3, 0, 11.2], rotation: Math.PI / 2 },
+  { file: 'props/tree_birch.glb', scale: 13, position: [-3.5, 0, 16.4] },
+  { file: 'props/tree_bush.glb', scale: 16, position: [-2.9, 0, 10.6] },
+  { file: 'props/tree_bush.glb', scale: 16, position: [3.3, 0, 16.9] },
+  { file: 'props/barrier_concrete.glb', scale: 13, position: [-3.4, 0, 17.4], rotation: Math.PI / 2 },
+  { file: 'props/cone.glb', scale: 16, position: [-1.9, 0, 10.1] },
+  { file: 'props/cone.glb', scale: 16, position: [1.9, 0, 10.1] },
+  { file: 'props/trash_bin_wheelie.glb', scale: 14, position: [3.3, 0, 10.4] },
+  { file: 'props/aircon_unit.glb', scale: 13, position: [7.9, 0.9, 8.6], rotation: Math.PI },
+  { file: 'props/hydrant.glb', scale: 16, position: [-3.4, 0, 13.4] },
 ];
 
 /** Jeden loader dla wszystkich plików: parsowanie GLB jest współdzielone. */
 async function mount(scene: THREE.Scene, props: SceneryProp[], name: string): Promise<THREE.Group> {
-  const loader = new GLTFLoader();
+  const loader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
   const group = new THREE.Group();
   group.name = name;
-  const list = lowPowerDevice() ? props.slice(0, 6) : props;
+  const list = lowPowerDevice() ? props.slice(0, 8) : props;
   const roots = await Promise.all(
     list.map(async (prop) => {
       try {
-        const gltf = await loader.loadAsync(`${BASE}assets/props/${prop.file}.glb`);
+        const gltf = await loader.loadAsync(`${BASE}assets/${prop.file}`);
         const root = gltf.scene;
         root.scale.setScalar(prop.scale);
         root.position.set(...prop.position);
@@ -92,7 +111,7 @@ async function mount(scene: THREE.Scene, props: SceneryProp[], name: string): Pr
 
 let lobbyPromise: Promise<THREE.Group> | null = null;
 export function loadLobbyScenery(scene: THREE.Scene): Promise<THREE.Group> {
-  lobbyPromise ??= mount(scene, LOBBY_PROPS, 'lobby-scenery-cc0');
+  lobbyPromise ??= mount(scene, LOBBY_PROPS, 'lobby-park-assets');
   return lobbyPromise;
 }
 
@@ -100,6 +119,77 @@ let yardPromise: Promise<THREE.Group> | null = null;
 export function loadYardScenery(scene: THREE.Scene): Promise<THREE.Group> {
   yardPromise ??= mount(scene, YARD_PROPS, 'yard-scenery-cc0');
   return yardPromise;
+}
+
+/* ------------------------------------------------------- galeria assetów 3D
+   Trzy prawdziwe modele z nowej biblioteki stoją na postumentach w altanie.
+   To podgląd katalogu w silniku gry, nie osobna minigra. Modele Khronos są
+   kompresowane EXT_meshopt_compression — stąd dekoder w loaderze. */
+
+interface GalleryPiece {
+  file: string;
+  position: [number, number, number];
+}
+
+const GALLERY: GalleryPiece[] = [
+  // Trzy postumenty w altanie — przedmioty i meble z nowej biblioteki.
+  { file: 'library/przedmioty/AntiqueCamera.glb', position: [-1.75, 0, -0.9] },
+  { file: 'library/przedmioty/BoomBox.glb', position: [1.75, 0, -0.9] },
+  { file: 'library/meble/GlamVelvetSofa.glb', position: [0, 0, 2.05] },
+];
+
+const gallerySpinners: THREE.Object3D[] = [];
+
+export function loadLobbyGallery(scene: THREE.Scene): Promise<THREE.Group> {
+  const loader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
+  const group = new THREE.Group();
+  group.name = 'lobby-asset-gallery';
+  const stone = new THREE.MeshStandardMaterial({ color: 0xd2cdbd, roughness: 0.9 });
+  const brass = new THREE.MeshStandardMaterial({ color: 0xb08d54, roughness: 0.5, metalness: 0.5 });
+  for (const piece of GALLERY) {
+    const [x, , z] = piece.position;
+    const plinth = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.5, 0.8, 16), stone);
+    plinth.position.set(x, 0.4, z);
+    plinth.castShadow = true;
+    plinth.receiveShadow = true;
+    group.add(plinth);
+    const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.45, 0.05, 16), brass);
+    cap.position.set(x, 0.83, z);
+    group.add(cap);
+  }
+  scene.add(group);
+  return Promise.all(GALLERY.map(async (piece) => {
+    try {
+      const gltf = await loader.loadAsync(`${BASE}assets/${piece.file}`);
+      const root = gltf.scene;
+      // Normalizacja skali: modele Khronos mają bardzo różne jednostki.
+      const box = new THREE.Box3().setFromObject(root);
+      const size = box.getSize(new THREE.Vector3());
+      const max = Math.max(size.x, size.y, size.z) || 1;
+      root.scale.setScalar(0.92 / max);
+      const center = box.getCenter(new THREE.Vector3()).multiplyScalar(root.scale.x);
+      const holder = new THREE.Group();
+      holder.position.set(piece.position[0], 1.42, piece.position[2]);
+      root.position.set(-center.x, -size.y * root.scale.x / 2, -center.z);
+      root.traverse((object) => {
+        if (object instanceof THREE.Mesh) {
+          object.castShadow = true;
+          object.receiveShadow = true;
+        }
+      });
+      holder.add(root);
+      group.add(holder);
+      gallerySpinners.push(holder);
+    } catch {
+      // Brakujący model nie może zatrzymać Lobby.
+    }
+  })).then(() => group);
+}
+
+export function updateLobbyGallery(elapsed: number): void {
+  for (let i = 0; i < gallerySpinners.length; i++) {
+    gallerySpinners[i].rotation.y = elapsed * 0.24 + i * 0.8;
+  }
 }
 
 function signTexture(text: string, sub: string): THREE.CanvasTexture {

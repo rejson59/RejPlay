@@ -7,7 +7,8 @@ import { GAMES, PALETTE } from './games';
 import { neutralHandPosePair, posesFromHands, type HandPosePair, type TrackedHand } from './hand-pose';
 import type { OnlinePeer } from './online';
 import { FirstPersonHands } from './first-person-hands';
-import { loadLobbyScenery } from './real-scenery';
+import { loadLobbyGallery, loadLobbyScenery, updateLobbyGallery } from './real-scenery';
+import { buildPark } from './park';
 import {
   QualityManager,
   deviceHints,
@@ -33,31 +34,6 @@ interface Orb {
   speed: number;
 }
 
-/** Ciemny, ziarnisty beton — bez neonowych kropek. */
-function concreteTexture(): THREE.CanvasTexture {
-  const canvas = document.createElement('canvas');
-  canvas.width = canvas.height = 512;
-  const ctx = canvas.getContext('2d')!;
-  ctx.fillStyle = '#414647';
-  ctx.fillRect(0, 0, 512, 512);
-  for (let i = 0; i < 14000; i++) {
-    const v = Math.random();
-    ctx.fillStyle = v > 0.5 ? 'rgba(255,255,255,0.035)' : 'rgba(0,0,0,0.12)';
-    ctx.fillRect(Math.random() * 512, Math.random() * 512, 1.5, 1.5);
-  }
-  ctx.strokeStyle = 'rgba(0,0,0,0.22)';
-  ctx.lineWidth = 2;
-  for (let i = 0; i <= 512; i += 128) {
-    ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, 512); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(512, i); ctx.stroke();
-  }
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
-  texture.repeat.set(3, 3);
-  return texture;
-}
-
 function shadowTexture(): THREE.CanvasTexture {
   const canvas = document.createElement('canvas');
   canvas.width = canvas.height = 256;
@@ -77,7 +53,7 @@ function approachAngle(current: number, target: number, factor: number): number 
 }
 
 /**
- * Jeden renderer, trzy sceny: podgląd awatara, lobby 3D oraz gra dochodzeniowa.
+ * Jeden renderer, trzy sceny: podgląd awatara, Lobby oraz gra dochodzeniowa.
  * Dzięki temu przeglądarka trzyma tylko jeden kontekst WebGL.
  */
 export class World {
@@ -92,7 +68,7 @@ export class World {
   private readonly heroAvatar: Character;
   private readonly player: Character;
   private readonly assets: HumanAssets | null;
-  /** Prawdziwi gracze z Supabase Realtime — awatary w lobby 3D. */
+  /** Prawdziwi gracze z Supabase Realtime — awatary w Lobby. */
   private readonly remote = new Map<string, {
     avatar: Character;
     target: THREE.Vector3;
@@ -108,13 +84,12 @@ export class World {
   private readonly heroOrbs: Orb[] = [];
   private readonly centerpiece = new THREE.Group();
   private readonly heroPlatform = new THREE.Group();
-  /** Viewmodel first-person w Atrium (te same dłonie awatara, bez narzędzia). */
+  /** Viewmodel first-person w Lobby (te same dłonie awatara, bez narzędzia). */
   private readonly lobbyHands: FirstPersonHands;
   private firstPerson = true;
   private lastLobbyYaw = 0;
   private lastHandPair: HandPosePair = neutralHandPosePair();
 
-  private readonly clock = new THREE.Clock();
   private readonly raycaster = new THREE.Raycaster();
   private readonly resizeObserver: ResizeObserver;
   private readonly keys = new Set<string>();
@@ -127,7 +102,6 @@ export class World {
   private readonly vForward = new THREE.Vector3();
   private readonly vRight = new THREE.Vector3();
   private readonly vDirection = new THREE.Vector3();
-  private readonly vToTarget = new THREE.Vector3();
   private readonly vDesired = new THREE.Vector3();
   private readonly vLookAt = new THREE.Vector3();
   private readonly vTarget = new THREE.Vector3();
@@ -156,7 +130,6 @@ export class World {
   private camReady = false;
   private previewClose = false;
   private portalHandler: ((id: string) => void) | undefined;
-  private waveHandler: ((name: string) => void) | undefined;
 
   constructor(options: {
     color: string;
@@ -226,7 +199,6 @@ export class World {
 
     this.resizeObserver = new ResizeObserver(() => this.resize());
     window.addEventListener('resize', () => this.resize());
-    this.clock.start();
     this.renderer.setAnimationLoop(() => this.frame());
   }
 
@@ -285,7 +257,7 @@ export class World {
     return this.pickPortal(rect.left + rect.width / 2, rect.top + rect.height / 2);
   }
 
-  /** Atrium: widok z oczu (domyślny) albo klasyczna kamera za plecami. */
+  /** Lobby: widok z oczu (domyślny) albo klasyczna kamera za plecami. */
   get firstPersonView(): boolean {
     return this.firstPerson;
   }
@@ -344,7 +316,7 @@ export class World {
     return { x: p.x, y: p.y, z: p.z, yaw: this.player.root.rotation.y };
   }
 
-  /** Lista obecnych graczy → rigowane awatary w Atrium. */
+  /** Lista obecnych graczy → rigowane awatary w Lobby. */
   updatePeers(peers: OnlinePeer[]): void {
     const seen = new Set<string>();
     for (const peer of peers) {
@@ -453,8 +425,12 @@ export class World {
     this.portalHandler = handler;
   }
 
-  onWave(handler: (name: string) => void): void {
-    this.waveHandler = handler;
+  /** Machnięcie odebrane z broadcastu — animujemy dokładnie tego gracza. */
+  remoteWave(clientId: string): boolean {
+    const entry = this.remote.get(clientId);
+    if (!entry) return false;
+    entry.avatar.wave();
+    return true;
   }
 
   setJoystick(x: number, y: number): void {
@@ -593,180 +569,75 @@ export class World {
   }
 
   private buildLobby(): void {
-    this.lobbyScene.background = new THREE.Color(0x12171a);
-    this.lobbyScene.fog = new THREE.FogExp2(0x12171a, 0.016);
-    this.lobbyCamera.position.set(0, 5, 9);
+    // v0.7: Lobby to jasny park w świetle dnia, nie nocny betonowy plac.
+    buildPark(this.lobbyScene, this.centerpiece);
+    this.lobbyCamera.position.set(0, 5.2, 11);
 
-    this.lobbyScene.add(new THREE.HemisphereLight(0x9fb3c0, 0x24282a, 2.05));
-    this.lobbyScene.add(new THREE.AmbientLight(0xc2c8ca, 0.6));
-
-    const moon = new THREE.DirectionalLight(0xb6c8d4, 2.6);
-    moon.position.set(-9, 15, 7);
-    moon.castShadow = true;
-    moon.shadow.mapSize.set(2048, 2048);
-    moon.shadow.camera.left = -16;
-    moon.shadow.camera.right = 16;
-    moon.shadow.camera.top = 16;
-    moon.shadow.camera.bottom = -16;
-    moon.shadow.camera.near = 0.5;
-    moon.shadow.camera.far = 50;
-    moon.shadow.bias = -0.0006;
-    this.lobbyScene.add(moon);
-
-    // Trzy ciepłe latarnie zamiast fioletowo-miętowego blasku.
-    for (const [x, z, power] of [[-7, -6, 72], [7, -6, 60], [0, 6, 46]] as const) {
-      const lamp = new THREE.PointLight(0xffbd7d, power, 26, 2);
-      lamp.position.set(x, 3.4, z);
-      this.lobbyScene.add(lamp);
-    }
-
-    const base = new THREE.Mesh(
-      new THREE.CylinderGeometry(12, 12.3, 0.7, 72),
-      new THREE.MeshStandardMaterial({ color: 0x252a2b, roughness: 0.95, metalness: 0.02 }),
-    );
-    base.position.y = -0.35;
-    base.receiveShadow = true;
-    this.lobbyScene.add(base);
-
-    const top = new THREE.Mesh(
-      new THREE.CircleGeometry(11.9, 72),
-      new THREE.MeshStandardMaterial({
-        map: concreteTexture(),
-        color: 0xc2c5c2,
-        roughness: 0.95,
-        metalness: 0.02,
-      }),
-    );
-    top.rotation.x = -Math.PI / 2;
-    top.position.y = 0.005;
-    top.receiveShadow = true;
-    this.lobbyScene.add(top);
-
-    const edge = new THREE.Mesh(
-      new THREE.TorusGeometry(11.75, 0.14, 8, 96),
-      new THREE.MeshStandardMaterial({ color: 0x3c4143, roughness: 0.92 }),
-    );
-    edge.rotation.x = Math.PI / 2;
-    edge.position.y = 0.025;
-    this.lobbyScene.add(edge);
-
-    // Niskie słupki oświetleniowe na obwodzie placu.
-    const postMaterial = new THREE.MeshStandardMaterial({ color: 0x2a2f31, roughness: 0.8, metalness: 0.25 });
-    const glassMaterial = new THREE.MeshStandardMaterial({
-      color: 0xffc98a,
-      emissive: 0xffa452,
-      emissiveIntensity: 0.45,
-      roughness: 0.5,
-    });
-    for (let i = 0; i < 12; i++) {
-      const angle = (i / 12) * Math.PI * 2;
-      const x = Math.sin(angle) * 11.1;
-      const z = Math.cos(angle) * 11.1;
-      const post = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.13, 0.85, 12), postMaterial);
-      post.position.set(x, 0.43, z);
-      post.castShadow = true;
-      const glass = new THREE.Mesh(new THREE.SphereGeometry(0.14, 16, 12), glassMaterial);
-      glass.position.set(x, 0.94, z);
-      this.lobbyScene.add(post, glass);
-    }
-
-    // Kamienny obelisk z mosiężną tablicą zamiast świecącej kuli.
-    const stone = new THREE.MeshStandardMaterial({ color: 0x50565a, roughness: 0.95 });
-    const brass = new THREE.MeshStandardMaterial({ color: 0x9a7b4c, roughness: 0.55, metalness: 0.6 });
-    const plinth = new THREE.Mesh(new THREE.CylinderGeometry(1.05, 1.25, 0.5, 8), stone);
-    plinth.position.y = 0.25;
-    const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.82, 3.4, 8), stone);
-    shaft.position.y = 2.2;
-    const cap = new THREE.Mesh(new THREE.ConeGeometry(0.68, 0.8, 8), brass);
-    cap.position.y = 4.3;
-    const plaque = new THREE.Mesh(new THREE.BoxGeometry(1.15, 0.6, 0.09), brass);
-    plaque.position.set(0, 2.4, 0.7);
-    this.centerpiece.add(plinth, shaft, cap, plaque);
-    this.centerpiece.position.set(7.8, 0, -2.4);
-    this.centerpiece.scale.setScalar(0.7);
-    this.lobbyScene.add(this.centerpiece);
-
-    // Portale = pozostałe gierki z katalogu
-    const portalGames = GAMES.filter((game) => game.id !== 'plaza').slice(0, 3);
-    // Bramy stoją w rzędzie na dalszym końcu placu, zwrócone do kamery.
-    const angles = portalGames.map((_, i) => Math.PI + (i - (portalGames.length - 1) / 2) * 0.72);
+    // Portale = drewniane tablice przy alejkach, z okładką świata z katalogu.
+    const portalGames = GAMES.filter((game) => game.id !== 'lobby').slice(0, 3);
+    const angles = portalGames.map((_, i) => Math.PI + (i - (portalGames.length - 1) / 2) * 0.62);
     portalGames.forEach((game, i) => {
-      const angle = angles[i] ?? (i / portalGames.length) * Math.PI * 2;
+      const angle = angles[i] ?? Math.PI;
       const group = new THREE.Group();
       group.position.set(Math.sin(angle) * 8.6, 0, Math.cos(angle) * 8.6);
       group.rotation.y = angle + Math.PI;
 
-      const frameMaterial = new THREE.MeshStandardMaterial({
-        color: 0x303638,
-        roughness: 0.82,
-        metalness: 0.22,
-      });
-      const frame = new THREE.Group();
+      const wood = new THREE.MeshStandardMaterial({ color: 0x7d5a3a, roughness: 0.88, metalness: 0.02 });
+      const woodDark = new THREE.MeshStandardMaterial({ color: 0x59402a, roughness: 0.9, metalness: 0.02 });
       for (const side of [-1, 1]) {
-        const post = new THREE.Mesh(new THREE.BoxGeometry(0.18, 2.7, 0.2), frameMaterial);
-        post.position.set(side * 1.12, 1.5, 0);
+        const post = new THREE.Mesh(new THREE.BoxGeometry(0.2, 2.8, 0.22), wood);
+        post.position.set(side * 1.15, 1.4, 0);
         post.castShadow = true;
-        frame.add(post);
+        group.add(post);
       }
-      const lintel = new THREE.Mesh(new THREE.BoxGeometry(2.45, 0.2, 0.22), frameMaterial);
-      lintel.position.set(0, 2.94, 0);
+      const lintel = new THREE.Mesh(new THREE.BoxGeometry(2.7, 0.22, 0.3), woodDark);
+      lintel.position.set(0, 2.9, 0);
       lintel.castShadow = true;
-      frame.add(lintel);
+      group.add(lintel);
+      const roof = new THREE.Mesh(new THREE.BoxGeometry(3.0, 0.12, 0.62), wood);
+      roof.position.set(0, 3.08, 0);
+      roof.rotation.x = 0.12;
+      roof.castShadow = true;
+      group.add(roof);
 
-      // Plakat z okładką gry, jeśli istnieje — zamiast neonowego pierścienia.
       const panelMaterial = new THREE.MeshStandardMaterial({
-        color: game.color,
-        roughness: 0.92,
-        side: THREE.DoubleSide,
+        color: game.color, roughness: 0.9, side: THREE.DoubleSide,
       });
       if (game.art) {
         const texture = new THREE.TextureLoader().load(game.art);
         texture.colorSpace = THREE.SRGBColorSpace;
         panelMaterial.map = texture;
-        panelMaterial.color.set(0x9a9a9a);
+        panelMaterial.color.set(0xb0b0b0);
       }
-      const disc = new THREE.Mesh(new THREE.PlaneGeometry(2.05, 2.45), panelMaterial);
-      disc.position.set(0, 1.55, 0);
+      const board = new THREE.Mesh(new THREE.BoxGeometry(2.3, 0.1, 0.16), woodDark);
+      board.position.set(0, 2.55, 0);
+      const disc = new THREE.Mesh(new THREE.PlaneGeometry(2.05, 2.35), panelMaterial);
+      disc.position.set(0, 1.5, 0.12);
+      group.add(board, disc);
 
       const hit = new THREE.Mesh(
-        new THREE.CircleGeometry(1.45, 32),
-        new THREE.MeshBasicMaterial({
-          transparent: true,
-          opacity: 0,
-          side: THREE.DoubleSide,
-          depthWrite: false,
-        }),
+        new THREE.CircleGeometry(1.4, 32),
+        new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false }),
       );
-      hit.position.set(0, 1.55, 0.03);
+      hit.position.set(0, 1.5, 0.16);
       hit.userData.gameId = game.id;
 
-      const footMaterial = new THREE.MeshStandardMaterial({
-        color: 0x303638,
-        roughness: 0.8,
-        metalness: 0.2,
-      });
-      for (const side of [-1, 1]) {
-        const foot = new THREE.Mesh(new THREE.SphereGeometry(0.24, 16, 12), footMaterial);
-        foot.position.set(side * 0.82, 0.24, 0);
-        foot.castShadow = true;
-        group.add(foot);
-      }
-
       const label = createLabel(game.title);
-      label.sprite.position.set(0, 3.05, 0);
+      label.sprite.position.set(0, 3.4, 0);
 
-      group.add(frame, disc, hit, label.sprite);
+      group.add(hit, label.sprite);
       this.lobbyScene.add(group);
       this.portals.push({ hit, group, label, id: game.id, index: i });
       this.portalHits.push(hit);
     });
 
-    // Gracz
-    this.player.root.position.set(0, 0, 2.4);
+    // Gracz startuje na głównej alejce, z widokiem na cały park i altanę.
+    this.player.root.position.set(0, 0, 8.8);
     this.lobbyScene.add(this.player.root);
 
-    // Gotowe assety CC0/MIT dokładamy asynchronicznie, bez blokowania startu.
+    // Drzewa, ławki, latarnie i galeria assetów dokładają się asynchronicznie.
     void loadLobbyScenery(this.lobbyScene);
+    void loadLobbyGallery(this.lobbyScene);
   }
 
   // -------------------------------------------------------------------- input
@@ -788,7 +659,7 @@ export class World {
 
     const canvas = this.renderer.domElement;
 
-    // Atrium first-person z przechwyconym kursorem: nieskończone delty myszy,
+    // Lobby first-person z przechwyconym kursorem: nieskończone delty myszy,
     // bez zatrzymywania się na krawędzi monitora (problem przy 2 ekranach).
     document.addEventListener('pointerlockchange', () => {
       if (document.pointerLockElement === canvas) this.lobbySkipMouse = 2;
@@ -904,7 +775,9 @@ export class World {
     if (now - this.lastRenderAt < this.qualityManager.minFrameMs) return;
     const realDt = this.lastRenderAt ? (now - this.lastRenderAt) / 1000 : 1 / 60;
     this.lastRenderAt = now;
-    const dt = Math.min(this.clock.getDelta(), 0.05);
+    // Jedno źródło czasu: deprecated THREE.Clock liczyłby to samo, ale
+    // osobnym zegarem (i generował ostrzeżenie w konsoli).
+    const dt = Math.min(realDt, 0.05);
     this.qualityManager.sample(realDt);
 
     // Podgląd postaci na stronie głównej jest często poza ekranem. Nie ma
@@ -1039,6 +912,7 @@ export class World {
     }
 
     this.centerpiece.rotation.y = Math.sin(this.elapsed * 0.08) * 0.05;
+    updateLobbyGallery(this.elapsed);
 
     if (this.firstPerson) {
       // Kamera w oczach postaci. Pozycji NIE wygładzamy: opóźnienie kamery

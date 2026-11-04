@@ -6,7 +6,7 @@ import { neutralHandPosePair, type HandMotion, type HandPosePair } from './hand-
 import { AvatarViewHand, FallbackViewHand, viewmodelFov } from './view-hands';
 
 /**
- * Wspólny viewmodel first-person dla Atrium.
+ * Wspólny viewmodel first-person dla Lobby.
  *
  * To ten sam rigowany `SkinnedMesh` wybranego awatara, którego używa gra —
  * wycięte dłonie, 15 stawów, pozycja 3D z kamerki. Różnica: w lobby nie ma

@@ -45,7 +45,6 @@ function plateTexture(key: string, label: string): THREE.CanvasTexture {
 export class ToolBelt {
   readonly root = new THREE.Group();
   private readonly slots: Slot[] = [];
-  private held = 0;
   private aimed = 0;
   private halfH = 0.62;
   private halfW = 1.1;
@@ -104,7 +103,6 @@ export class ToolBelt {
   }
 
   setHeld(index: number): void {
-    this.held = index;
     this.slots.forEach((slot, i) => {
       slot.active = i !== index;
       slot.tool.visible = slot.active;
