@@ -5,11 +5,34 @@ jest autorska *Demonofobia*, a wspólnym punktem zbiórki jest park **Lobby**
 (dokładnie taka nazwa — bez dopisków i bez „3D”). Frontend jest w pełni
 statyczny (Vite + Three.js, jeden kontekst WebGL) i działa na **GitHub Pages**.
 Multiplayer, czat i profile korzystają z istniejącego projektu
-**Supabase `rejson-widgets`** — nie mamy własnego serwera, ale bez połączenia
-z bazą interfejs i podgląd działają lokalnie. **Zagranie wymaga konta.**
+**Supabase `rejson-widgets`** — nie mamy własnego serwera, a bez połączenia
+z bazą interfejs i podgląd przechodzą w jawny tryb offline (bez czatu,
+Presence i zapisu w bazie). **Zagranie wymaga konta.**
 
 Nie ma zapowiedzi gier ani zmyślonych metryk: katalog pokazuje tylko to, co
 naprawdę działa. W `public/art/` jest jeden plik: `house.jpg` (kafelek gry).
+
+**v0.7.1 — odporność i jakość śledzenia:** cztery realne usterki w torze
+kamerki zostały usunięte. Po zniknięciu twarzy `CameraControl` odejmował
+neutralną kalibrację od zera, więc postać jechała sama; teraz brak sygnału
+jest czymś innym niż sygnał zerowy. Pojedynczy `NaN` z MediaPipe zatruwał
+sprężyny `HandAnimator` na zawsze — każda klatka przechodzi teraz przez
+`src/tracking-guard.ts`, a integrator sam odtwarza stan. Dłonie i twarz mają
+watchdogi, które przy braku odczytu świadomie wracają do spoczynku zamiast
+zamarzać; odłączenie kamerki wykrywa tor `ended` i wznawia strumień (max 2
+próby). `faceFrameFromLandmarks` wydzielono do czystej, testowalnej
+`src/face-math.ts` z adaptacyjną kalibracją mrugnięcia (próg dopasowuje się
+do oka użytkownika), a „Kalibruj pozycję neutralną" naprawiono tak, by nie
+dokładać skoku ±π do następnej klatki. Start kamerki sprząta strumień i iframe
+po błędzie, liczniki diagnostyczne resetują się co sesję, a raport „Kopiuj
+logi" ma wersję v0.7.1 i wiek odczytów. Dodano **29 testów jednostkowych**
+(`tests/`, wbudowany `node --test`, zero nowych zależności) i wreszcie
+**checki na pull requestach**: poprzedni workflow reagował tylko na jeden
+historyczny branch, więc PR-y nie miały żadnej weryfikacji. Zapis do czatu,
+profili i zdarzeń przeszedł przez RPC z walidacją tokenu (migracja
+`20261105000000_rejplay_write_auth.sql`, zastosowana i sprawdzona na bazie:
+polityki `SELECT`, bezpośredni `INSERT` jako `anon` odrzucany). Presence ma
+jawny numer protokołu, żeby przyszłe zmiany nie rozdzielały klientów.
 
 **v0.7 — park, assety, nowy home i brama konta:** Lobby stało się jasnym
 parkiem w świetle dnia (trawnik, okrągła alejka, altana, klomby, oczko wodne,
@@ -475,6 +498,9 @@ src/auth-gate.ts               ekran logowania/rejestracji + twarda blokada gry
 src/asset-catalog.ts           101 modeli w 9 kategoriach (jedno źródło dla UI)
 src/real-scenery.ts            24 rekwizyty parku + 10 podwórka + galeria 3 assetów + baza
 src/hand-pose.ts               21 punktów → 15 kątów, rozstaw, ciągły skręt nadgarstka, pozycja 3D
+src/tracking-guard.ts          czyste zabezpieczenia numeryczne, etykiety dłoni, FrameWatchdog
+src/face-math.ts               głowa / oczy / mrugnięcie bez DOM (testowalne w Node)
+tests/                         29 testów `node --test` + hak resolucji `.ts`
 src/view-hands.ts              dłonie FP: geometryczne osie + rig obrotu nadgarstka + narzędzie LCD
 src/first-person-hands.ts      wspólny viewmodel dłoni first-person dla Lobby
 src/online.ts                  Presence / czat / profile / broadcast wave i party_start
@@ -482,9 +508,9 @@ src/real-props.ts              17 gotowych rekwizytów CC0 / MIT w grze
 src/horror-decor.ts            proceduralne tekstury, meble, światła i kurz
 src/horror.ts                  Demonofobia: silnik, ruch, nalot, dźwięk, first-person
 src/avatar.ts                  wspólny interfejs awatara i etykiety
-supabase/migrations/           multiplayer + drużyny (RLS, RPC z walidacją tokenu)
+supabase/migrations/           multiplayer + drużyny + autoryzacja zapisu (RLS, RPC z tokenem)
 public/mediapipe/face/         lokalny runtime FaceMesh (Apache-2.0) + bridge.html
-.github/workflows/             build + deploy na GitHub Pages
+.github/workflows/             typecheck + testy + build na każdym PR, deploy wyłącznie z main
 public/characters/             13 GLB + animacje + gotowe tekstury + licencja MIT
 public/mediapipe/              lokalne pliki MediaPipe Hands
 public/assets/props/           25 GLB parkowych (MIT + CC0)
@@ -540,6 +566,26 @@ public/art/                    house.jpg — jedyna okładka
 
 ---
 
+## Weryfikacja v0.7.1
+
+| Zakres | Wynik |
+| --- | --- |
+| `npm run typecheck` | 0 błędów (`noUnusedLocals` / `noUnusedParameters` nadal włączone) |
+| `npm test` | **29 / 29** — czysta matematyka twarzy, zabezpieczenia numeryczne, sprężyna dłoni, dryf kamery po utracie twarzy, kalibracja nadgarstka, uszkodzone ustawienia z `localStorage` |
+| `npm run build` | `index.html` 51,76 kB · CSS 91,69 kB · JS 1125,99 kB (gzip 300,42 kB) |
+| CI | workflow reaguje na `pull_request`; job `verify` = `npm ci` → `typecheck` → `test` → `build`; artefakt Pages i deploy tylko z `main` |
+| Baza (realna) | migracja `rejplay_write_auth` zastosowana w `rejson-widgets`: 3 polityki `SELECT`, 0 polityk zapisu, 3 funkcje `SECURITY DEFINER`; test `SET ROLE anon; INSERT` → `new row violates row-level security policy`; RPC z błędnym tokenem zwraca `ok:false` |
+| Produkcja (`vite preview`) | 7 szerokości 320–1920 px: `scrollWidth = viewport`, 0 wystających elementów; katalog 101 modeli; raport „Kopiuj logi" ma `v0.7.1`, pola trackingowe, 0 sekretów, 0 `NaN`; `pageErrors: []`, lokalne 4xx: `[]` |
+| Brama konta | bez sesji zablokowane wejście do Lobby i gry; po logowaniu akcja wznawiana, `Lobby · RejPlay`, `liveCount: 0`, „Brak połączenia — nikt nie jest widoczny" |
+| Kamerka (fake device) | laboratorium startuje, watchdog twarzy poprawnie zeruje sterowanie przy braku odczytu, „Restart kamerki" bez wyjątków; `pageErrors: []` przed i po restarcie |
+
+**Nadal niezweryfikowane:** realna, fizyczna kamerka i dotyk na urządzeniu,
+dwa niezależne klienty Supabase połączone przez WSS Presence, profilowanie na
+GPU. To właśnie te punkty domyka następna faza — testy jednostkowe i headless
+nie zastąpią prawdziwego sensora.
+
+---
+
 ## Weryfikacja v0.7
 
 Wszystkie poniższe przebiegi wykonano na branchu roboczym przed wdrożeniem,
@@ -559,7 +605,9 @@ w przeglądarce headless z tym samym kodem, który trafia do `dist/`.
 | Lobby | park w świetle dnia, 1 gracz (Ty), 0 botów, czat i Presence uczciwie oznaczone jako niedostępne w trybie offline |
 
 **Niezweryfikowane w sandboxie (egres ograniczony do GitHub / npm / PyPI):**
-połączenie z realnym Supabase z dwoma niezależnymi klientami, WSS Presence,
+połączenie z realnym Supabase z dwoma niezależnymi klientami, WSS Presence
+(v0.7.1 zastosowało i sprawdziło natomiast samą migrację RLS bezpośrednio
+na bazie),
 fizyczna kamerka i dotyk na prawdziwym urządzeniu, profilowanie na GPU.
 RPC konta (`community_login` / `community_register` / `community_whoami`)
 zostały sprawdzone z mockami odpowiadającymi dokładnie kształtowi
@@ -569,12 +617,22 @@ klucza `anon` i — na współdzielonym originie — gotowego bridge’a
 
 ---
 
-## Roadmapa (poza tym slice'm)
+## Roadmapa (kolejność prac)
 
-- autorytatywny stan świata i pokoje z limitem graczy,
-- osiągnięcia, znajomi i zapis postępu w bazie,
-- edytor świata / piaskownica UGC z bezpiecznym skryptowaniem,
-- fizyka (Rapier), LOD modeli, code-splitting sceny gry.
+1. **v0.8 — wydajność:** `import()` dla `World` / `HorrorGame` / trackerów,
+   budżet rozmiaru w CI, lazy GLB per model i LOD. Obecnie cały `src` ładuje
+   się statycznie, więc home ściąga też silnik horroru.
+2. **v0.9 — Lobby żyje:** podgląd 3D każdego z 101 assetów (turntable w
+   katalogu + „wstaw do sceny"), profil, znajomi i postęp w bazie, limit
+   graczy w pokoju i realny „start razem".
+3. **v1.0 — wielogrowość:** druga gra jako osobna scena i wpis w `GAMES`,
+   piaskownica UGC z bezpiecznym skryptowaniem, fizyka (Rapier), i18n PL/EN.
+4. **Później:** autorytatywny stan świata, osiągnięcia, PWA/offline dla home,
+   monitoring błędów.
+
+Kolejność jest celowa: najpierw automatyczna siatka bezpieczeństwa i domknięcie
+ryzyka sensora, potem zmiana architektury ładowania, dopiero potem nowe funkcje
+i kolejne gry.
 
 Wspomniany luźno „CS” nie został dodany: jest jedna grywalna gra, a zakres
 ewentualnego nowego tytułu wymaga doprecyzowania. Platforma, katalog assetów i

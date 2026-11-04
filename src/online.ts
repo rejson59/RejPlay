@@ -1,6 +1,7 @@
 import { createClient, type RealtimeChannel, type SupabaseClient } from '@supabase/supabase-js';
 import type { Appearance } from './character';
 import type { CommunitySession } from './community-account';
+import { diagnostics } from './diagnostics';
 
 /**
  * Warstwa sieciowa RejPlay → Supabase `rejson-widgets`.
@@ -12,7 +13,10 @@ import type { CommunitySession } from './community-account';
  * postgres_changes na czacie + broadcast „start razem” / „machnięcie”. Drużyny (party)
  * zawężają kanał Presence i czat tylko do osób z tym samym kodem, a token
  * konta z rejson59.github.io jest walidowany w bazie (SECURITY DEFINER RPC).
- * Jeśli sieć/Supabase jest niedostępne, gra działa w pełni lokalnie.
+ * Gdy sieć lub Supabase są niedostępne, interfejs przechodzi w jawny tryb
+ * offline: bez czatu, Presence i zapisu w bazie (nigdy nie udajemy graczy).
+ * Wejście do Lobby i gry i tak wymaga potwierdzonej sesji konta — brama
+ * `AuthGate` nie zależy od dostępności Realtime.
  */
 
 export const SUPABASE_URL =
@@ -23,6 +27,16 @@ export const SUPABASE_ANON_KEY =
 
 const URL = SUPABASE_URL;
 const KEY = SUPABASE_ANON_KEY;
+
+/**
+ * Protokół Presence. v0.6.1 używało kanału `rejplay:atrium`, v0.7 zmieniło
+ * go na `rejplay:lobby` i na kilka minut rozdzieliło klientów. Od teraz nazwa
+ * kanału jest jednym, nazwanym punktem, a każdy wpis niesie wersję protokołu:
+ * przyszła, niezgodna zmiana kształtu danych musi świadomie podbić tę stałą
+ * ORAZ nazwę kanału, a stare wpisy są ignorowane zamiast psuć awatary.
+ */
+export const PRESENCE_PROTOCOL = 1;
+const LOBBY_CHANNEL = 'rejplay:lobby';
 
 export type OnlineMode = 'home' | 'lobby' | 'game';
 export type OnlineStatus = 'connecting' | 'online' | 'offline';
@@ -88,6 +102,7 @@ export interface PartyResult extends Partial<PartyState> {
 
 interface PresenceRow extends Partial<OnlinePeer> {
   id?: string;
+  protocol?: number;
 }
 
 function safeAppearance(value: unknown, fallback: Appearance): Appearance {
@@ -190,7 +205,7 @@ export class OnlineClient {
   private joinChannel(): void {
     if (!this.client || this.stopped) return;
     if (this.channel) void this.client.removeChannel(this.channel);
-    const name = this.partyCode ? `rejplay:party:${this.partyCode}` : 'rejplay:lobby';
+    const name = this.partyCode ? `rejplay:party:${this.partyCode}` : LOBBY_CHANNEL;
     const channel = this.client.channel(name, {
       config: { presence: { key: this.id }, broadcast: { self: false } },
     });
@@ -246,6 +261,9 @@ export class OnlineClient {
       if (id === this.id) continue;
       const row = rows[rows.length - 1] as PresenceRow | undefined;
       if (!row) continue;
+      // Wpis bez `protocol` to klient v0.7 — traktujemy go jako protokół 1.
+      const protocol = Number(row.protocol ?? PRESENCE_PROTOCOL);
+      if (!Number.isFinite(protocol) || protocol !== PRESENCE_PROTOCOL) continue;
       peers.push({
         id,
         nick: String(row.nick ?? 'Gracz').slice(0, 24),
@@ -283,34 +301,77 @@ export class OnlineClient {
         id: this.id,
         userId: this.accountUserId ?? undefined,
         verified: Boolean(this.accountToken),
+        protocol: PRESENCE_PROTOCOL,
       });
     } catch {
       // Presence jest opcjonalny.
     }
   }
 
-  private async saveProfile(): Promise<void> {
-    if (!this.client) return;
+  /**
+   * Zapis do tabel multiplayer przechodzi przez SECURITY DEFINER RPC, które
+   * waliduje token konta (migracja 20261105000000). Bezpośredni insert jest
+   * dostępny TYLKO jako fallback dla środowiska bez tej migracji (PGRST202).
+   * Odmowa biznesowa — zły token, limit wiadomości — nigdy nie omija RLS.
+   */
+  private async secureWrite(
+    fn: string,
+    args: Record<string, unknown>,
+    legacy: () => PromiseLike<unknown>,
+  ): Promise<void> {
+    const client = this.client;
+    if (!client || !this.accountToken) return;
     try {
-      await this.client.from('rejplay_profiles').upsert({
-        client_id: this.id,
-        nick: this.local.nick,
-        color: this.local.color,
-        appearance: this.local.appearance,
-        updated_at: new Date().toISOString(),
-      });
+      const { data, error } = await client.rpc(fn, { p_token: this.accountToken, ...args });
+      if (error) {
+        const code = (error as { code?: string }).code ?? '';
+        if (code === 'PGRST202' || /could not find the function/i.test(error.message ?? '')) {
+          diagnostics.push('warn', 'online', `${fn}: brak migracji RLS — użyto starszego zapisu.`);
+          await legacy();
+        }
+        return;
+      }
+      const result = data as { ok?: boolean; error?: string } | null;
+      if (result && result.ok === false) {
+        diagnostics.push('warn', 'online', `${fn}: ${result.error ?? 'zapis odrzucony'}`);
+      }
     } catch {
-      // Profil nie jest krytyczny.
+      // Lokalny stan jest już na ekranie; zapis nie jest krytyczny.
     }
+  }
+
+  private async saveProfile(): Promise<void> {
+    const client = this.client;
+    if (!client) return;
+    const row = {
+      client_id: this.id,
+      nick: this.local.nick,
+      color: this.local.color,
+      appearance: this.local.appearance,
+      updated_at: new Date().toISOString(),
+    };
+    await this.secureWrite('rejplay_profile_save', {
+      p_client_id: this.id,
+      p_nick: this.local.nick,
+      p_color: this.local.color,
+      p_appearance: this.local.appearance,
+    }, () => client.from('rejplay_profiles').upsert(row));
   }
 
   /** Zdarzenia produktowe (start gry, dowód, raport) trafiają do bazy. */
   event(kind: string, detail = ''): void {
-    if (!this.client) return;
-    void this.client
-      .from('rejplay_events')
-      .insert({ client_id: this.id, nick: this.local.nick, kind: kind.slice(0, 40), detail: detail.slice(0, 180) })
-      .then(() => undefined, () => undefined);
+    const client = this.client;
+    if (!client) return;
+    const row = {
+      client_id: this.id, nick: this.local.nick,
+      kind: kind.slice(0, 40), detail: detail.slice(0, 180),
+    };
+    void this.secureWrite('rejplay_event_log', {
+      p_client_id: this.id,
+      p_nick: this.local.nick,
+      p_kind: row.kind,
+      p_detail: row.detail,
+    }, () => client.from('rejplay_events').insert(row));
   }
 
   // ------------------------------------------------------------------ drużyny
@@ -508,18 +569,22 @@ export class OnlineClient {
       own: true,
       offline: this.status !== 'online',
     });
-    if (!this.client) return;
-    try {
-      await this.client.from('rejplay_chat').insert({
-        client_id: this.id,
-        nick: this.local.nick,
-        color: this.local.color,
-        content,
-        party_code: this.partyCode,
-      });
-    } catch {
-      // Lokalna wiadomość już jest na ekranie.
-    }
+    const client = this.client;
+    if (!client) return;
+    const row = {
+      client_id: this.id,
+      nick: this.local.nick,
+      color: this.local.color,
+      content,
+      party_code: this.partyCode,
+    };
+    await this.secureWrite('rejplay_chat_send', {
+      p_client_id: this.id,
+      p_nick: this.local.nick,
+      p_color: this.local.color,
+      p_content: content,
+      p_party_code: this.partyCode,
+    }, () => client.from('rejplay_chat').insert(row));
   }
 
   dispose(): void {

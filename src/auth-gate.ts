@@ -129,7 +129,7 @@ export class AuthGate {
     this.render(this.account.session);
     window.setTimeout(() => {
       // Opóźniony fokus nie może odebrać go polu oznaczonemu błędem ani
-      // wskoczyć w already zamknięte okno.
+      // wskoczyć w okno, które zdążono już zamknąć.
       if (!this.isOpen || this.busy || !this.error.hidden) return;
       (this.account.session ? this.logoutButton : this.nameInput)?.focus();
     }, 40);
@@ -206,6 +206,10 @@ export class AuthGate {
     this.submit.disabled = true;
     this.form.setAttribute('aria-busy', 'true');
     this.report('');
+    // Gdy `community_whoami` padnie z powodu sieci, token jest już w localStorage,
+    // ale nie jest potwierdzony. Zostawienie go udawałoby zalogowanie przy
+    // kolejnym starcie, więc cofamy całą transakcję logowania.
+    let tokenSaved = false;
     try {
       const fn = this.mode === 'login' ? 'community_login' : 'community_register';
       const data = await rpc<{ token?: string; username?: string; error?: string }>(fn, {
@@ -217,11 +221,13 @@ export class AuthGate {
       }
       try {
         localStorage.setItem(SESSION_KEY, JSON.stringify({ token: data.token, username: data.username }));
+        tokenSaved = true;
       } catch {
         throw new Error('Nie można zapisać sesji w tej przeglądarce. Włącz pamięć lokalną i spróbuj ponownie.');
       }
       const session = await this.account.refresh();
       if (!session) throw new Error('Nie udało się potwierdzić sesji. Zaloguj się ponownie.');
+      tokenSaved = false;
       this.secretInput.value = '';
       this.render(session);
       window.dispatchEvent(new Event('rj:session-change'));
@@ -230,6 +236,7 @@ export class AuthGate {
       this.close();
       if (action) this.onResume(action);
     } catch (err) {
+      if (tokenSaved) this.account.logout();
       this.report(err instanceof Error ? err.message : 'Nie udało się zalogować.');
     } finally {
       this.busy = false;

@@ -11,9 +11,11 @@
  * dłonie faktycznie dają mierzalny sygnał, zanim odblokujemy tryb bez rąk.
  */
 
-import type { FaceFrame } from './face-tracking';
-import { EMPTY_FACE } from './face-tracking';
+import { EMPTY_FACE, type FaceFrame } from './face-math';
 import type { TrackedHand } from './hand-pose';
+import {
+  clampFinite, disambiguateHandedness, finite, validLandmarks,
+} from './tracking-guard';
 
 export interface ControlSettings {
   enabled: boolean;
@@ -75,9 +77,11 @@ export interface LabDiagnostics {
 const STORE = 'rejplay:camera-control-v1';
 const ZERO: CalibrationSample = { yaw: 0, pitch: 0, roll: 0, gazeX: 0, gazeY: 0 };
 const clamp = (v: number, a: number, b: number): number => Math.max(a, Math.min(b, v));
-const dead = (v: number, zone: number): number => {
+const dead = (value: number, zone: number): number => {
+  const v = finite(value);
+  const z = clampFinite(zone, 0, 0.3);
   const sign = v >= 0 ? 1 : -1;
-  const mag = Math.max(0, Math.abs(v) - zone) / Math.max(0.001, 1 - zone);
+  const mag = Math.max(0, Math.abs(v) - z) / Math.max(0.001, 1 - z);
   return sign * Math.min(1, mag);
 };
 
@@ -91,10 +95,10 @@ function loadSettings(): ControlSettings {
     if (!raw) return base;
     return {
       enabled: Boolean(raw.enabled),
-      gazeSensitivity: clamp(Number(raw.gazeSensitivity) || 1, 0.3, 2.5),
-      headSensitivity: clamp(Number(raw.headSensitivity) || 1, 0.3, 2.5),
-      deadzone: clamp(Number(raw.deadzone) ?? 0.07, 0, 0.3),
-      smoothing: clamp(Number(raw.smoothing) ?? 0.55, 0, 0.95),
+      gazeSensitivity: clampFinite(raw.gazeSensitivity, 0.3, 2.5, 1),
+      headSensitivity: clampFinite(raw.headSensitivity, 0.3, 2.5, 1),
+      deadzone: clampFinite(raw.deadzone, 0, 0.3, 0.07),
+      smoothing: clampFinite(raw.smoothing, 0, 0.95, 0.55),
       invertX: Boolean(raw.invertX),
       neutral: raw.neutral,
     } as ControlSettings;
@@ -109,20 +113,26 @@ function d2(a: { x: number; y: number }, b: { x: number; y: number }): number {
 
 interface HandSignal { curl: number; open: number; pinch: number; x: number; y: number }
 
+const NO_SIGNAL: HandSignal = { curl: 0, open: 0, pinch: 0, x: 0.5, y: 0.5 };
+
 function handSignal(hand: TrackedHand): HandSignal {
   const lm = hand.landmarks;
+  if (!validLandmarks(lm, 21, 64)) return { ...NO_SIGNAL };
   const wrist = lm[0];
   const palm = Math.max(0.02, d2(lm[5], lm[17]));
-  const pinch = clamp((0.72 - d2(lm[4], lm[8]) / palm) / 0.55, 0, 1);
+  const pinch = clampFinite((0.72 - d2(lm[4], lm[8]) / palm) / 0.55, 0, 1);
   let extended = 0;
   let curl = 0;
   for (const [mcp, pip, tip] of [[5, 6, 8], [9, 10, 12], [13, 14, 16], [17, 18, 20]]) {
     const full = d2(wrist, lm[tip]) / Math.max(0.008, d2(wrist, lm[mcp]));
     const bent = d2(lm[mcp], lm[tip]) / Math.max(0.008, d2(lm[mcp], lm[pip]));
-    curl += clamp(1 - bent / 2.2, 0, 1);
+    curl += clampFinite(1 - bent / 2.2, 0, 1);
     if (full > 1.55 && bent > 1.4) extended += 1;
   }
-  return { curl: curl / 4, open: extended / 4, pinch, x: lm[9].x, y: lm[9].y };
+  return {
+    curl: curl / 4, open: extended / 4, pinch,
+    x: clampFinite(lm[9].x, -1, 2, 0.5), y: clampFinite(lm[9].y, -1, 2, 0.5),
+  };
 }
 
 export class CameraControl {
@@ -262,11 +272,19 @@ export class CameraControl {
   ingest(face: FaceFrame, hands: TrackedHand[], dt: number): { control: ControlFrame; gestures: GestureEvent[] } {
     const gestures: GestureEvent[] = [];
     const s = this.settings;
-    this.time += dt;
-    this.lastFace = face.present ? face : this.emptyStreak++ < 12 ? this.lastFace : null;
+    const step = clampFinite(dt, 0.001, 0.12, 1 / 60);
+    this.time += step;
+    // Pusta klatka NIE jest „głową w pozycji zero". Odejmowanie neutralnej
+    // kalibracji od zera dawało stały, niezerowy wektor ruchu: po zniknięciu
+    // twarzy postać jechała sama. Rozróżniamy brak sygnału od sygnału zerowego.
+    const faceActive = face.present
+      && Number.isFinite(face.yaw) && Number.isFinite(face.pitch)
+      && Number.isFinite(face.roll) && Number.isFinite(face.gazeX)
+      && Number.isFinite(face.gazeY) && Number.isFinite(face.blink);
+    this.lastFace = faceActive ? face : (++this.emptyStreak <= 12 ? this.lastFace : null);
 
     // --- kalibracja i zakresy testowe
-    if (face.present) {
+    if (faceActive) {
       this.emptyStreak = 0;
       const raw: CalibrationSample = {
         yaw: face.yaw, pitch: face.pitch, roll: face.roll,
@@ -278,18 +296,18 @@ export class CameraControl {
       this.track('roll', raw.roll - n.roll);
       this.track('gazeX', raw.gazeX - n.gazeX);
       this.track('gazeY', raw.gazeY - n.gazeY);
-      this.blinkSeen = Math.max(this.blinkSeen, face.blink);
+      this.blinkSeen = Math.max(this.blinkSeen, finite(face.blink));
     }
 
     // --- dłonie: sygnały i gesty
     const bySide: Record<'L' | 'R', TrackedHand | null> = { L: null, R: null };
-    for (const hand of hands) {
+    for (const hand of disambiguateHandedness(hands ?? [])) {
       // MediaPipe zakłada obraz lustrzany; zamiana stron jak w posesFromHands.
-      bySide[hand.label === 'Left' ? 'R' : 'L'] = hand;
+      bySide[hand.label === 'Left' ? 'R' : 'L'] = hand as TrackedHand;
     }
     const signals: Record<'L' | 'R', HandSignal> = {
-      L: bySide.L ? handSignal(bySide.L) : { curl: 0, open: 0, pinch: 0, x: 0.5, y: 0.5 },
-      R: bySide.R ? handSignal(bySide.R) : { curl: 0, open: 0, pinch: 0, x: 0.5, y: 0.5 },
+      L: bySide.L ? handSignal(bySide.L) : { ...NO_SIGNAL },
+      R: bySide.R ? handSignal(bySide.R) : { ...NO_SIGNAL },
     };
     this.lastHands = {
       L: { curl: signals.L.curl, open: signals.L.open, pinch: signals.L.pinch },
@@ -333,7 +351,7 @@ export class CameraControl {
     if (pointHand) {
       const sig = signals[pointHand === bySide.L ? 'L' : 'R'];
       slot = clamp(Math.round(((sig.x - 0.18) / 0.64) * 5), 0, 5);
-    } else if (face.present && face.gazeY > 0.35) {
+    } else if (faceActive && face.gazeY > 0.35) {
       slot = clamp(Math.round(((face.gazeX - (this.neutral?.gazeX ?? 0) + 0.6) / 1.2) * 5), 0, 5);
     }
     if (slot !== this.lastSlot) {
@@ -343,29 +361,37 @@ export class CameraControl {
 
     // --- mapowanie sygnałów na kamerę i ruch
     const n = this.neutral ?? ZERO;
-    const gx = dead((face.gazeX - n.gazeX) * (s.invertX ? -1 : 1), s.deadzone);
-    const gy = dead(face.gazeY - n.gazeY, s.deadzone);
-    const headPitch = dead(face.pitch - n.pitch, s.deadzone * 0.8);
-    const headRoll = dead(face.roll - n.roll, s.deadzone * 0.8);
-    const headYaw = dead(face.yaw - n.yaw, s.deadzone);
+    const gx = faceActive ? dead((face.gazeX - n.gazeX) * (s.invertX ? -1 : 1), s.deadzone) : 0;
+    const gy = faceActive ? dead(face.gazeY - n.gazeY, s.deadzone) : 0;
+    const headPitch = faceActive ? dead(face.pitch - n.pitch, s.deadzone * 0.8) : 0;
+    const headRoll = faceActive ? dead(face.roll - n.roll, s.deadzone * 0.8) : 0;
+    const headYaw = faceActive ? dead(face.yaw - n.yaw, s.deadzone) : 0;
+    const gazeGain = clampFinite(s.gazeSensitivity, 0.3, 2.5, 1);
+    const headGain = clampFinite(s.headSensitivity, 0.3, 2.5, 1);
 
-    const targetLookX = (gx * 1050 + headYaw * 260) * s.gazeSensitivity;
-    const targetLookY = (gy * 900) * s.gazeSensitivity;
+    const targetLookX = (gx * 1050 + headYaw * 260) * gazeGain;
+    const targetLookY = (gy * 900) * gazeGain;
     // Prędkość jest WPROST proporcjonalna do przechyłu głowy.
-    const targetMoveY = clamp(headPitch * 3.1 * s.headSensitivity, -1, 1);
-    const targetMoveX = clamp(headRoll * 2.4 * s.headSensitivity, -1, 1);
+    const targetMoveY = clampFinite(headPitch * 3.1 * headGain, -1, 1);
+    const targetMoveX = clampFinite(headRoll * 2.4 * headGain, -1, 1);
 
-    const k = 1 - Math.exp(-dt / Math.max(0.02, 0.06 + s.smoothing * 0.34));
-    this.smooth.lookX += (targetLookX - this.smooth.lookX) * k;
-    this.smooth.lookY += (targetLookY - this.smooth.lookY) * k;
-    this.smooth.moveX += (targetMoveX - this.smooth.moveX) * k;
-    this.smooth.moveY += (targetMoveY - this.smooth.moveY) * k;
+    const smoothing = clampFinite(s.smoothing, 0, 0.95, 0.55);
+    const k = 1 - Math.exp(-step / Math.max(0.02, 0.06 + smoothing * 0.34));
+    for (const [key, target] of [
+      ['lookX', targetLookX], ['lookY', targetLookY],
+      ['moveX', targetMoveX], ['moveY', targetMoveY],
+    ] as const) {
+      // Zatruty kanał wraca do zera, zamiast na zawsze zamrażać kamerę.
+      this.smooth[key] = clampFinite(
+        this.smooth[key] + (target - this.smooth[key]) * k, -1500, 1500, target,
+      );
+    }
 
     const control: ControlFrame = {
-      lookX: s.enabled ? this.smooth.lookX : 0,
-      lookY: s.enabled ? this.smooth.lookY : 0,
-      moveX: s.enabled ? this.smooth.moveX : 0,
-      moveY: s.enabled ? this.smooth.moveY : 0,
+      lookX: s.enabled ? finite(this.smooth.lookX) : 0,
+      lookY: s.enabled ? finite(this.smooth.lookY) : 0,
+      moveX: s.enabled ? finite(this.smooth.moveX) : 0,
+      moveY: s.enabled ? finite(this.smooth.moveY) : 0,
       gazeX: gx, gazeY: gy, headPitch, headRoll,
     };
     return { control, gestures: s.enabled ? gestures : gestures.filter((g) => g.type === 'aim') };

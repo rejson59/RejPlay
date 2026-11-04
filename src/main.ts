@@ -2219,7 +2219,7 @@ async function boot(): Promise<void> {
     onlineStatus = status;
     renderPlayerList();
     if (status === 'offline' && chatSeeded) {
-      addChatMessage('RejPlay', 'Połączenie z bazą niedostępne — rozgrywka trwa bez czatu i Presence.');
+      addChatMessage('RejPlay', 'Połączenie z bazą niedostępne — czat i lista graczy są wyłączone. Sprawdź połączenie lub zaloguj się ponownie.');
     }
   };
   online.onPeers = (peers) => {

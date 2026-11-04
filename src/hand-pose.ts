@@ -1,4 +1,7 @@
 import * as THREE from 'three';
+import {
+  clampFinite, disambiguateHandedness, finite, validLandmarks,
+} from './tracking-guard';
 
 /**
  * Retargetowanie dłoni: 21 punktów MediaPipe Hands → kąty zgięcia 15 stawów.
@@ -122,8 +125,10 @@ export function handResponsiveness(): number {
  * więc kąt jest ciągły (bez skoku przy ±π) i zaczyna się od zera w pozie,
  * w której dłoń została pierwszy raz zobaczona.
  */
-interface WristState { last: number | null; angle: number }
+interface WristState { last: number | null; angle: number; at: number }
 const wristStates = new Map<string, WristState>();
+/** Po ilu ms braku dłoni uznajemy powrót za nową sesję (bez skoku kąta). */
+const WRIST_REACQUIRE_MS = 350;
 
 /** Wołane przy każdym restarcie kamerki — nowa sesja, nowa pozycja neutralna. */
 export function resetWristCalibration(): void {
@@ -132,26 +137,40 @@ export function resetWristCalibration(): void {
 
 /** Przycisk „Kalibruj pozycję neutralną” w laboratorium. */
 export function recaptureWristNeutral(): void {
-  for (const state of wristStates.values()) state.angle = 0;
+  for (const state of wristStates.values()) {
+    state.angle = 0;
+    // Bez wyzerowania kotwicy następna klatka dokładała różnicę między
+    // starą a nową pozą i natychmiast wbijała kąt w limit ±1,75 rad.
+    state.last = null;
+    state.at = 0;
+  }
 }
 
-function wristTwist(key: string, raw: number): number {
+function wristTwist(key: string, raw: number, at: number): number {
   let state = wristStates.get(key);
   if (!state) {
-    state = { last: null, angle: 0 };
+    state = { last: null, angle: 0, at };
     wristStates.set(key, state);
   }
-  if (state.last === null) {
-    state.last = raw;
+  const rawSafe = finite(raw);
+  // Dłoń wyszła z kadru i wróciła w innym ułożeniu: zaczynamy od zera
+  // zamiast dokładać zawinięty kąt ±π do poprzedniej sesji.
+  if (state.last === null || at - state.at > WRIST_REACQUIRE_MS) {
+    state.last = rawSafe;
+    state.at = at;
+    state.angle = 0;
     return 0;
   }
-  let delta = raw - state.last;
+  let delta = rawSafe - state.last;
   while (delta > Math.PI) delta -= Math.PI * 2;
   while (delta < -Math.PI) delta += Math.PI * 2;
-  state.last = raw;
+  state.last = rawSafe;
+  state.at = at;
   // Filtr przeciw szumowi pojedynczej klatki na słabej kamerce.
-  if (Math.abs(delta) > 0.002) state.angle += delta;
-  return clamp(state.angle, -1.75, 1.75);
+  if (Math.abs(delta) > 0.002) {
+    state.angle = clamp(state.angle + delta, -1.75, 1.75);
+  }
+  return clampFinite(state.angle, -1.75, 1.75);
 }
 
 export function neutralHandPose(): HandPose {
@@ -180,7 +199,7 @@ function points(hand: TrackedHand, aspect: number): THREE.Vector3[] {
 }
 
 function jointAngle(a: THREE.Vector3, b: THREE.Vector3, j: number, thumb: boolean): number {
-  const raw = Math.acos(clamp(a.dot(b), -1, 1));
+  const raw = Math.acos(clampFinite(a.dot(b), -1, 1, 1));
   const bias = thumb ? THUMB_BIAS[j] : JOINT_BIAS[j];
   const gain = thumb ? 1 : JOINT_GAIN[j];
   // Lekko ujemny dolny limit pozwala na naturalne, minimalne wyprostowanie.
@@ -188,14 +207,26 @@ function jointAngle(a: THREE.Vector3, b: THREE.Vector3, j: number, thumb: boolea
 }
 
 /** Z wektorów między punktami dłoni liczymy kąty dla wszystkich 15 stawów. */
-export function computeHandPose(hand: TrackedHand, aspect = 4 / 3): HandPose {
+/**
+ * `at` jest jawne, żeby testy mogły symulować przerwę w śledzeniu bez
+ * czekania na prawdziwy zegar. Produkcja korzysta z domyślnego `performance.now()`.
+ */
+export function computeHandPose(
+  hand: TrackedHand,
+  aspect = 4 / 3,
+  at = performance.now(),
+): HandPose {
   const pose = neutralHandPose();
-  if (!hand?.landmarks || hand.landmarks.length < 21) return pose;
+  if (!validLandmarks(hand?.landmarks, 21, 64) || !Number.isFinite(aspect)) return pose;
   pose.present = true;
 
   const p = points(hand, aspect);
-  const dir = (from: number, to: number): THREE.Vector3 =>
-    new THREE.Vector3().subVectors(p[to], p[from]).normalize();
+  const dir = (from: number, to: number): THREE.Vector3 => {
+    const v = new THREE.Vector3().subVectors(p[to], p[from]);
+    // Zerowy wektor (dwa punkty w tym samym miejscu) nie ma kierunku.
+    // normalize() zostawiłby (0,0,0), a acos(dot) zwróciłoby π/2.
+    return v.lengthSq() > 1e-12 ? v.normalize() : new THREE.Vector3(0, 1, 0);
+  };
 
   const wrist = p[0];
   const indexBase = new THREE.Vector3().subVectors(p[5], wrist);
@@ -280,12 +311,12 @@ export function computeHandPose(hand: TrackedHand, aspect = 4 / 3): HandPose {
   const rawTwist = Math.atan2(nPlane.dot(sidePlane), nPlane.dot(cPlane));
   // Klucz po etykiecie MediaPipe: obie dłonie kalibrują się niezależnie,
   // więc lustrzane odbicie nie wywraca jednej z nich na lewą stronę.
-  pose.roll = wristTwist(hand.label ?? 'Left', rawTwist);
+  pose.roll = wristTwist(hand.label ?? 'Left', rawTwist, finite(at, performance.now()));
 
   // Przechylenie i odchylenie dłoni też bierzemy z osi palców, a nie z
   // palm.y — dzięki temu ruch nadgarstka w przód / tył / na bok jest widoczny.
-  pose.pitch = clamp(Math.asin(clamp(fwd.z, -1, 1)) * 1.15, -1.1, 1.1);
-  pose.yaw = clamp(Math.atan2(fwd.x, Math.max(0.08, fwd.y)) * 0.85, -1.1, 1.1);
+  pose.pitch = clampFinite(Math.asin(clampFinite(fwd.z, -1, 1)) * 1.15, -1.1, 1.1);
+  pose.yaw = clampFinite(Math.atan2(fwd.x, Math.max(0.08, fwd.y)) * 0.85, -1.1, 1.1);
   return pose;
 }
 
@@ -296,10 +327,19 @@ export function computeHandPose(hand: TrackedHand, aspect = 4 / 3): HandPose {
  */
 export function posesFromHands(hands: TrackedHand[], aspect = 4 / 3): HandPosePair {
   const pair = neutralHandPosePair();
-  for (const hand of hands) {
+  const score: Record<'L' | 'R', number> = { L: -Infinity, R: -Infinity };
+  // Odrzucamy zatrute klatki i rozstrzygamy identyczne etykiety, żeby obie
+  // dłonie nie trafiły na ten sam bok awatara (jedna znikała z widoku).
+  const clean = disambiguateHandedness(hands ?? []);
+  for (const hand of clean) {
     const side: 'L' | 'R' = hand.label === 'Left' ? 'R' : 'L';
     const pose = computeHandPose(hand, aspect);
-    if (!pair[side].present || hand.score > 0.5) pair[side] = pose;
+    if (!pose.present) continue;
+    const confidence = finite(hand.score, 0);
+    if (!pair[side].present || confidence >= score[side]) {
+      pair[side] = pose;
+      score[side] = confidence;
+    }
   }
   return pair;
 }
@@ -349,7 +389,11 @@ export class HandAnimator {
   private readonly rest = neutralHandPose();
   private readonly tracked = neutralHandPose();
 
-  constructor(private readonly options: { idle?: boolean } = {}) {}
+  private readonly options: { idle?: boolean };
+
+  constructor(options: { idle?: boolean } = {}) {
+    this.options = options;
+  }
 
   /**
    * Bezwarunkowo stabilne tłumienie (formuła SmoothDamp). Zwykła integracja
@@ -358,13 +402,21 @@ export class HandAnimator {
    * Zaciskanie jest trochę szybsze niż prostowanie, jak w prawdziwej dłoni.
    */
   private integrate(c: Channel, target: number, dt: number, smoothTime: number): number {
-    const omega = 2 / Math.max(0.01, target > c.value ? smoothTime * 0.84 : smoothTime);
+    const want = finite(target, c.value);
+    // Jedna zatruta klatka nie może na zawsze zepsuć kanału: przywracamy
+    // stan z aktualnego celu i zerujemy prędkość zamiast mnożyć NaN dalej.
+    if (!Number.isFinite(c.value) || !Number.isFinite(c.velocity)) {
+      c.value = want;
+      c.velocity = 0;
+      return want;
+    }
+    const omega = 2 / Math.max(0.01, want > c.value ? smoothTime * 0.84 : smoothTime);
     const x = omega * dt;
     const decay = 1 / (1 + x + 0.48 * x * x + 0.235 * x * x * x);
-    const change = c.value - target;
+    const change = c.value - want;
     const temp = (c.velocity + omega * change) * dt;
     c.velocity = (c.velocity - omega * temp) * decay;
-    c.value = target + (change + temp) * decay;
+    c.value = clampFinite(want + (change + temp) * decay, -3, 3, want);
     return c.value;
   }
 
@@ -410,7 +462,7 @@ export class HandAnimator {
    * do chwytu spoczynkowego — nie ma już „skoku” do płasko otwartej dłoni.
    */
   step(target: HandPose, dt: number, motion?: HandMotion): HandPose {
-    const d = Math.min(Math.max(dt, 0.001), 0.05);
+    const d = Math.min(Math.max(finite(dt, 1 / 60), 0.001), 0.05);
     let t: HandPose;
     if (target.present) {
       // Fizjologiczne mikro-drżenie nałożone na prawdziwy odczyt (bardzo małe,
@@ -421,7 +473,7 @@ export class HandAnimator {
       for (let f = 0; f < 5; f += 1) {
         for (let j = 0; j < 3; j += 1) {
           const tremor = Math.sin(time * (7.3 + f * 0.6) + f * 1.9 + j) * 0.004 * idle;
-          tr.curl[f][j] = clamp(target.curl[f][j] + tremor, -0.07, JOINT_MAX[j]);
+          tr.curl[f][j] = clampFinite(target.curl[f][j] + tremor, -0.07, JOINT_MAX[j]);
         }
         tr.spread[f] = target.spread[f];
       }
