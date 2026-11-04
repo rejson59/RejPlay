@@ -20,7 +20,7 @@ export const GAMES: GameInfo[] = [
     description:
       'Dom przy Wrzosowej 12. Wejdź z latarką, zbierz sześć śladów i rozpoznaj zjawę, zanim skończą Ci się nerwy.',
     tag: 'Horror · Dochodzenie',
-    players: 'Dochodzenie solo · Atrium online',
+    players: 'Dochodzenie solo · Lobby online',
     color: '#8b7355',
     accent: '#3f4a4a',
     art: `${import.meta.env.BASE_URL}art/house.jpg`,
@@ -29,8 +29,8 @@ export const GAMES: GameInfo[] = [
   },
 ];
 
-/** Nazwa wspólnego lobby 3D (to nie jest osobna gra). */
-export const LOBBY_NAME = 'Atrium';
+/** Nazwa Lobby (to nie jest osobna gra). */
+export const LOBBY_NAME = 'Lobby';
 
 export const PALETTE = [
   { name: 'Bursztyn', value: '#c8a06a' },

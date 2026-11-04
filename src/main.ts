@@ -7,7 +7,6 @@ import {
   OUTFITS,
   PALETTE,
   SKIN_TONES,
-  type GameInfo,
 } from './games';
 import { DEFAULT_APPEARANCE, type Appearance } from './character';
 import { loadHumanAssets, type HumanAssets } from './human';
@@ -17,10 +16,13 @@ import { CameraRig } from './camera-rig';
 import type { ControlFrame, GestureEvent, LabDiagnostics } from './camera-control';
 import { handResponsiveness, setHandResponsiveness } from './hand-pose';
 import {
-  OnlineClient, SUPABASE_ANON_KEY, SUPABASE_URL,
+  OnlineClient, SUPABASE_URL,
   type OnlinePeer, type OnlineStatus, type PartyState,
 } from './online';
-import { CommunityAccount, type CommunitySession } from './community-account';
+import { COMMUNITY_ANON_KEY, CommunityAccount, type CommunitySession } from './community-account';
+import { AuthGate, type AuthAction } from './auth-gate';
+import { ASSETS, ASSET_CATEGORIES } from './asset-catalog';
+import { DialogFocus } from './dialog';
 import { diagnostics as diagLog, copyDiagnosticReport } from './diagnostics';
 
 // Bufor logów musi powstać przed jakimkolwiek innym modułem, żeby złapać
@@ -108,7 +110,7 @@ let partyState: PartyState | null = null;
 let pendingParty = new URLSearchParams(location.search).get('party')?.toUpperCase() ?? null;
 const account = new CommunityAccount({
   url: SUPABASE_URL,
-  key: SUPABASE_ANON_KEY,
+  key: COMMUNITY_ANON_KEY,
   onSession: (session) => {
     accountSession = session;
     online.setAccount(session);
@@ -121,6 +123,22 @@ const account = new CommunityAccount({
     }
   },
 });
+
+/** Brama konta: bez logowania/rejestracji nie ma Lobby ani rozgrywki. */
+const authGate = new AuthGate({
+  account,
+  onResume: (action: AuthAction) => {
+    if (action === 'lobby') enterLobby();
+    else openGame('home');
+  },
+  // Brama konta zawsze na wierzchu: katalog assetów nie może jej zasłonić.
+  onOpen: () => closeAssetModal(),
+});
+
+/** Wymagane konto — jedyny punkt kontroli dla Lobby i gry. */
+function requireAccount(action: AuthAction): boolean {
+  return authGate.require(action);
+}
 
 // ------------------------------------------------------------------ referencje
 
@@ -253,7 +271,7 @@ const CATALOG: Array<{ id: string; title: string; tag: string; art: string; read
     art: game.art,
     ready: game.ready,
   })),
-  { id: 'plaza', title: LOBBY_NAME, tag: '3D · Lobby', art: '', ready: true },
+  { id: 'lobby', title: LOBBY_NAME, tag: 'Park · Lobby', art: '', ready: true },
 ];
 
 let searchQuery = '';
@@ -261,7 +279,7 @@ let searchQuery = '';
 function renderGames(): void {
   const query = searchQuery.trim().toLowerCase();
   const visible = GAMES.filter((game) =>
-    !query || `${game.title} ${game.tag} ${game.description} ${game.claim} lobby atrium`.toLowerCase().includes(query),
+    !query || `${game.title} ${game.tag} ${game.description} ${game.claim} lobby park`.toLowerCase().includes(query),
   );
 
   gameGrid.innerHTML = visible
@@ -315,9 +333,16 @@ function renderFriends(): void {
 }
 
 function readRecent(): string[] {
+  // v0.7: „plaza" było wewnętrznym id dawnego placu. Mapujemy zapisane
+  // odwiedziny, żeby dotychczasowym graczom nie zniknęła pozycja „Ostatnio".
   try {
     const raw = JSON.parse(readStored('rejplay:recent') ?? '[]') as unknown;
-    if (Array.isArray(raw)) return raw.filter((id): id is string => typeof id === 'string').slice(0, 3);
+    if (Array.isArray(raw)) {
+      return raw
+        .filter((id): id is string => typeof id === 'string')
+        .map((id) => (id === 'plaza' ? 'lobby' : id))
+        .slice(0, 3);
+    }
   } catch {
     // Uszkodzony zapis — traktujemy jako pusty.
   }
@@ -359,9 +384,153 @@ function renderRecent(): void {
 function launchGame(id: string): void {
   if (id === 'demonofobia') {
     openGame('home');
-  } else if (id === 'plaza') {
+  } else if (id === 'lobby') {
     enterLobby();
   }
+}
+
+// ------------------------------------------------------- katalog assetów 3D
+
+let assetFilterCategory = '';
+
+function assetIcon(category: string): string {
+  return ASSET_CATEGORIES.find((entry) => entry.id === category)?.icon ?? 'i-cube';
+}
+
+/** Kafelek kategorii → otwiera modal z przefiltrowaną listą modeli. */
+function renderAssetCatalog(): void {
+  $('#stat-assets').textContent = String(ASSETS.length);
+  $('#stat-cats').textContent = String(ASSET_CATEGORIES.length);
+  $('#asset-total').textContent = `${ASSETS.length} modeli`;
+  $('#asset-tiles').innerHTML = ASSET_CATEGORIES.map((cat) => `
+    <button type="button" class="asset-tile" data-asset-cat="${escapeHtml(cat.id)}" title="${escapeHtml(cat.description)}">
+      <span class="asset-tile__icon"><svg class="ico" aria-hidden="true"><use href="#${cat.icon}" /></svg></span>
+      <b>${escapeHtml(cat.label)}</b>
+      <small>${escapeHtml(cat.description)}</small>
+      <span class="asset-tile__count">${cat.count}</span>
+    </button>`).join('');
+  renderAssetList('');
+}
+
+/** Komunikat pustego stanu mówi, co dokładnie zawęziło wyniki. */
+function emptyAssetMessage(query: string, category: string): string {
+  const label = ASSET_CATEGORIES.find((entry) => entry.id === category)?.label;
+  const phrase = query ? ` dla frazy „${escapeHtml(query)}”` : '';
+  if (label) return `Brak modeli w kategorii „${escapeHtml(label)}”${phrase}. Wyczyść filtr lub zmień wyszukiwanie.`;
+  return query
+    ? `Brak modelu dla frazy „${escapeHtml(query)}”. Spróbuj innej nazwy, kategorii lub licencji.`
+    : 'Brak modeli do pokazania.';
+}
+
+function renderAssetList(query: string): void {
+  const q = query.trim().toLowerCase();
+  const visible = ASSETS.filter((asset) => {
+    if (assetFilterCategory && asset.category !== assetFilterCategory) return false;
+    return !q || `${asset.label} ${asset.name} ${asset.category} ${asset.license} ${asset.source}`.toLowerCase().includes(q);
+  });
+  $('#asset-list').innerHTML = visible.length
+    ? visible.map((asset) => `
+        <div class="asset-row">
+          <svg class="ico" aria-hidden="true"><use href="#${assetIcon(asset.category)}" /></svg>
+          <div><b>${escapeHtml(asset.label)}</b><small>${escapeHtml(asset.name)}.glb</small></div>
+          <em>${escapeHtml(asset.license)}</em>
+          <span>${(asset.bytes / 1024).toFixed(0)} KB</span>
+        </div>`).join('')
+    : `<p class="shelf__empty">${emptyAssetMessage(q, assetFilterCategory)}</p>`;
+  $('#asset-total').textContent = assetFilterCategory
+    ? `${visible.length} / ${ASSETS.length} modeli`
+    : `${ASSETS.length} modeli`;
+}
+
+const assetModalRoot = $('#asset-modal');
+const assetDialogFocus = new DialogFocus(
+  assetModalRoot,
+  () => assetModalRoot.classList.contains('is-active'),
+);
+
+function openAssetModal(category = ''): void {
+  if (authGate.isOpen) return; // brama konta ma pierwszeństwo
+  assetFilterCategory = category;
+  const input = $<HTMLInputElement>('#asset-search');
+  // Nazwa kategorii jest osobnym filtrem (chip poniżej), nie frazą wyszukiwania.
+  input.value = '';
+  const chip = $<HTMLButtonElement>('#asset-filter');
+  const label = ASSET_CATEGORIES.find((c) => c.id === category)?.label;
+  chip.hidden = !label;
+  chip.textContent = label ? `${label} · wyczyść filtr ✕` : '';
+  renderAssetList('');
+  assetDialogFocus.capture();
+  assetModalRoot.classList.add('is-active');
+  assetModalRoot.setAttribute('aria-hidden', 'false');
+  window.setTimeout(() => {
+    if (assetModalRoot.classList.contains('is-active')) input.focus();
+  }, 40);
+}
+
+function closeAssetModal(): void {
+  if (!assetModalRoot.classList.contains('is-active')) return;
+  assetModalRoot.classList.remove('is-active');
+  assetModalRoot.setAttribute('aria-hidden', 'true');
+  assetFilterCategory = '';
+  $<HTMLButtonElement>('#asset-filter').hidden = true;
+  assetDialogFocus.restore();
+}
+
+function wireAssetModal(): void {
+  $('#asset-open').addEventListener('click', () => openAssetModal());
+  $('#asset-tiles').addEventListener('click', (event) => {
+    const button = (event.target as HTMLElement).closest<HTMLElement>('[data-asset-cat]');
+    if (button?.dataset.assetCat) openAssetModal(button.dataset.assetCat);
+  });
+  assetModalRoot.addEventListener('click', (event) => {
+    if ((event.target as HTMLElement).closest('[data-asset-close]')) closeAssetModal();
+  });
+  const input = $<HTMLInputElement>('#asset-search');
+  input.addEventListener('input', (event) => {
+    renderAssetList((event.target as HTMLInputElement).value);
+  });
+  $<HTMLButtonElement>('#asset-filter').addEventListener('click', () => {
+    assetFilterCategory = '';
+    $<HTMLButtonElement>('#asset-filter').hidden = true;
+    renderAssetList(input.value);
+    input.focus();
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && assetModalRoot.classList.contains('is-active')) closeAssetModal();
+  });
+}
+
+function wireHubNav(): void {
+  const links = Array.from(
+    document.querySelectorAll<HTMLAnchorElement>('.hub-nav__link[data-nav]'),
+  );
+  if (!links.length) return;
+  const targetId = (nav: string): string => (nav === 'start' ? 'top' : nav);
+  const activate = (nav: string): void => {
+    for (const link of links) link.classList.toggle('is-active', link.dataset.nav === nav);
+  };
+  for (const link of links) {
+    link.addEventListener('click', (event) => {
+      const nav = link.dataset.nav ?? 'start';
+      const target = document.getElementById(targetId(nav));
+      if (!target) return; // bez sekcji zostawiamy natywny anchor
+      event.preventDefault();
+      activate(nav);
+      target.scrollIntoView({
+        behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
+        block: 'start',
+      });
+      history.replaceState(null, '', `#${targetId(nav)}`);
+    });
+  }
+  // Bezpośredni link z hashem (np. /RejPlay/#assets) ma podświetlić właściwą pozycję.
+  const syncFromHash = (): void => {
+    const hash = location.hash.slice(1);
+    const match = links.find((link) => targetId(link.dataset.nav ?? '') === hash);
+    if (match?.dataset.nav) activate(match.dataset.nav);
+  };
+  window.addEventListener('hashchange', syncFromHash);
+  syncFromHash();
 }
 
 // ------------------------------------------------------------------- motyw
@@ -391,7 +560,7 @@ const cameraRig = new CameraRig({
   faceCanvas: labFaceCanvas,
   onHands: (hands, aspect) => {
     // 21 punktów → 15 kątów stawów ORAZ pozycja x / y / głębokość całej dłoni.
-    // Trafia na kości awatara, ramiona i dłonie first-person (gra + Atrium).
+    // Trafia na kości awatara, ramiona i dłonie first-person (gra + Lobby).
     if (worldReady) world.setHandPose(hands, aspect);
     handReadout.textContent =
       hands.length === 0
@@ -440,7 +609,7 @@ function syncLobbyViewButton(): void {
     : 'Widok: 3D <kbd>V</kbd>';
   lobbyViewToggle.setAttribute('aria-pressed', String(fp));
   lobbyViewToggle.title = fp
-    ? 'Atrium first-person — dłonie awatara przed oczami. Kliknij, aby zobaczyć całą postać.'
+    ? 'Lobby first-person — dłonie awatara przed oczami. Kliknij, aby zobaczyć całą postać.'
     : 'Kamera za plecami. Kliknij, aby wrócić do widoku z oczu.';
 }
 
@@ -870,8 +1039,10 @@ function renderPlayerList(): void {
   playerCount.textContent = String(entries.length);
   onlineCount.textContent = partyState
     ? `Drużyna ${partyState.code} · ${real.length + 1} ${real.length ? 'graczy' : 'gracz'}`
-    : `${real.length + 1} ${real.length ? 'graczy' : 'gracz'} online · bez botów`;
-  chatScope.textContent = partyState ? `Drużyna ${partyState.code}` : 'Atrium · wszyscy';
+    : onlineStatus === 'offline'
+      ? 'Brak połączenia · tylko Ty'
+      : `${real.length + 1} ${real.length ? 'graczy' : 'gracz'} online · bez botów`;
+  chatScope.textContent = partyState ? `Drużyna ${partyState.code}` : 'Lobby · wszyscy';
   renderLive();
   renderFriends();
 }
@@ -882,12 +1053,13 @@ function renderAccount(): void {
   accountChip.classList.toggle('is-signed', signed);
   accountName.textContent = signed ? accountSession!.username : 'Zaloguj się';
   accountChip.title = signed
-    ? `Konto rejson59.github.io: ${accountSession!.username}`
-    : 'Zaloguj się lub zarejestruj na rejson59.github.io (jedno konto na wszystkie projekty)';
+    ? `Konto rejson59.github.io: ${accountSession!.username} · kliknij, aby wylogować`
+    : 'Zaloguj się lub zarejestruj — bez konta nie rozpoczniesz gry';
+  authGate.render(accountSession);
 }
 
 function loginInfo(): string {
-  return 'Logowanie i rejestracja są na <b>rejson59.github.io</b> — to jedno konto na wszystkie projekty. Po powrocie RejPlay odczyta tę samą sesję.';
+  return 'Jedno konto na <b>rejson59.github.io</b> i w RejPlay. Zaloguj się lub zarejestruj, aby grać.';
 }
 
 async function joinPartyByCode(code: string): Promise<void> {
@@ -899,7 +1071,7 @@ async function joinPartyByCode(code: string): Promise<void> {
   if (!accountSession) {
     pendingParty = clean;
     try { localStorage.setItem('rejplay:pending-party', clean); } catch { /* opcjonalne */ }
-    showToast(lobbyToast, 'Najpierw zaloguj się kontem rejson59.github.io, potem dołączysz do drużyny.');
+    showToast(lobbyToast, 'Zaloguj się lub zarejestruj w RejPlay, potem dołączysz do drużyny.');
     return;
   }
   const result = await online.joinParty(clean);
@@ -930,7 +1102,7 @@ function renderParty(state: PartyState | null): void {
         <button type="button" data-party-action="create">Utwórz drużynę</button>
         <button type="button" data-party-action="logout">Wyloguj</button>
       </div>
-      <p class="party__hint">Kodem zaproszenia możesz podzielić się ze znajomymi. Czat i Atrium zawężają się wtedy tylko do Waszej drużyny.</p>`;
+      <p class="party__hint">Kodem zaproszenia możesz podzielić się ze znajomymi. Czat i Lobby zawężają się wtedy tylko do Waszej drużyny.</p>`;
   } else {
     const members = state.members ?? [];
     partyBody.innerHTML = `
@@ -954,11 +1126,7 @@ partyBody.addEventListener('click', (event) => {
   const action = button.dataset.partyAction;
   button instanceof HTMLButtonElement && button.blur();
   if (action === 'login') {
-    if (!account.sharedOrigin) {
-      showToast(globalToast, 'Logowanie działa na rejson59.github.io — tu (localhost) nie ma współdzielonej sesji.');
-      return;
-    }
-    account.open();
+    authGate.open();
   } else if (action === 'logout') {
     account.logout();
     try { localStorage.removeItem('rejplay:pending-party'); } catch { /* jw. */ }
@@ -972,7 +1140,7 @@ partyBody.addEventListener('click', (event) => {
       else showToast(lobbyToast, `Drużyna ${result.code} · wyślij kod znajomym.`);
     });
   } else if (action === 'leave') {
-    void online.leaveParty().then(() => showToast(lobbyToast, 'Opuściłeś drużynę. Wracasz do wspólnego Atrium.'));
+    void online.leaveParty().then(() => showToast(lobbyToast, 'Opuściłeś drużynę. Wracasz do Lobby.'));
   } else if (action === 'invite') {
     const url = online.inviteUrl();
     if (url) {
@@ -988,13 +1156,8 @@ partyBody.addEventListener('click', (event) => {
 });
 
 accountChip.addEventListener('click', () => {
-  if (accountSession) {
-    showToast(globalToast, `Zalogowano jako ${accountSession.username} · konto z rejson59.github.io.`);
-  } else if (!account.sharedOrigin) {
-    showToast(globalToast, 'Logowanie działa na rejson59.github.io — w podglądzie localhost sesja nie jest współdzielona.');
-  } else {
-    account.open();
-  }
+  // Zalogowany widzi panel z wylogowaniem, gość — formularz logowania.
+  authGate.open();
 });
 
 /** Panel „Na żywo” na stronie głównej — wyłącznie prawdziwe dane z presence. */
@@ -1006,17 +1169,21 @@ function renderLive(): void {
     onlineStatus === 'online' ? `${real.length + 1} online` :
     onlineStatus === 'offline' ? 'Tryb offline' : 'Łączę…';
   liveSub.textContent =
-    onlineStatus === 'online' ? 'Supabase Realtime · Atrium' :
-    onlineStatus === 'offline' ? 'Gra działa lokalnie · czat w tej karcie' : 'Supabase Realtime · łączenie…';
-  liveCount.textContent = String(real.length + 1);
-  const rows = [
+    onlineStatus === 'online' ? 'Supabase Realtime · Lobby' :
+    onlineStatus === 'offline' ? 'Brak połączenia · podgląd i katalog działają' : 'Supabase Realtime · łączenie…';
+  // Offline nikogo nie udajemy: nawet lokalny gracz nie jest „na żywo”.
+  const offline = onlineStatus === 'offline';
+  liveCount.textContent = String(offline ? real.length : real.length + 1);
+  const rows = offline ? [] : [
     `<li><i style="background:${escapeHtml(state.color)}"></i>${escapeHtml(state.nick)} (Ty)</li>`,
     ...real.map(
-      (peer) => `<li><i style="background:${escapeHtml(peer.color)}"></i>${escapeHtml(peer.nick)} · ${peer.mode === 'lobby' ? 'Atrium' : 'Start'}</li>`,
+      (peer) => `<li><i style="background:${escapeHtml(peer.color)}"></i>${escapeHtml(peer.nick)} · ${peer.mode === 'lobby' ? 'Lobby' : 'Start'}</li>`,
     ),
   ];
   if (real.length === 0) {
-    rows.push('<li class="is-empty">Nikogo jeszcze nie ma — wejdź pierwszy</li>');
+    rows.push(offline
+      ? '<li class="is-empty">Brak połączenia — nikt nie jest widoczny</li>'
+      : '<li class="is-empty">Nikogo jeszcze nie ma — wejdź pierwszy</li>');
   }
   liveList.innerHTML = rows.join('');
 }
@@ -1041,7 +1208,7 @@ function seedChat(): void {
   addChatMessage(
     'RejPlay',
     onlineStatus === 'online'
-      ? `Czat przez Supabase${partyState ? ` · tylko drużyna ${partyState.code}` : ' · całe Atrium'}.`
+      ? `Czat przez Supabase${partyState ? ` · tylko drużyna ${partyState.code}` : ' · Lobby'}.`
       : 'Brak połączenia z bazą — wiadomości zostają w tej karcie.',
   );
 }
@@ -1049,6 +1216,7 @@ function seedChat(): void {
 function triggerWave(): void {
   if (game.classList.contains('is-active')) return;
   world.wave();
+  online.sendWave();
   showToast(
     lobby.classList.contains('is-active') ? lobbyToast : globalToast,
     `${state.nick} macha do wszystkich`,
@@ -1066,6 +1234,7 @@ function captureGamePhoto(): void {
 }
 
 function enterLobby(): void {
+  if (!requireAccount('lobby')) return;
   if (lobby.classList.contains('is-active')) return;
   closeEditor();
   lobby.classList.add('is-active');
@@ -1076,15 +1245,16 @@ function enterLobby(): void {
   document.title = `${LOBBY_NAME} · RejPlay`;
   world.setPreviewClose(false);
   world.mount(lobbyStage, 'lobby');
-  // Nie przejmujemy kursora automatycznie: w Atrium jest sporo klikalnego UI
+  // Nie przejmujemy kursora automatycznie: w Lobby jest sporo klikalnego UI
   // (czat, narzędzia, kamerka). Gracz wchodzi w lock jednym klikiem w widok 3D.
   syncLobbyPointerUI();
   online.update({ mode: 'lobby' });
   renderPlayerList();
   seedChat();
-  recordVisit('plaza');
+  recordVisit('lobby');
   online.event('lobby_enter');
   showToast(lobbyToast, `${LOBBY_NAME} · widok z oczu: WASD = ruch, przeciągnij = rozglądanie, V = kamera 3D`);
+  lobby.focus({ preventScroll: true });
 }
 
 function goHome(): void {
@@ -1095,11 +1265,12 @@ function goHome(): void {
   document.body.classList.remove('in-lobby');
   releasePointerLock();
   syncLobbyPointerUI();
-  document.title = 'RejPlay — Demonofobia i Atrium 3D';
+  document.title = 'RejPlay — Demonofobia i Lobby';
   chatInput.blur();
   online.update({ mode: 'home' });
   world.mount(heroStage, 'home');
   renderRecent();
+  home.focus({ preventScroll: true });
 }
 
 // -------------------------------------------------------------- HUD Demonofobia
@@ -1371,7 +1542,7 @@ function closeTutorial(): void {
 // przestaje wysyłać movementX/Y — obrót „staje” na krawędzi ekranu. Blokada
 // daje nieograniczone delty myszy. Zwalniamy ją dla notatnika, wyniku i na Esc,
 // żeby ich przyciski (karty zjaw, wyjście) nadal dało się kliknąć. Działa tak
-// samo w grze i w first-person Atrium; tam klik z celownikiem używa portalu.
+// samo w grze i w first-person Lobby; tam klik z celownikiem używa portalu.
 const mouseCapable = window.matchMedia('(pointer: fine)').matches;
 /** Hybridowe laptopy/tablety: dotyk nie powinien wywoływać blokady kursora. */
 let lastPointerType = 'mouse';
@@ -1467,7 +1638,7 @@ document.addEventListener('pointerlockerror', () => {
   syncPointerHint();
 });
 
-/** Stan FP w Atrium: uzbraja lock, pokazuje celownik i zwalnia kursor w 3D. */
+/** Stan FP w Lobby: uzbraja lock, pokazuje celownik i zwalnia kursor w 3D. */
 function syncLobbyPointerUI(): void {
   const fp = worldReady && lobby.classList.contains('is-active') && world.firstPersonView;
   document.body.classList.toggle('in-lobby-fp', fp);
@@ -1522,6 +1693,7 @@ function applyHandResponsiveness(value: number): void {
 // -------------------------------------------------------------- wejście do gry
 
 function openGame(from: 'home' | 'lobby'): void {
+  if (!requireAccount('game')) return;
   closeEditor();
   // Kamerka zostaje włączona: panel chowa się (CSS), a odczyt palców nadal
   // steruje dłońmi first-person. Wyłączenie trackingu zabiłoby 1:1 w grze.
@@ -1555,6 +1727,7 @@ function openGame(from: 'home' | 'lobby'): void {
   lastEvidenceSignature = '';
   lastJournalSignature = '';
   lastResultSignature = '';
+  game.focus({ preventScroll: true });
 }
 
 function startGameRound(): void {
@@ -1600,13 +1773,15 @@ function exitGame(): void {
     document.title = `${LOBBY_NAME} · RejPlay`;
     world.mount(lobbyStage, 'lobby');
     renderPlayerList();
+    lobby.focus({ preventScroll: true });
   } else {
     home.setAttribute('aria-hidden', 'false');
-    document.title = 'RejPlay — Demonofobia i Atrium 3D';
+    document.title = 'RejPlay — Demonofobia i Lobby';
     world.mount(heroStage, 'home');
     renderRecent();
+    home.focus({ preventScroll: true });
   }
-  // Powrót do Atrium FP musi na nowo uzbroić lock i celownik.
+  // Powrót do Lobby FP musi na nowo uzbroić lock i celownik.
   syncLobbyPointerUI();
 }
 
@@ -1998,7 +2173,6 @@ function wireWorld(): void {
       selected ? `„${selected.title}” — ${selected.ready ? 'jesteś już w tym świecie!' : 'ta gierka powstaje.'}` : 'Portal',
     );
   });
-  world.onWave((name) => showToast(lobbyToast, `${name} macha do Ciebie`));
 }
 
 async function boot(): Promise<void> {
@@ -2026,7 +2200,7 @@ async function boot(): Promise<void> {
   });
   wireWorld();
   worldReady = true;
-  // Atrium domyślnie jest first-person, ale wybór użytkownika pamiętamy.
+  // Lobby domyślnie jest first-person, ale wybór użytkownika pamiętamy.
   let lobbyFp = true;
   try { lobbyFp = localStorage.getItem(LOBBY_VIEW_KEY) !== 'orbit'; } catch { /* tryb prywatny */ }
   world.setFirstPerson(lobbyFp);
@@ -2045,7 +2219,7 @@ async function boot(): Promise<void> {
     onlineStatus = status;
     renderPlayerList();
     if (status === 'offline' && chatSeeded) {
-      addChatMessage('RejPlay', 'Połączenie z bazą niedostępne — gra działa lokalnie.');
+      addChatMessage('RejPlay', 'Połączenie z bazą niedostępne — rozgrywka trwa bez czatu i Presence.');
     }
   };
   online.onPeers = (peers) => {
@@ -2057,10 +2231,14 @@ async function boot(): Promise<void> {
     addChatMessage(message.nick, message.offline ? `${message.content} · (tylko u Ciebie)` : message.content, message.color);
   };
   online.onParty = (state) => renderParty(state);
+  online.onWave = ({ name, clientId }) => {
+    world.remoteWave(clientId);
+    showToast(lobbyToast, `${name} macha do Ciebie`);
+  };
   online.onPartyStart = (by) => {
     showToast(lobbyToast, `${by} rozpoczyna dochodzenie razem z Tobą.`);
     if (lobby.classList.contains('is-active')) openGame('lobby');
-    else showToast(globalToast, `${by} wzywa Cię do drużyny — wejdź do Atrium.`);
+    else showToast(globalToast, `${by} wzywa Cię do drużyny — wejdź do Lobby.`);
   };
   try {
     pendingParty = pendingParty || localStorage.getItem('rejplay:pending-party')?.toUpperCase() || null;
@@ -2100,6 +2278,9 @@ async function boot(): Promise<void> {
   renderEditor();
   renderTutorial();
   renderLive();
+  renderAssetCatalog();
+  wireAssetModal();
+  wireHubNav();
   applyTheme(state.theme);
   world.mount(heroStage, 'home');
 

@@ -1,16 +1,32 @@
 # RejPlay
 
-Przeglądarkowa platforma 3D: **jedna autorska gra** (*Demonofobia*) i jedno
-wspólne lobby (*Atrium*). Frontend jest w pełni statyczny (Vite + Three.js,
-jeden kontekst WebGL) i działa na **GitHub Pages**. Multiplayer, czat i profile
-korzystają z istniejącego projektu **Supabase `rejson-widgets`** — nie mamy
-własnego serwera, ale gra bez połączenia z bazą nadal działa lokalnie.
+Przeglądarkowa platforma 3D przygotowana na **wiele gier**: pierwszą z nich
+jest autorska *Demonofobia*, a wspólnym punktem zbiórki jest park **Lobby**
+(dokładnie taka nazwa — bez dopisków i bez „3D”). Frontend jest w pełni
+statyczny (Vite + Three.js, jeden kontekst WebGL) i działa na **GitHub Pages**.
+Multiplayer, czat i profile korzystają z istniejącego projektu
+**Supabase `rejson-widgets`** — nie mamy własnego serwera, ale bez połączenia
+z bazą interfejs i podgląd działają lokalnie. **Zagranie wymaga konta.**
 
-Nie ma katalogu wielu światów, zapowiedzi gier, karuzeli ani zmyślonych metryk.
-W `public/art/` jest jeden plik: `house.jpg` (kafelek gry i baner).
+Nie ma zapowiedzi gier ani zmyślonych metryk: katalog pokazuje tylko to, co
+naprawdę działa. W `public/art/` jest jeden plik: `house.jpg` (kafelek gry).
+
+**v0.7 — park, assety, nowy home i brama konta:** Lobby stało się jasnym
+parkiem w świetle dnia (trawnik, okrągła alejka, altana, klomby, oczko wodne,
+tablica „Lobby”, brama gry) zamiast nocnego betonowego placu. Biblioteka
+darmowych, realistycznych assetów urosła z 25 do **101 modeli w 9 kategoriach**
+(meble, postacie, zwierzęta, pojazdy, budynki, roślinność, ulica, przedmioty,
+park) — Demonofobia jest tylko jedną z gier, które mają z niej korzystać.
+Strona główna została przebudowana: mniej tekstu, 25 ikon SVG, brak
+nakładania się sekcji na 390 / 1024 / 1440 px. Dodano **ładny ekran
+logowania i rejestracji** (`src/auth-gate.ts`) oraz twardą blokadę: bez konta
+nie da się wejść do Lobby ani uruchomić gry. Zero botów — lista graczy to
+wyłącznie realne Presence. Przy okazji naprawiono `CommunityAccount.refresh()`:
+pierwsze odświeżenie bez sesji zostawiało resolved promise w `pending`, więc
+późniejsze logowanie nigdy nie walidowało tokenu.
 
 **v0.5:** pełna pozycja dłoni w 3D (x / y / głębokość) zamiast tylko palców
-i drobnych ruchów nadgarstka, first-person w Atrium, przechwycenie kursora
+i drobnych ruchów nadgarstka, first-person w Lobby, przechwycenie kursora
 z pełnym obrotem 360° dla wielu monitorów, adaptacyjne wygładzanie i czułość
 ruchu do ustawienia na żywo.
 
@@ -43,19 +59,26 @@ i 25 darmowych assetów CC0/MIT, 6 narzędzi, 6 śladów, 10 autorskich zjaw.
 
 ## Co działa teraz
 
-### Strona główna
+### Strona główna (v0.7)
 
-Nowoczesny, jasny ekran (ciemny motyw nadpisuje zmienne kolorów). Klimat horroru
-pojawia się wyłącznie w kafelku gry, nigdy w tle strony.
+Uporządkowany ekran platformy: więcej ikon, mniej tekstu, żadnych
+nachodzących na siebie bloków. Jasny motyw jest domyślny, ciemny nadpisuje
+zmienne kolorów. Klimat horroru pojawia się wyłącznie w kafelku gry.
 
-- górny pasek: wyszukiwarka (`/` focus), nick, logo SVG, tryb ciemny,
-  **wskaźnik połączenia z Supabase**, śledzenie dłoni i wejście do lobby,
-- duży nagłówek, trzy karty „Wspólne Atrium / Dłonie 1:1 / Realistyczne
-  rekwizyty”,
-- panel **„Na żywo”** w lewym pasku: prawdziwa lista graczy z Realtime Presence,
-- baner *Demonofobia*, „Ostatnio odwiedzane”, kafelek gry i kafelek lobby,
-- podgląd postaci na żywo, szybka konfiguracja nicku i akcentu,
-- blok „Jak to działa”.
+- górny pasek: wyszukiwarka (`/` focus), ikony dłoni / motywu / jakości,
+  przycisk konta, awatar i **Lobby**; na wąskich ekranach etykiety znikają,
+  więc pasek nigdy nie wypycha strony w bok,
+- lewa nawigacja z 8 ikonami (Start, Światy, Assety, Postać, Edytor,
+  Samouczek, Kamerka, Kopiuj logi), panel **„Na żywo”** i lista graczy —
+  wyłącznie prawdziwe Presence,
+- hero z podglądem awatara 3D i trzema chipami: konto wymagane / dłonie 1:1 /
+  zero botów,
+- pasek liczb: **101 assetów · 9 kategorii · 1 grywalny świat · 0 botów**,
+- baner *Demonofobia*, „Ostatnio”, szeroki kafelek gry i kafelek parku Lobby,
+- **Biblioteka assetów**: 9 kafli kategorii + modal z przeszukiwalną listą
+  101 modeli, ich licencją i rozmiarem,
+- panel postaci (nick, akcent, edytor) i cztery ikonowe kafle „Na start”,
+- „Trzy kroki do gry” zamiast ściany tekstu.
 
 Wybór motywu zapisuje się w `localStorage` (`rejplay:theme`). Skrypt motywu i
 krytyczny CSS są w `<head>`, więc nie ma FOUC; ekran startowy zasłania scenę do
@@ -182,9 +205,9 @@ na dole. Viewmodel dostosowuje FOV, rozstaw i skalę dłoni do proporcji ekranu 
 na wąskim telefonie dłonie nie znikają poza kadrem ani nie zasłaniają połowy
 ekranu. Hybrydowe wykrywanie dotyku obsługuje też tablety z myszą.
 
-### Atrium first-person i dłonie przed oczami (v0.5)
+### Lobby first-person i dłonie przed oczami (v0.5)
 
-Atrium ma teraz **widok z oczu** jako domyślny: kamera na wysokości 1,62 m,
+Lobby ma teraz **widok z oczu** jako domyślny: kamera na wysokości 1,62 m,
 własna sylwetka ukryta (dla innych graczy w Presence jest widoczna normalnie),
 a przed oczami widać **te same rigowane dłonie awatara** co w grze — bez
 narzędzia, z rozluźnionym chwytem. `src/first-person-hands.ts` trzyma osobną,
@@ -205,7 +228,7 @@ Bez przechwycenia kursora ruch myszy zatrzymywał się na krawędzi okna: na dw�
 monitorach kursor uciekał na drugi ekran, przeglądarka przestawała wysyłać
 `movementX/Y` i nie dało się obrócić o pełny kąt. Teraz po starcie rundy gra
 (prosząc o `unadjustedMovement`, z fallbackiem na zwykły lock) przejmuje kursor,
-a delty są nieograniczone krawędzią ekranu — działa też w Atrium FP po jednym
+a delty są nieograniczone krawędzią ekranu — działa też w Lobby FP po jednym
 kliku w widok 3D.
 
 - pierwsze 1–2 zdarzenia `mousemove` po locku są ignorowane (skok
@@ -221,22 +244,32 @@ kliku w widok 3D.
   kursora przy krawędzi okna daje **ciągły** obrót oparty o zegar ścienny,
   więc nawet przy 2 FPS nie zwalnia razem z animacją.
 
-### Lobby `Atrium` i multiplayer
+### Lobby i multiplayer
 
-Spokojna, filmowa scena: beton, ciepłe latarnie, księżyc, obelisk, brama.
-`Demonofobia · graj` uruchamia dochodzenie. Lobby nie jest osobną grą w katalogu.
+**Lobby to park, nie betonowy plac.** Jasne niebo z gradientem, słońce z cieniami,
+trawnik, okrągła alejka z czterema dojściami, altana z zegarem słonecznym,
+osiem klombów, oczko wodne, drewniana tablica „Lobby” i brama z okładką gry.
+Gotowe GLB dokładają drzewa, żywopłoty, ławki, latarnie, stojak na rowery,
+drogowskaz i fontannę. W altanie stoi **galeria trzech nowych assetów**
+(aparat, boombox, sofa) na postumentach — podgląd biblioteki w silniku gry.
+Żadnych postaci udających graczy: ludzkie modele są w katalogu, nie w parku.
+`Demonofobia · graj` uruchamia dochodzenie. Lobby nie jest osobną grą.
 
 - **prawdziwi gracze**: pozycja, obrót, nick, kolor i wygląd awatara przez
   Supabase **Realtime Presence**; obcy awatary są rigowanymi postaciami 3D,
   wygładzanymi interpolacją,
 - **wspólny czat** zapisywany w `rejplay_chat` i dostarczany przez
   `postgres_changes` (historia 12 ostatnich wiadomości),
-- **zero botów demonstracyjnych** — lista graczy to wyłącznie Presence,
+- **zero botów demonstracyjnych** — lista graczy to wyłącznie Presence;
+  w trybie offline nie pokazujemy nawet siebie jako „online”,
 - **drużyny (party)**: utwórz kod, wyślij link, czat i Presence zawężają się
   do `rejplay:party:<kod>`, a „Rozpocznij razem” wysyła broadcast do całej ekipy,
 - `WASD` / strzałki, `Spacja`, przeciąganie myszą lub pointer lock, dotyk,
 - `V` — pierwszoosobowy widok z oczu ↔ kamera trzecioosobowa,
-- `E` / **Machaj** — emote bez VR; kamerka steruje palcami **i pozycją 3D**.
+- `E` / **Machaj** — emote bez VR, wysyłany jako broadcast `wave` na kanał
+  Lobby/drużyny (limit 1,2 s); u odbiorców animuje awatara nadawcy i pokazuje
+  powiadomienie. Odrzucamy zdarzenia własne, puste, nieprawidłowe i starsze
+  niż 15 s. Kamerka steruje palcami **i pozycją 3D**.
 
 ### Supabase `rejson-widgets`
 
@@ -248,26 +281,39 @@ trafiają do kodu ani do bundla. Konfigurację można nadpisać zmiennymi
 | Tabela | Zawartość |
 | --- | --- |
 | `rejplay_profiles` | nick, kolor, wygląd JSON, `client_id` z localStorage |
-| `rejplay_chat` | wiadomości Atrium (max 180 znaków) |
+| `rejplay_chat` | wiadomości Lobby (max 180 znaków) |
 | `rejplay_events` | `game_open`, `game_start`, `game_win`, `game_fail`, `photo`, `lobby_enter` |
 | `rejplay_parties` | kod, nazwa, lider (UUID konta głównej strony), wygaśnięcie |
 | `rejplay_party_members` | `client_id`, `user_id`, nick, kolor, wygląd, `last_seen_at` |
 
-**Konta:** RejPlay nie ma własnej rejestracji ani haseł. W `<head>` ładuje
-`/js/rejson-account.js?v=1` TYLKO na `rejson59.github.io` (wspólny origin =
-wspólny `localStorage`). Sesja `rejson_community_session_v1` jest potwierdzana
-przez `community_whoami`, a każda funkcja drużyny dodatkowo waliduje
-`session.token` po stronie serwera przez `community_session_user(p_token)`.
-Token nigdy nie trafia do URL, czatu, Presence ani `postMessage`. Tabele
-drużyn mają włączone RLS i **brak polityk dla anon** — dostęp wyłącznie przez
-funkcje `SECURITY DEFINER`.
+**Konta i brama logowania (v0.7):** RejPlay nie ma własnej bazy haseł, ale ma
+własny, ładny ekran **logowania i rejestracji** (`#auth`, `src/auth-gate.ts`).
+Używa tych samych RPC co `/logowanie` na głównej stronie:
+`community_login(p_username, p_pin)` / `community_register(...)` /
+`community_whoami(p_token)` i tego samego klucza
+`rejson_community_session_v1` w `localStorage`. Dzięki temu jedno konto działa
+na całym `rejson59.github.io`, a formularz działa także w dev na localhost.
+Bez zalogowania lub rejestracji **nie można zagrać** — `enterLobby()` i
+`openGame()` wołają `AuthGate.require()`, więc żaden przycisk, skrót ani portal
+3D nie obejdzie blokady. Po udanym logowaniu brama wznawia klikniętą akcję.
+RPC `community_*` używają dokładnie tego publicznego klucza `anon` co
+`/js/logowanie.js` (`COMMUNITY_ANON_KEY`); Presence, czat i zdarzenia używają
+klucza publishable z `src/online.ts`. W `<head>` wciąż ładujemy
+`/js/rejson-account.js?v=1` tylko na wspólnym originie — wtedy sesję
+potwierdza gotowy bridge zamiast bezpośredniego RPC. Każda funkcja drużyny dodatkowo waliduje token po stronie serwera
+przez `community_session_user(p_token)`. Token nigdy nie trafia do URL, czatu,
+Presence, logów ani `postMessage`. Tabele drużyn mają włączone RLS i **brak
+polityk dla anon** — dostęp wyłącznie przez funkcje `SECURITY DEFINER`.
 
 Migracje (RLS, indeksy, publikacja `supabase_realtime`, funkcje RPC) leżą w
 `supabase/migrations/20261102190000_rejplay_multiplayer.sql`,
 `20261104190000_rejplay_parties.sql` oraz
 `20261104191000_rejplay_party_auth_fix.sql` i zostały zastosowane w projekcie. **Jeśli baza jest niedostępna**, wskaźnik na
-stronie przechodzi w „Tryb offline”, czat zostaje w karcie, a gra, lobby i
-kamerka działają normalnie — brak połączenia nie blokuje rozgrywki.
+stronie przechodzi w „Tryb offline”, czat zostaje w karcie, a podgląd
+postaci i katalog assetów wciąż działają. Rozpoczęcie gry wymaga jednak
+potwierdzonego konta (`community_whoami`), więc przy niedostępnej bazie nie
+można zweryfikować sesji — zgodnie z założeniem „bez konta nie gramy”.
+Istniejąca, ważna sesja jest odczytywana ponownie po powrocie połączenia.
 
 ### Demonofobia — jedyna grywalna gra
 
@@ -371,8 +417,8 @@ sumują się z `WASD` i joystickiem. Ustawienia i kalibracja zapisują się w
 | `F` | latarka (gra) |
 | `J` / `Tab` | notatnik (gra) |
 | `Shift` | bieg (gra) |
-| `V` | Atrium: widok z oczu ↔ kamera za plecami (`rejplay:lobby-view`) |
-| klik w widok 3D | przejęcie kursora; przy locku w Atrium = użyj portalu pod celownikiem |
+| `V` | Lobby: widok z oczu ↔ kamera za plecami (`rejplay:lobby-view`) |
+| klik w widok 3D | przejęcie kursora; przy locku w Lobby = użyj portalu pod celownikiem |
 | `[` `]` | czułość myszy w trakcie rundy (`rejplay:look-sensitivity`) |
 | `Esc` | w grze / FP: najpierw zwalnia kursor, ponowne `Esc` wychodzi; poza grą zamyka kamerki / samouczek / edytor |
 
@@ -419,13 +465,19 @@ src/face-tracking.ts           MediaPipe FaceMesh: 478 punktów, źrenice, głow
 src/camera-rig.ts              jeden strumień → Hands + FaceMesh + sterowanie + gesty
 src/camera-control.ts          kalibracja, 3 testy, mapowanie głowa/oczy/palce
 src/diagnostics.ts             bezpieczny bufor logów + raport do schowka
-src/community-account.ts       wspólne konto rejson59.github.io (bez własnej bazy użytkowników)
+src/community-account.ts       wspólne konto + bezpieczne refresh() (bez martwego pending)
+src/auth-gate.ts               ekran logowania/rejestracji + twarda blokada gry
+src/asset-catalog.ts           101 modeli w 9 kategoriach (jedno źródło dla UI)
+src/dialog.ts                  focus trap i przywracanie fokusu dla obu okien modalnych
 src/tool-belt.ts               pas na biodrach: 6 slotów 3D w viewmodelu
-src/real-scenery.ts            13 rekwizytów lobby + 10 podwórka + samochód-baza
+src/park.ts                    park Lobby: niebo, trawnik, alejki, altana, klomby, oczko wodne
+src/auth-gate.ts               ekran logowania/rejestracji + twarda blokada gry
+src/asset-catalog.ts           101 modeli w 9 kategoriach (jedno źródło dla UI)
+src/real-scenery.ts            24 rekwizyty parku + 10 podwórka + galeria 3 assetów + baza
 src/hand-pose.ts               21 punktów → 15 kątów, rozstaw, ciągły skręt nadgarstka, pozycja 3D
 src/view-hands.ts              dłonie FP: geometryczne osie + rig obrotu nadgarstka + narzędzie LCD
-src/first-person-hands.ts      wspólny viewmodel dłoni first-person dla Atrium
-src/online.ts                  Supabase Realtime Presence / czat / profile / zdarzenia
+src/first-person-hands.ts      wspólny viewmodel dłoni first-person dla Lobby
+src/online.ts                  Presence / czat / profile / broadcast wave i party_start
 src/real-props.ts              17 gotowych rekwizytów CC0 / MIT w grze
 src/horror-decor.ts            proceduralne tekstury, meble, światła i kurz
 src/horror.ts                  Demonofobia: silnik, ruch, nalot, dźwięk, first-person
@@ -435,7 +487,10 @@ public/mediapipe/face/         lokalny runtime FaceMesh (Apache-2.0) + bridge.ht
 .github/workflows/             build + deploy na GitHub Pages
 public/characters/             13 GLB + animacje + gotowe tekstury + licencja MIT
 public/mediapipe/              lokalne pliki MediaPipe Hands
-public/assets/props/           8 GLB CC0 + LICENSE-polyhaven-cc0.txt
+public/assets/props/           25 GLB parkowych (MIT + CC0)
+public/assets/library/         76 GLB w 8 kategoriach (MIT/CC0/CC-BY)
+public/assets/ASSETS.json      maszynowy katalog 101 modeli + licencje
+public/assets/LICENSE-*.txt    GridFall MIT, Poly Haven CC0, Khronos CC0/CC-BY
 public/art/                    house.jpg — jedyna okładka
 ```
 
@@ -447,10 +502,20 @@ public/art/                    house.jpg — jedyna okładka
   — MIT, `Copyright (c) 2020 Microsoft`. GLB i tekstury z konwersji w
   `KunalSiyag/gridfall` (MIT, `PROVENANCE.json` → commit Rocketbox `0943055…`).
   Licencja: `public/characters/LICENSE-rocketbox-MIT.txt`.
-- **Realistyczne rekwizyty**: [Poly Haven](https://polyhaven.com) — **CC0 1.0**
-  (public domain), pobrane z `models/real/props` w GridFall, z wbudowanymi
-  teksturami 1K. Proveniencja: `public/assets/LICENSE-polyhaven-cc0.txt`.
-  Nie pochodzą z żadnej komercyjnej gry.
+- **Realistyczne rekwizyty (25)**: [Poly Haven](https://polyhaven.com) —
+  **CC0 1.0**, pobrane z `models/real/props` w GridFall; geometria
+  `KunalSiyag/gridfall` — **MIT**. Noty: `LICENSE-polyhaven-cc0.txt`,
+  `LICENSE-gridfall-MIT.txt`.
+- **Biblioteka wielogrowa (76 nowych GLB)**: meble, przedmioty, postacie,
+  zwierzęta, pojazdy, budynki, roślinność i ulica. Część z GridFall
+  (MIT/CC0), część z [Khronos glTF Sample Assets](https://github.com/KhronosGroup/glTF-Sample-Assets)
+  (**CC0** lub **CC BY 4.0** z podanym autorstwem w
+  `LICENSE-khronos-cc0-ccby.txt`). Tekstury zmniejszono do 512 px, bufory
+  skompresowano `EXT_meshopt_compression` (dekoder z `three/addons`); zmiany
+  są opisane w nocie licencyjnej zgodnie z wymogiem CC BY 4.0.
+  Łącznie **101 darmowych modeli**; `public/assets/ASSETS.json` zawiera nazwę,
+  kategorię, ścieżkę, źródło, licencję i rozmiar każdego z nich. Assety NIE są
+  związane tylko z horrorem — Demonofobia jest pierwszą z wielu planowanych gier.
 - **Kamerka**: `@mediapipe/hands` 0.4.1675469240 (Apache-2.0), pliki lokalnie w
   `public/mediapipe/` (nota: `public/mediapipe/NOTICE.txt`).
 - **Grafika**: `public/art/house.jpg` — jedyna wygenerowana ilustracja. Tekstury
@@ -469,9 +534,38 @@ public/art/                    house.jpg — jedyna okładka
 | Animacje motion capture: idle, chód, machanie | Mimiki twarzy i trackingu całego ciała |
 | Kolor skóry na twarzy i dłoniach, kolor włosów na całej głowie | Pełnego kreatora twarzy, wagi, wieku |
 | 21 punktów → 15 stawów + pozycja dłoni x/y/z + ramiona, 2 dłonie naraz | Śledzenia łokcia z osobnego sensora (kąt wyliczamy z pozycji) |
-| 8 gotowych modeli CC0 z PBR, jeden renderer, światła PBR | Metahuman / silnika typu Unreal w przeglądarce |
-| Auto jakość (DPR, cienie, kurz, fps) i układ dotykowy na telefon/tablet | Profilowania na realnym GPU i fizycznych urządzeniach |
+| 101 darmowych modeli PBR (CC0 / CC BY / MIT), jeden renderer | Metahuman / silnika typu Unreal w przeglądarce |
+| Auto jakość (DPR, cienie, kurz, fps) i układ dotykowy na telefon/tablet | Profilowania na realnym GPU, fizycznych urządzeniach i wielu realnych klientach Supabase |
 | Prawdziwych graczy, czat i profile w Supabase | Serwerowego autorytatywnego world state / anty-cheat |
+
+---
+
+## Weryfikacja v0.7
+
+Wszystkie poniższe przebiegi wykonano na branchu roboczym przed wdrożeniem,
+w przeglądarce headless z tym samym kodem, który trafia do `dist/`.
+
+| Zakres | Wynik |
+| --- | --- |
+| `npm run typecheck` | 0 błędów; w `tsconfig.json` włączone `noUnusedLocals` i `noUnusedParameters`, więc martwy kod nie może wrócić |
+| `npm run build` | `index.html` 51,76 kB · CSS 91,69 kB · JS 1117,97 kB (gzip 297,85 kB) |
+| Układ 320 / 375 / 390 / 768 / 1024 / 1440 / 1920 px | `overflow: false`, brak wystających elementów, **0 par nakładających się sekcji** na każdej szerokości |
+| Assety | 101 plików GLB zwalidowanych jako glTF 2.0, 0 brakujących ścieżek, `ASSETS.json` = `asset-catalog.ts`, 3 noty licencyjne |
+| Brama konta | bez sesji zablokowane wejście do gry **i** Lobby (przyciski, kafelki, skróty, portale 3D); po logowaniu akcja wznawiana jest automatycznie |
+| Błędy brzegowe | awaria RPC (503) → czytelny komunikat i odblokowany formularz; wygasły token → usunięty z `localStorage`; anulowanie bramy czyści oczekującą akcję; wylogowanie ponownie blokuje grę |
+| Okna modalne | brama zawsze nad katalogiem, focus trap + przywrócenie fokusu, `Esc`, filtr kategorii z możliwością wyczyszczenia, puste stany z kontekstowym komunikatem, escapowanie frazy wyszukiwania (XSS) |
+| Regresja v0.6.1 | motyw ciemny (home + oba modale), start gry z 6 narzędziami, `P` bez pobierania pliku, brak automatycznego pointer locka, 0 błędów konsoli i 0 odpowiedzi 4xx |
+| Build produkcyjny | `vite preview` pod `/RejPlay/`: 30 ładowań GLB → same `200`, katalog 101 modeli, „Lobby” bez starych nazw, brak sekretów w DOM |
+| Lobby | park w świetle dnia, 1 gracz (Ty), 0 botów, czat i Presence uczciwie oznaczone jako niedostępne w trybie offline |
+
+**Niezweryfikowane w sandboxie (egres ograniczony do GitHub / npm / PyPI):**
+połączenie z realnym Supabase z dwoma niezależnymi klientami, WSS Presence,
+fizyczna kamerka i dotyk na prawdziwym urządzeniu, profilowanie na GPU.
+RPC konta (`community_login` / `community_register` / `community_whoami`)
+zostały sprawdzone z mockami odpowiadającymi dokładnie kształtowi
+`/js/logowanie.js`; w produkcji formularz używa tego samego publicznego
+klucza `anon` i — na współdzielonym originie — gotowego bridge’a
+`window.RejsonAccount`.
 
 ---
 
@@ -482,6 +576,7 @@ public/art/                    house.jpg — jedyna okładka
 - edytor świata / piaskownica UGC z bezpiecznym skryptowaniem,
 - fizyka (Rapier), LOD modeli, code-splitting sceny gry.
 
-Wspomniany luźno „CS” nie został dodany: jest jedna gra, a zakres ewentualnego
-nowego tytułu wymaga doprecyzowania. Kolejne gry powstaną dopiero na wyraźne
-życzenie — jako osobne sceny, nie jako motyw przewodni strony.
+Wspomniany luźno „CS” nie został dodany: jest jedna grywalna gra, a zakres
+ewentualnego nowego tytułu wymaga doprecyzowania. Platforma, katalog assetów i
+Lobby są jednak od v0.7 wielogrowe — kolejne gry powstaną jako osobne sceny
+i osobne wpisy w `GAMES`, bez przerabiania strony głównej od zera.

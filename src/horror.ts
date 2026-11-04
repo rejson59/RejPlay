@@ -209,7 +209,6 @@ export class HorrorGame {
   private propsLoading = false;
   private screenTimer = 0;
   private lastStep = 0;
-  private lastToolIndex = -1;
 
   private yaw = 0;
   private pitch = 0;

@@ -513,7 +513,6 @@ export class HumanAvatar implements Avatar {
   private readonly bodyMaterials: THREE.MeshStandardMaterial[] = [];
   private readonly hairMaterials: THREE.MeshStandardMaterial[] = [];
   private readonly label: LabelHandle | undefined;
-  private state: State = 'idle';
   private readonly weights: Record<State, number> = { idle: 1, walk: 0, emote: 0 };
   private lastElapsed = 0;
   private waveStart = -100;
@@ -525,7 +524,6 @@ export class HumanAvatar implements Avatar {
   private readonly handRigs: Record<'L' | 'R', FingerRig[]> = { L: [], R: [] };
   private readonly armRigs: Record<'L' | 'R', ArmRig[]> = { L: [], R: [] };
   private readonly wristRigs: Partial<Record<'L' | 'R', WristRig>> = {};
-  private handOverride = false;
   /** Po zniknięciu dłoni palce wracają do animacji płynnie, nie skokiem. */
   private handFade = 0;
 
@@ -725,10 +723,8 @@ export class HumanAvatar implements Avatar {
     else this.handFade = Math.max(0, this.handFade - dt);
     if (this.handFade <= 0) {
       // Bez dłoni w kadrze kości wracają pod kontrolę animacji idle/walk/emote.
-      this.handOverride = false;
       return;
     }
-    this.handOverride = true;
 
     // Wspólne scratch kwaterniony: 6 awatarów × 45 stawów nie alokuje już
     // setek obiektów na klatkę (to była główna przyczyna przycięć GC).
@@ -834,7 +830,6 @@ export class HumanAvatar implements Avatar {
     const dt = THREE.MathUtils.clamp(elapsed - this.lastElapsed, 0, 0.05);
     this.lastElapsed = elapsed;
     const desired: State = this.isWaving() ? 'emote' : intensity > 0.12 ? 'walk' : 'idle';
-    this.state = desired;
     const k = 1 - Math.exp(-dt * 9);
     for (const key of ['idle', 'walk', 'emote'] as const) {
       this.weights[key] += ((key === desired ? 1 : 0) - this.weights[key]) * k;

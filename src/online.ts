@@ -9,7 +9,7 @@ import type { CommunitySession } from './community-account';
  * Klucz service_role i sekrety nigdy nie trafiają do frontendu.
  *
  * Multiplayer = Realtime Presence (pozycje, wygląd, ruch) + Realtime
- * postgres_changes na czacie + broadcast „start razem”. Drużyny (party)
+ * postgres_changes na czacie + broadcast „start razem” / „machnięcie”. Drużyny (party)
  * zawężają kanał Presence i czat tylko do osób z tym samym kodem, a token
  * konta z rejson59.github.io jest walidowany w bazie (SECURITY DEFINER RPC).
  * Jeśli sieć/Supabase jest niedostępne, gra działa w pełni lokalnie.
@@ -116,6 +116,8 @@ export class OnlineClient {
   onStatus?: (status: OnlineStatus) => void;
   onParty?: (state: PartyState | null) => void;
   onPartyStart?: (by: string) => void;
+  /** Machnięcie innego gracza: nick + jego client_id (do animacji awatara). */
+  onWave?: (wave: { name: string; clientId: string }) => void;
 
   private client: SupabaseClient | null = null;
   private channel: RealtimeChannel | null = null;
@@ -124,12 +126,12 @@ export class OnlineClient {
   private everOnline = false;
   private stopped = false;
   private readonly sent = new Map<string, number>();
-  private peers: OnlinePeer[] = [];
   private accountToken: string | null = null;
   private accountUserId: string | null = null;
   partyCode: string | null = null;
   party: PartyState | null = null;
   private heartbeatTimer = 0;
+  private lastWaveAt = 0;
 
   constructor(local: LocalState) {
     this.local = { ...local };
@@ -184,11 +186,11 @@ export class OnlineClient {
     }
   }
 
-  /** Jeden kanał: Atrium albo wyłącznie drużyna. */
+  /** Jeden kanał: Lobby albo wyłącznie drużyna. */
   private joinChannel(): void {
     if (!this.client || this.stopped) return;
     if (this.channel) void this.client.removeChannel(this.channel);
-    const name = this.partyCode ? `rejplay:party:${this.partyCode}` : 'rejplay:atrium';
+    const name = this.partyCode ? `rejplay:party:${this.partyCode}` : 'rejplay:lobby';
     const channel = this.client.channel(name, {
       config: { presence: { key: this.id }, broadcast: { self: false } },
     });
@@ -201,6 +203,17 @@ export class OnlineClient {
       )
       .on('broadcast', { event: 'party_start' }, ({ payload }) => {
         this.onPartyStart?.(String((payload as { by?: string })?.by ?? 'Gracz'));
+      })
+      .on('broadcast', { event: 'wave' }, ({ payload }) => {
+        const raw = payload as { by?: unknown; id?: unknown; at?: unknown } | null;
+        const name = typeof raw?.by === 'string' ? raw.by.trim().slice(0, 24) : '';
+        const clientId = typeof raw?.id === 'string' ? raw.id.slice(0, 64) : '';
+        const at = typeof raw?.at === 'number' ? raw.at : 0;
+        // Odrzucamy puste, własne i stare zdarzenia — broadcast nie jest
+        // kanałem zaufanym, więc dane zawsze traktujemy jak obce wejście.
+        if (!name || !clientId || clientId === this.id) return;
+        if (!Number.isFinite(at) || Math.abs(Date.now() - at) > 15_000) return;
+        this.onWave?.({ name, clientId });
       });
     this.channel = channel;
     channel.subscribe((status) => {
@@ -249,7 +262,6 @@ export class OnlineClient {
         verified: Boolean(row.verified),
       });
     }
-    this.peers = peers;
     this.onPeers?.(peers);
   }
 
@@ -399,14 +411,33 @@ export class OnlineClient {
     }
   }
 
+  /**
+   * Jeden, odporny punkt wysyłania broadcastu. Kanał może zniknąć w trakcie
+   * zmiany drużyny, a odrzucony promise nie może wygenerować błędu w konsoli.
+   */
+  private broadcast(event: string, payload: Record<string, unknown>): void {
+    const channel = this.channel;
+    if (!channel) return;
+    try {
+      void channel.send({ type: 'broadcast', event, payload }).catch(() => undefined);
+    } catch {
+      // Realtime jest w trakcie zamykania — zdarzenie po prostu nie dociera.
+    }
+  }
+
+  /** Machnięcie: broadcast z limitem 1,2 s, żeby nie zalać kanału. */
+  sendWave(): void {
+    if (!this.channel) return;
+    const now = Date.now();
+    if (now - this.lastWaveAt < 1200) return;
+    this.lastWaveAt = now;
+    this.broadcast('wave', { by: this.local.nick, id: this.id, at: now });
+  }
+
   /** „Rozpocznij razem”: broadcast do wszystkich w drużynie. */
   startPartyRound(): void {
     if (!this.partyCode || !this.channel) return;
-    void this.channel.send({
-      type: 'broadcast',
-      event: 'party_start',
-      payload: { by: this.local.nick, at: Date.now() },
-    });
+    this.broadcast('party_start', { by: this.local.nick, at: Date.now() });
   }
 
   inviteUrl(code = this.partyCode): string {
