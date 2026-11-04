@@ -3431,3 +3431,68 @@ body.in-lobby-fp .pointer-hint--lobby { z-index: 20; }
   .camera-lab__grid { grid-template-columns: 1fr; gap: 14px; }
   .camera-lab__head h2 { font-size: 23px; }
 }
+
+/* ------------------------- raport diagnostyczny v0.6.1 -------------------- */
+.hand-panel__logs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+.log-panel {
+  position: fixed;
+  inset: 0;
+  z-index: 140;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+}
+.log-panel.is-active { display: flex; }
+.log-panel__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(6, 9, 10, 0.86);
+  backdrop-filter: blur(9px);
+}
+.log-panel__body {
+  position: relative;
+  width: min(880px, 100%);
+  max-height: calc(100vh - 36px);
+  overflow-y: auto;
+  padding: 24px 26px 26px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-lg);
+  background: #141b1d;
+  color: #eae7e0;
+  box-shadow: var(--shadow);
+}
+.log-panel__head { display: flex; justify-content: space-between; align-items: start; gap: 20px; }
+.log-panel__head h2 { margin: 4px 0 0; font-size: 26px; }
+.log-panel__lead { margin: 10px 0 14px; color: #a9b5b1; font-size: 12px; line-height: 1.65; }
+.log-panel__lead kbd { padding: 1px 5px; font-size: 11px; border-bottom-width: 1px; }
+.log-panel__text {
+  display: block;
+  width: 100%;
+  min-height: 260px;
+  height: min(52vh, 460px);
+  resize: vertical;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #0d1315;
+  color: #c9d6d1;
+  font: 11px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  white-space: pre;
+  overflow: auto;
+  box-sizing: border-box;
+}
+.log-panel__text:focus { outline: 2px solid #c8a06a; outline-offset: 1px; }
+.log-panel__actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; }
+.log-panel__count { margin-left: auto; color: #89938f; font-size: 11px; }
+@media (max-width: 760px) {
+  .log-panel__body { padding: 16px; }
+  .log-panel__head h2 { font-size: 21px; }
+}
+
+.lab-status--sub { margin-top: -6px; opacity: 0.78; font-size: 11px; font-family: ui-monospace, monospace; }

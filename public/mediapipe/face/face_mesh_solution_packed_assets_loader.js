@@ -1,5 +1,5 @@
 
-  var Module = typeof createMediapipeSolutionsPackedAssets !== 'undefined' ? createMediapipeSolutionsPackedAssets : {};
+  var Module = typeof createRejFaceMeshPackedAssets !== 'undefined' ? createRejFaceMeshPackedAssets : {};
   
   if (!Module.expectedDataFileDownloads) {
     Module.expectedDataFileDownloads = 0;

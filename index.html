@@ -164,6 +164,9 @@
               <button type="button" class="sidebar__link" data-action="open-camera-lab">
                 <span class="sidebar__ico">◉</span> Laboratorium kamery
               </button>
+              <button type="button" class="sidebar__link" data-action="copy-logs">
+                <span class="sidebar__ico">⚑</span> Kopiuj logi kamerki
+              </button>
               <a class="sidebar__link" href="#how">
                 <span class="sidebar__ico">≡</span> Jak to działa
               </a>
@@ -189,7 +192,7 @@
 
             <div class="sidebar__note">
               <span class="dot"></span>
-              RejPlay · v0.6<br />
+              RejPlay · v0.6.1<br />
               Konta z rejson59.github.io · VR bez VR
             </div>
           </aside>
@@ -354,7 +357,7 @@
         </div>
 
         <footer class="footer wrap">
-          <span><strong>RejPlay</strong> · v0.6 · VR bez VR</span>
+          <span><strong>RejPlay</strong> · v0.6.1 · VR bez VR</span>
           <span>Three.js · Vite · Supabase Realtime · GitHub Pages</span>
         </footer>
       </section>
@@ -440,6 +443,7 @@
 
         <header class="game__top">
           <button type="button" class="btn btn--sm btn--glass" id="game-leave">← Wyjdź</button>
+          <button type="button" class="btn btn--sm btn--glass" data-action="copy-logs" title="Kopiuj logi diagnostyczne do wklejenia na czacie">Logi ⚑</button>
           <div class="game__title">
             <span>DEMONOFOBIA</span>
             <small>Wrzosowa 12 · dochodzenie nocne</small>
@@ -632,6 +636,11 @@
           <span><kbd>21</kbd> punktów na dłoń</span><span><kbd>15</kbd> stawów na awatarze</span>
           <span><kbd>3D</kbd> x / y / głębokość</span><span><kbd>0</kbd> danych opuszcza przeglądarkę</span>
         </div>
+        <div class="hand-panel__logs">
+          <button type="button" class="btn btn--sm btn--ghost" data-action="copy-logs">Kopiuj logi</button>
+          <button type="button" class="btn btn--sm btn--ghost" data-action="show-logs">Pokaż logi</button>
+          <button type="button" class="btn btn--sm btn--ghost" data-action="restart-camera">Restart kamerki</button>
+        </div>
       </div>
 
       <!-- =============== LABORATORIUM KAMERY (v0.6) =============== -->
@@ -656,6 +665,7 @@
                 <span class="lab-view__badge" id="lab-badge">Kamerka wyłączona</span>
               </div>
               <p class="lab-status" id="lab-status">Włącz kamerę, ustaw twarz i obie dłonie w kadrze.</p>
+              <p class="lab-status lab-status--sub" id="lab-detect">Modele: dłonie — · głowa/oczy —</p>
               <div class="lab-tests">
                 <article class="lab-test" id="lab-test-hands">
                   <span class="lab-test__mark">○</span>
@@ -678,7 +688,7 @@
               <div class="lab-readout" id="lab-readout">
                 <div><span>Głowa · przód/tył</span><b id="lab-pitch">+0.00</b></div>
                 <div><span>Głowa · bok</span><b id="lab-roll">+0.00</b></div>
-                <div><span>Wzrok · x / y</span><b id="lab-gaze">+0.00 / +0.00</b></div>
+                <div><span>Wzrok · x / y</span><b id="lab-gaze-readout">+0.00 / +0.00</b></div>
                 <div><span>Dłonie · L / R</span><b id="lab-hands">— / —</b></div>
                 <div><span>Chwyt · L / R</span><b id="lab-pinch">— / —</b></div>
                 <div><span>Slot na pasie</span><b id="lab-slot">1</b></div>
@@ -695,6 +705,9 @@
               <div class="lab-buttons">
                 <button type="button" class="btn btn--sm btn--ghost" id="lab-calibrate">Kalibruj pozycję neutralną</button>
                 <button type="button" class="btn btn--sm btn--ghost" id="lab-reset">Powtórz testy</button>
+                <button type="button" class="btn btn--sm btn--ghost" data-action="restart-camera">Restart kamerki</button>
+                <button type="button" class="btn btn--sm btn--ghost" data-action="copy-logs">Kopiuj logi</button>
+                <button type="button" class="btn btn--sm btn--ghost" data-action="show-logs">Pokaż logi</button>
                 <button type="button" class="btn btn--sm btn--primary" id="lab-enable">Włącz grę bez klawiatury</button>
               </div>
               <div class="lab-progress"><span id="lab-progress-bar"></span></div>
@@ -703,6 +716,31 @@
                 nie opuszcza przeglądarki i nie jest nigdzie zapisywany.
               </p>
             </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- =============== RAPORT DIAGNOSTYCZNY (v0.6.1) =============== -->
+      <div id="log-panel" class="log-panel" aria-hidden="true">
+        <div class="log-panel__backdrop" data-action="close-log-panel"></div>
+        <div class="log-panel__body" role="dialog" aria-modal="true" aria-labelledby="log-title">
+          <header class="log-panel__head">
+            <div>
+              <span class="section__kicker">Diagnostyka kamerki · nic nie jest wysyłane</span>
+              <h2 id="log-title">Logi do wklejenia</h2>
+            </div>
+            <button type="button" class="camera-lab__x" data-action="close-log-panel" aria-label="Zamknij logi">×</button>
+          </header>
+          <p class="log-panel__lead">
+            Naciśnij <b>Kopiuj do schowka</b> i wklej tekst do czatu. Jeśli przeglądarka
+            zablokuje schowek, zaznacz całość (<kbd>Ctrl</kbd>+<kbd>A</kbd>) i skopiuj ręcznie.
+            Raport nie zawiera obrazu, nazwy konta, tokenów ani kodu drużyny.
+          </p>
+          <textarea id="log-text" class="log-panel__text" readonly spellcheck="false" aria-label="Treść logów"></textarea>
+          <div class="log-panel__actions">
+            <button type="button" class="btn btn--sm btn--primary" id="log-copy">Kopiuj do schowka</button>
+            <button type="button" class="btn btn--sm btn--ghost" id="log-refresh">Odśwież</button>
+            <span class="log-panel__count" id="log-count"></span>
           </div>
         </div>
       </div>

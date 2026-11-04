@@ -14,6 +14,20 @@ i drobnych ruchów nadgarstka, first-person w Atrium, przechwycenie kursora
 z pełnym obrotem 360° dla wielu monitorów, adaptacyjne wygładzanie i czułość
 ruchu do ustawienia na żywo.
 
+**v0.6.1 — naprawa kamerki i nadgarstka:** FaceMesh działa w osobnym,
+same-origin iframe (`public/mediapipe/face/bridge.html`), bo oba bundle
+MediaPipe nadpisywały sobie globalne zmienne Emscripten w jednym dokumencie —
+to było źródłem `Błąd odczytu klatki: TypeError: Cannot read properties of
+undefined (reading 'buffer')` oraz braku wykrywania głowy i oczu. first-person
+`src/view-hands.ts` dostał wreszcie geometryczne wyznaczanie osi zgięcia
+(poprzednia poprawka trafiła tylko do awatara third-person) i prawdziwy,
+ciągły obrót nadgarstka na kości `Hand`; stary wzór `atan2(palm.x, -palm.y)`
+zawsze dawał po clampie stałą `1`, więc nadgarstek nie reagował. Słabsze
+kamerki dostają drabinę `getUserMedia` (640×480 → 320×240 → `video: true`),
+niższe progi pewności, mniejszy kadr dla FaceMesh i czytelny status wykrywania.
+Dodano **„Kopiuj logi” / „Pokaż logi” / „Restart kamerki”** — raport trafia do
+schowka, nie zawiera obrazu, konta, tokenów ani kodu drużyny.
+
 **v0.6 — „VR bez VR”:** jedna kamerka zasila trzy niezależne tory: MediaPipe
 Hands (dłonie 1:1) **oraz** FaceMesh z `refineLandmarks` (głowa + źrenice).
 **Laboratorium kamery** na starcie robi kalibrację neutralnej pozycji i trzy
@@ -49,7 +63,7 @@ momentu załadowania modeli.
 
 ### Samouczek
 
-Siedmiokrokowy modal (strona główna, lewy pasek, baner, start gry). Nawigacja:
+Ośmiokrokowy modal (strona główna, lewy pasek, baner, start gry). Nawigacja:
 `Dalej` / `Wstecz`, kropki, strzałki, `Esc`. Ilustracje to czysty CSS i tekst.
 
 Kroki: ruch z przechwyconym kursorem (pełny obrót 360°) → sześć narzędzi na
@@ -125,10 +139,11 @@ samymi 15 stawami. Skóra, paznokcie, rękawy i proporcje palców są identyczne
 postacią w lobby i zmieniają się razem z edytorem. Jeśli GLB nie wczyta się
 wcale, działa lekki `FallbackViewHand`.
 
-MediaPipe: `maxNumHands: 2`, `modelComplexity: 1`, pliki WASM/dane leżą lokalnie
+MediaPipe: `maxNumHands: 2`, `modelComplexity: 1` (0 na słabym sprzęcie), pliki WASM/dane leżą lokalnie
 w `public/mediapipe/` (zero CDN, zero danych opuszcza przeglądarkę). W grze panel
 kamerki się chowa, ale **tracking działa dalej**. To **nie** jest wirtualny
-aparat / tryb kamery (`C` usunięty); jedynym zdjęciem jest `P` (foto-dowód).
+aparat / tryb kamery (`C` usunięty); `P` zapisuje foto-dowód wyłącznie w
+pamięci / notatniku — **bez PNG, bez pobierania, bez ukrytego downloadu**.
 
 **Realizm ruchu dłoni (v0.4).** Surowe kąty z 21 punktów przechodzą przez
 wiązadłowy model palca: DIP jest częściowo sprzężony z PIP, sąsiednie palce
@@ -152,8 +167,7 @@ lżejszą kamerą MediaPipe (480×360 / 24 fps / `modelComplexity: 0`).
 
 - brak alokacji w pętli (wspólne wektory i kwaterniony, stany animacji bez
   tworzenia obiektów na klatkę),
-- `preserveDrawingBuffer: false` — `capturePhoto()` robi własny, jawny render
-  dopiero w momencie zdjęcia,
+- `preserveDrawingBuffer: false` — żaden kadr nie jest zrzucany do pliku,
 - `IntersectionObserver` pomija render home, gdy scena jest poza ekranem,
 - kurz aktualizuje się najwyżej 30×/s, migotanie świateł tylko przy zmianie
   stanu, 8 rekwizytów CC0 ładuje się równolegle jednym `Promise.all()`,
@@ -321,6 +335,19 @@ drugiej zgody na kamerę. Obraz nie opuszcza przeglądarki.
 4. **Test oczu** — spojrzenie lewo/prawo/góra/dół bez ruchu głowy (10 punktów
    tęczówki na oko dzięki `refineLandmarks`), alternatywnie mrugnięcie.
 
+Pod podglądem jest **status wykrywania**: gotowość obu modeli, liczba wysłanych
+klatek, liczba faktycznie zobaczonych twarzy i klatek ze źrenicami, rozmiar
+kadru i wybrane ograniczenie `getUserMedia`. Przyciski **„Restart kamerki”**,
+**„Kopiuj logi”** i **„Pokaż logi”** są też w panelu kamerki, więc raport
+można pobrać bez wchodzenia do laboratorium.
+
+FaceMesh nie jest już ładowany do głównego dokumentu: rodzic przesyła do
+izolowanego iframe tylko pomniejszone klatki (`ImageBitmap`, transfer bez
+kopii; fallback na surowe piksele). Dzięki temu `hands.send()` nie trafia na
+uszkodzony WASM. Progi `minDetectionConfidence` / `minTrackingConfidence`
+zbito z 0,55/0,6 do 0,3/0,35–0,45, a kadr dla twarzy to 320×240 na słabszym
+sprzęcie.
+
 Suwaki: czułość oczu, czułość przechyłu, martwa strefa, wygładzanie, odwrócenie
 poziomu. Gdy cztery warunki są zielone, przycisk **„Włącz grę bez klawiatury”**
 odblokowuje sterowanie: `lookX/lookY` wchodzą do tej samej ścieżki co ruch
@@ -338,8 +365,9 @@ sumują się z `WASD` i joystickiem. Ustawienia i kalibracja zapisują się w
 | `W A S D`, strzałki | ruch w lobby i w grze |
 | `Spacja` | skok w lobby |
 | `E` | machnięcie (lobby) / skanowanie, przytrzymaj (gra) |
-| `1` `2` `3` | wybór narzędzia (gra) |
-| `P` | foto-dowód → zapis PNG (gra) |
+| `1`–`6` | weź narzędzie z pasa (gra) |
+| `Q` | odłóż narzędzie na pas (gra) |
+| `P` | foto-dowód tylko w pamięci / UI — bez PNG i bez pobierania (gra) |
 | `F` | latarka (gra) |
 | `J` / `Tab` | notatnik (gra) |
 | `Shift` | bieg (gra) |
@@ -390,11 +418,12 @@ src/hand-tracking.ts           MediaPipe Hands: 21 punktów obu dłoni (lub stru
 src/face-tracking.ts           MediaPipe FaceMesh: 478 punktów, źrenice, głowa, mruganie
 src/camera-rig.ts              jeden strumień → Hands + FaceMesh + sterowanie + gesty
 src/camera-control.ts          kalibracja, 3 testy, mapowanie głowa/oczy/palce
+src/diagnostics.ts             bezpieczny bufor logów + raport do schowka
 src/community-account.ts       wspólne konto rejson59.github.io (bez własnej bazy użytkowników)
 src/tool-belt.ts               pas na biodrach: 6 slotów 3D w viewmodelu
 src/real-scenery.ts            13 rekwizytów lobby + 10 podwórka + samochód-baza
-src/hand-pose.ts               21 punktów → 15 kątów, rozstaw, obroty, pozycja dłoni 3D
-src/view-hands.ts              prawdziwe dłonie awatara (SkinnedMesh) + narzędzie LCD
+src/hand-pose.ts               21 punktów → 15 kątów, rozstaw, ciągły skręt nadgarstka, pozycja 3D
+src/view-hands.ts              dłonie FP: geometryczne osie + rig obrotu nadgarstka + narzędzie LCD
 src/first-person-hands.ts      wspólny viewmodel dłoni first-person dla Atrium
 src/online.ts                  Supabase Realtime Presence / czat / profile / zdarzenia
 src/real-props.ts              17 gotowych rekwizytów CC0 / MIT w grze
@@ -402,7 +431,7 @@ src/horror-decor.ts            proceduralne tekstury, meble, światła i kurz
 src/horror.ts                  Demonofobia: silnik, ruch, nalot, dźwięk, first-person
 src/avatar.ts                  wspólny interfejs awatara i etykiety
 supabase/migrations/           multiplayer + drużyny (RLS, RPC z walidacją tokenu)
-public/mediapipe/face/         lokalny runtime FaceMesh (Apache-2.0)
+public/mediapipe/face/         lokalny runtime FaceMesh (Apache-2.0) + bridge.html
 .github/workflows/             build + deploy na GitHub Pages
 public/characters/             13 GLB + animacje + gotowe tekstury + licencja MIT
 public/mediapipe/              lokalne pliki MediaPipe Hands

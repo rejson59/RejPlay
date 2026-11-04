@@ -18,3 +18,24 @@ public/mediapipe/face/ zawiera pliki modelu FaceMesh 0.4.1633559619
 Uzywane WYLACZNIE lokalnie do wykrywania glowy i zrenic (eye tracking).
 Model i WASM sa w repozytorium — brak CDN, brak wysylania obrazu.
 Licencja: Apache License 2.0, https://www.apache.org/licenses/LICENSE-2.0
+
+v0.6.1 — lokalna izolacja globali (bez zmiany licencji)
+-------------------------------------------------------
+Oryginalne pliki MediaPipe Hands i FaceMesh deklarują te same globalne
+fabryki `createMediapipeSolutionsWasm` i
+`createMediapipeSolutionsPackedAssets`. Załadowanie obu w jednej karcie
+nadpisywało konfigurację locateFile drugiego modelu, co kończyło się
+brakiem inicjalizacji WASM i błędem `Cannot read properties of undefined
+(reading 'buffer')`. W plikach katalogu face/ nazwy te zmieniono na
+`createRejFaceMeshWasm` / `createRejFaceMeshPackedAssets` (wyłącznie
+rename, bez modyfikacji logiki). Hands pozostaje bez zmian. Nadal
+Apache-2.0, runtime lokalny, bez CDN.
+
+Uzupelnienie v0.6.1: sam rename nie wystarczyl — oba minifikowane bundle
+wspoldziela takze dziesiatki krotkich globalnych `var`. FaceMesh jest wiec
+ladowany WYLACZNIE w ukrytym, same-origin iframe (`face/bridge.html`),
+ktory ma wlasny `window`. Rodzic przesyla mu tylko pomniejszone klatki
+(ImageBitmap / surowe piksele) i odbiera 478 punktow twarzy. Rename w
+plikach face/ zostaje jako dodatkowa izolacja i dokumentacja zmiany.
+Pliki `*_simd_wasm_bin.data` (0 B) sa nieuzywanymi placeholderami —
+wlasciwe dane modelu sa w `face_mesh_solution_packed_assets.data`.

@@ -12,8 +12,20 @@ import { FaceTracker, EMPTY_FACE, type FaceFrame } from './face-tracking';
 import {
   CameraControl, type ControlFrame, type GestureEvent, type LabDiagnostics,
 } from './camera-control';
-import type { TrackedHand } from './hand-pose';
+import { recaptureWristNeutral, resetWristCalibration, type TrackedHand } from './hand-pose';
+import { diagnostics } from './diagnostics';
 import { lowPowerDevice } from './performance';
+
+export interface CameraRigDiagnostics {
+  active: boolean;
+  lowPower: boolean;
+  constraint: string;
+  trackSettings: string;
+  video: string;
+  hands: ReturnType<HandTracker['diagnostics']>;
+  face: ReturnType<FaceTracker['diagnostics']>;
+  tests: LabDiagnostics;
+}
 
 export interface CameraRigOptions {
   video: HTMLVideoElement;
@@ -50,6 +62,7 @@ export class CameraRig {
   private latestHands: TrackedHand[] = [];
   private labOpen = false;
   private readonly lowPower = lowPowerDevice();
+  private constraint = 'nie rozpoczęto';
 
   constructor(options: CameraRigOptions) {
     this.video = options.video;
@@ -75,6 +88,9 @@ export class CameraRig {
       onFrame: (frame) => { this.latestFace = frame; },
       onStatus: options.onStatus,
     });
+    // Raport musi mieć sekcję kamerki także wtedy, gdy użytkownik jej jeszcze
+    // nie włączył — inaczej „Kopiuj logi" nie pokazuje stanu wyjściowego.
+    diagnostics.setFact('kamerka', this.diagnostics());
   }
 
   get active(): boolean {
@@ -83,6 +99,35 @@ export class CameraRig {
 
   get labVisible(): boolean {
     return this.labOpen;
+  }
+
+  /** Pełny stan do przycisku „Kopiuj logi”. */
+  diagnostics(): CameraRigDiagnostics {
+    const track = this.stream?.getVideoTracks()[0];
+    const settings = track?.getSettings();
+    return {
+      active: this.running,
+      lowPower: this.lowPower,
+      constraint: this.constraint,
+      trackSettings: track
+        ? `${settings?.width ?? '?'}x${settings?.height ?? '?'} @ ${settings?.frameRate ?? '?'} fps · ${track.label || 'bez nazwy'} · ${track.readyState}`
+        : 'brak toru wideo',
+      video: `${this.video.videoWidth}x${this.video.videoHeight} · readyState ${this.video.readyState}`,
+      hands: this.hands.diagnostics(),
+      face: this.face.diagnostics(),
+      tests: this.control.diagnostics(),
+    };
+  }
+
+  /** Przycisk „Kalibruj pozycję neutralną” obejmuje też nadgarstki. */
+  recaptureNeutral(): void {
+    this.control.beginCalibration();
+    recaptureWristNeutral();
+  }
+
+  async restart(): Promise<void> {
+    this.stop();
+    await this.start();
   }
 
   setOverlayVisible(visible: boolean): void {
@@ -97,40 +142,113 @@ export class CameraRig {
     if (open) this.control.resetTests();
   }
 
+  /**
+   * Słabsza kamerka często odrzuca `ideal + max + facingMode` jako
+   * OverconstrainedError. Schodzimy po drabinie aż do gołego `video: true`
+   * i zapisujemy każdą próbę w logach — bez wywalania całej kamerki.
+   */
+  private async openStream(): Promise<MediaStream> {
+    const attempts: Array<{ label: string; constraints: MediaStreamConstraints }> = [
+      {
+        label: this.lowPower ? '480x360 / 24 fps' : '640x480 / 30 fps',
+        constraints: {
+          video: {
+            width: { ideal: this.lowPower ? 480 : 640 },
+            height: { ideal: this.lowPower ? 360 : 480 },
+            frameRate: { ideal: this.lowPower ? 24 : 30, max: 30 },
+            facingMode: 'user',
+          },
+          audio: false,
+        },
+      },
+      {
+        label: '320x240 / 20 fps',
+        constraints: {
+          video: { width: { ideal: 320 }, height: { ideal: 240 }, frameRate: { ideal: 20 } },
+          audio: false,
+        },
+      },
+      { label: 'dowolna rozdzielczość', constraints: { video: true, audio: false } },
+    ];
+    const failures: string[] = [];
+    for (const attempt of attempts) {
+      try {
+        diagnostics.push('info', 'camera', `Próba: ${attempt.label}`);
+        const stream = await navigator.mediaDevices.getUserMedia(attempt.constraints);
+        this.constraint = attempt.label;
+        return stream;
+      } catch (error) {
+        const text = `${error instanceof Error ? error.name : 'Error'}: ${String(error)}`;
+        failures.push(`${attempt.label} → ${text}`);
+        diagnostics.push('warn', 'camera', `Nieudana próba ${attempt.label}: ${text}`);
+        const name = error instanceof Error ? error.name : '';
+        if (name === 'NotAllowedError' || name === 'SecurityError') {
+          throw new Error('Brak zgody na kamerę. Włącz ją w ustawieniach przeglądarki przy kłódce obok adresu.');
+        }
+        if (name === 'NotFoundError' || name === 'DevicesNotFoundError') {
+          throw new Error('Nie znaleziono kamerki. Podłącz urządzenie lub sprawdź, czy nie jest zajęte przez inną aplikację.');
+        }
+        if (name === 'NotReadableError' || name === 'TrackStartError') {
+          throw new Error('Kamerka jest zajęta lub odłączyła się. Zamknij inne aplikacje i naciśnij „Restart kamerki".');
+        }
+      }
+    }
+    throw new Error(`Nie udało się uruchomić kamerki. ${failures.join(' | ')}`);
+  }
+
+  /** Czekamy na pierwszy prawdziwy kadr — zerowe wymiary psuły WASM. */
+  private async waitForFrame(): Promise<void> {
+    if (this.video.videoWidth > 0 && this.video.videoHeight > 0) return;
+    await new Promise<void>((resolve) => {
+      const finish = (): void => {
+        this.video.removeEventListener('loadedmetadata', finish);
+        this.video.removeEventListener('canplay', finish);
+        window.clearTimeout(timer);
+        resolve();
+      };
+      const timer = window.setTimeout(finish, 4000);
+      this.video.addEventListener('loadedmetadata', finish, { once: true });
+      this.video.addEventListener('canplay', finish, { once: true });
+    });
+  }
+
   async start(): Promise<void> {
     if (this.running) return;
     if (!navigator.mediaDevices?.getUserMedia) {
       throw new Error('Kamerka wymaga bezpiecznego połączenia (HTTPS) i zgody przeglądarki.');
     }
     this.onStatus('Czekam na zgodę na kamerę…', 'info');
-    const width = this.lowPower ? 480 : 640;
-    const height = this.lowPower ? 360 : 480;
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: {
-        width: { ideal: width }, height: { ideal: height },
-        frameRate: { ideal: 30, max: 30 }, facingMode: 'user',
-      },
-      audio: false,
-    });
+    resetWristCalibration();
+    const stream = await this.openStream();
     this.stream = stream;
     this.video.srcObject = stream;
-    await this.video.play();
-    this.canvas.width = this.video.videoWidth || width;
-    this.canvas.height = this.video.videoHeight || height;
-    if (this.faceCanvas) {
-      this.faceCanvas.width = this.canvas.width;
-      this.faceCanvas.height = this.canvas.height;
+    try { await this.video.play(); } catch (error) {
+      diagnostics.push('warn', 'camera', `video.play(): ${String(error)}`);
     }
+    await this.waitForFrame();
+    const width = Math.max(1, this.video.videoWidth || 320);
+    const height = Math.max(1, this.video.videoHeight || 240);
+    this.canvas.width = width;
+    this.canvas.height = height;
+    if (this.faceCanvas) {
+      this.faceCanvas.width = width;
+      this.faceCanvas.height = height;
+    }
+    diagnostics.setFact('kamerka', this.diagnostics());
+    this.onStatus(`Kamerka: ${this.constraint}, kadr ${width}x${height}. Wczytuję modele…`, 'info');
 
     await this.hands.start(stream);
+    diagnostics.setFact('kamerka', this.diagnostics());
     try {
       await this.face.start();
     } catch (error) {
       // Brak modelu twarzy nie może wyłączyć śledzenia dłoni z v0.5.
       this.onStatus(`Dłonie działają, ale głowa/oczy nie: ${String(error)}`, 'error');
+      diagnostics.push('error', 'camera', `face.start(): ${String(error)}`);
     }
     this.running = true;
     this.lastTick = performance.now();
+    diagnostics.setFact('kamerka', this.diagnostics());
     this.onStatus(
       'Kamerka działa: dłonie 1:1, przechył głowy = ruch, źrenice = kamera. Otwórz laboratorium, aby skalibrować.',
       'info',
@@ -149,6 +267,7 @@ export class CameraRig {
     if (this.labOpen && now - this.lastDiag > 90) {
       this.lastDiag = now;
       this.onDiagnostics?.(this.control.diagnostics());
+      diagnostics.setFact('kamerka', this.diagnostics());
     }
     this.frameId = requestAnimationFrame(() => this.tick());
   }
@@ -164,6 +283,8 @@ export class CameraRig {
     this.latestFace = { ...EMPTY_FACE };
     this.latestHands = [];
     this.control.zero();
+    this.constraint = 'zatrzymana';
+    diagnostics.setFact('kamerka', this.diagnostics());
     this.onControl(
       { lookX: 0, lookY: 0, moveX: 0, moveY: 0, gazeX: 0, gazeY: 0, headPitch: 0, headRoll: 0 },
       1 / 60,
