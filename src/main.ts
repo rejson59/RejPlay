@@ -1082,9 +1082,9 @@ function applyLookSensitivity(value: number, announce = false): void {
   lookSensitivity = Math.min(2, Math.max(0.6, value));
   if (worldReady) world.horror.setLookSensitivity(lookSensitivity);
   lookSensitivityInput.value = String(lookSensitivity);
-  lookSensitivityValue.textContent = `${lookSensitivity.toFixed(1)}×`;
+  lookSensitivityValue.textContent = `${lookSensitivity.toFixed(2).replace(/0$/, '')}×`;
   try { localStorage.setItem(LOOK_KEY, String(lookSensitivity)); } catch { /* tryb prywatny */ }
-  if (announce) showToast(gameToast, `Czułość myszy: ${lookSensitivity.toFixed(1)}× ([ / ] zmieniają w każdej chwili)`);
+  if (announce) showToast(gameToast, `Czułość myszy: ${lookSensitivityValue.textContent} ([ / ] zmieniają w każdej chwili)`);
 }
 
 function applyHandResponsiveness(value: number): void {
