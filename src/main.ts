@@ -21,6 +21,11 @@ import {
   type OnlinePeer, type OnlineStatus, type PartyState,
 } from './online';
 import { CommunityAccount, type CommunitySession } from './community-account';
+import { diagnostics as diagLog, copyDiagnosticReport } from './diagnostics';
+
+// Bufor logów musi powstać przed jakimkolwiek innym modułem, żeby złapać
+// pierwsze błędy WASM i konsoli jeszcze zanim otworzysz laboratorium.
+diagLog.install();
 
 const $ = <T extends HTMLElement = HTMLElement>(selector: string): T => {
   const element = document.querySelector(selector);
@@ -397,6 +402,7 @@ const cameraRig = new CameraRig({
     renderHandSpace();
   },
   onStatus: (message, kind) => {
+    diagLog.push(kind === 'error' ? 'error' : 'info', 'camera', message);
     handStatus.textContent = message;
     handStatus.classList.toggle('is-error', kind === 'error');
     labStatus.textContent = message;
@@ -515,7 +521,7 @@ const fmt = (v: number): string => `${v >= 0 ? '+' : ''}${v.toFixed(2)}`;
 function renderLab(d: LabDiagnostics): void {
   $('#lab-pitch').textContent = fmt(d.face?.pitch ?? 0);
   $('#lab-roll').textContent = fmt(d.face?.roll ?? 0);
-  $('#lab-gaze').textContent = `${fmt(d.face?.gazeX ?? 0)} / ${fmt(d.face?.gazeY ?? 0)}`;
+  $('#lab-gaze-readout').textContent = `${fmt(d.face?.gazeX ?? 0)} / ${fmt(d.face?.gazeY ?? 0)}`;
   $('#lab-hands').textContent = `${d.hands}/2 · L ${d.left.curl.toFixed(2)} / R ${d.right.curl.toFixed(2)}`;
   $('#lab-pinch').textContent = `${d.left.pinch.toFixed(2)} / ${d.right.pinch.toFixed(2)}`;
   $('#lab-slot').textContent = String(d.slot + 1);
@@ -539,6 +545,17 @@ function renderLab(d: LabDiagnostics): void {
   labBadge.textContent = d.face?.present
     ? `twarz ✓ · źrenice ${d.face.iris ? '✓' : '—'} · dłonie ${d.hands}/2`
     : 'szukam twarzy i dłoni…';
+  // Czytelny status wykrywania na słabszej kamerce: widać, czy model wstał,
+  // czy klatki dochodzą i ile razy faktycznie zobaczył twarz / źrenice.
+  const rig = cameraRig.diagnostics();
+  const faceState = !rig.active ? 'wyłączona'
+    : !rig.face.ready ? `wczytywanie…${rig.face.lastError ? ` (${rig.face.lastError})` : ''}`
+      : `gotowy · klatek ${rig.face.framesSent} · twarzy ${rig.face.faces} · źrenic ${rig.face.irisFrames}`;
+  const handState = !rig.active ? 'wyłączone'
+    : !rig.hands.ready ? 'wczytywanie…'
+      : `gotowe · klatek ${rig.hands.framesSent} · odczytów ${rig.hands.results}`;
+  $('#lab-detect').textContent =
+    `Dłonie: ${handState}  |  Głowa/oczy: ${faceState}  |  kadr ${rig.video}  |  ${rig.constraint}`;
   labEnable.disabled = !d.ready && !d.enabled;
   labEnable.textContent = d.enabled
     ? 'Wyłącz sterowanie bez klawiatury'
@@ -589,6 +606,61 @@ async function openCameraLab(): Promise<void> {
   cameraRig.setOverlayVisible(true);
 }
 
+// ------------------------------------------- logi do skopiowania (v0.6.1)
+
+const logPanel = $('#log-panel');
+const logText = $<HTMLTextAreaElement>('#log-text');
+const logCount = $('#log-count');
+
+function refreshLogText(): void {
+  logText.value = diagLog.report();
+  logCount.textContent = `${diagLog.count} zdarzeń · ${diagLog.errorCount} błędów`;
+}
+
+function openLogPanel(): void {
+  refreshLogText();
+  logPanel.classList.add('is-active');
+  logPanel.setAttribute('aria-hidden', 'false');
+  logText.focus();
+  logText.setSelectionRange(0, logText.value.length);
+}
+
+function closeLogPanel(): void {
+  logPanel.classList.remove('is-active');
+  logPanel.setAttribute('aria-hidden', 'true');
+}
+
+async function copyLogs(): Promise<void> {
+  const result = await copyDiagnosticReport();
+  if (result === 'copied') {
+    showToast(globalToast, 'Logi skopiowane — wklej je tutaj na czacie (Ctrl+V).');
+  } else {
+    openLogPanel();
+    showToast(globalToast, 'Schowek zablokowany — logi są otwarte, zaznacz i skopiuj ręcznie.');
+  }
+}
+
+async function restartCamera(): Promise<void> {
+  diagLog.push('info', 'camera', 'Ręczny restart kamerki.');
+  showToast(globalToast, 'Restartuję kamerki i oba modele…');
+  try {
+    await cameraRig.restart();
+    showToast(globalToast, 'Kamerka uruchomiona ponownie.');
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    diagLog.push('error', 'camera', `restart(): ${message}`);
+    showToast(globalToast, message);
+  }
+}
+
+$('#log-copy').addEventListener('click', () => void copyLogs());
+$('#log-refresh').addEventListener('click', refreshLogText);
+window.addEventListener('keydown', (event) => {
+  if (event.key !== 'Escape' || !logPanel.classList.contains('is-active')) return;
+  event.stopPropagation();
+  closeLogPanel();
+}, true);
+
 function closeCameraLab(): void {
   cameraLab.classList.remove('is-active');
   cameraLab.setAttribute('aria-hidden', 'true');
@@ -598,7 +670,14 @@ function closeCameraLab(): void {
     view.insertBefore(handVideo, view.firstChild);
     view.appendChild(handCanvas);
   }
-  handPanel.setAttribute('aria-hidden', handTracker.active ? 'false' : 'true');
+  if (handTracker.active) {
+    // Po wyjściu z laboratorium panel kamerki wraca — są w nim przyciski
+    // „Kopiuj logi" / „Restart kamerki", potrzebne także poza laboratorium.
+    handPanel.classList.add('is-active', 'is-on');
+    handPanel.setAttribute('aria-hidden', 'false');
+  } else {
+    handPanel.setAttribute('aria-hidden', 'true');
+  }
   syncHandOverlay();
 }
 
@@ -621,7 +700,7 @@ labInvert.addEventListener('change', () => {
   cameraRig.control.save();
 });
 $('#lab-calibrate').addEventListener('click', () => {
-  cameraRig.control.beginCalibration();
+  cameraRig.recaptureNeutral();
   labNote.textContent = 'Kalibruję… patrz prosto w kamerę i nie ruszaj głową.';
   window.setTimeout(() => {
     const ok = cameraRig.control.finishCalibration();
@@ -1554,6 +1633,18 @@ document.addEventListener('click', (event) => {
       break;
     case 'close-camera-lab':
       closeCameraLab();
+      break;
+    case 'copy-logs':
+      void copyLogs();
+      break;
+    case 'show-logs':
+      openLogPanel();
+      break;
+    case 'close-log-panel':
+      closeLogPanel();
+      break;
+    case 'restart-camera':
+      void restartCamera();
       break;
   }
 });

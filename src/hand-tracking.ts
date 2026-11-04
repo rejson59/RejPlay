@@ -8,7 +8,19 @@
  */
 
 import type { NormalizedLandmark, TrackedHand } from './hand-pose';
+import { diagnostics } from './diagnostics';
 import { lowPowerDevice } from './performance';
+
+export interface HandTrackerDiagnostics {
+  ready: boolean;
+  framesSent: number;
+  results: number;
+  handsSeen: number;
+  videoWidth: number;
+  videoHeight: number;
+  lastError: string | null;
+  modelComplexity: number;
+}
 
 const CONNECTIONS: Array<[number, number]> = [
   [0, 1], [1, 2], [2, 3], [3, 4],
@@ -88,6 +100,13 @@ export class HandTracker {
   private overlay = true;
   private lastSend = 0;
   private ownsStream = true;
+  private framesSent = 0;
+  private results = 0;
+  private handsSeen = 0;
+  private lastError: string | null = null;
+  private lastErrorAt = 0;
+  private errorCooldownUntil = 0;
+  private firstHandLogged = false;
 
   constructor(options: HandTrackerOptions) {
     this.video = options.video;
@@ -108,7 +127,21 @@ export class HandTracker {
   }
 
   private status(message: string, kind: 'info' | 'error' = 'info'): void {
+    diagnostics.push(kind === 'error' ? 'error' : 'info', 'hands', message);
     this.onStatus?.(message, kind);
+  }
+
+  diagnostics(): HandTrackerDiagnostics {
+    return {
+      ready: !!this.hands,
+      framesSent: this.framesSent,
+      results: this.results,
+      handsSeen: this.handsSeen,
+      videoWidth: this.video.videoWidth,
+      videoHeight: this.video.videoHeight,
+      lastError: this.lastError,
+      modelComplexity: this.lowPower ? 0 : 1,
+    };
   }
 
   /**
@@ -140,8 +173,10 @@ export class HandTracker {
       this.video.srcObject = this.stream;
       await this.video.play();
     }
-    this.canvas.width = this.video.videoWidth || 640;
-    this.canvas.height = this.video.videoHeight || 480;
+    // Nigdy nie zostawiamy canvasu o zerowych wymiarach — to jedna z dróg
+    // do `Cannot read properties of undefined (reading 'buffer')` w WASM.
+    this.canvas.width = Math.max(1, this.video.videoWidth || (this.lowPower ? 480 : 640));
+    this.canvas.height = Math.max(1, this.video.videoHeight || (this.lowPower ? 360 : 480));
 
     this.status('Wczytuję model wykrywania dłoni…');
     const Hands = await loadHands();
@@ -152,8 +187,10 @@ export class HandTracker {
       // dają mniej drżących palców przy mniejszym zużyciu CPU.
       modelComplexity: this.lowPower ? 0 : 1,
       smoothLandmarks: true,
-      minDetectionConfidence: 0.6,
-      minTrackingConfidence: 0.6,
+      // v0.6.1: 0,6 było zbyt wysokie dla słabej kamerki — dłoń znikała
+      // przy gorszym świetle. Niższy próg + wygładzanie czasowe dają ciągłość.
+      minDetectionConfidence: this.lowPower ? 0.35 : 0.45,
+      minTrackingConfidence: this.lowPower ? 0.35 : 0.45,
     });
     hands.onResults((results) => this.handleResults(results));
     this.hands = hands;
@@ -165,14 +202,31 @@ export class HandTracker {
   private async tick(): Promise<void> {
     if (!this.running) return;
     const now = performance.now();
-    const minGap = 1000 / (this.lowPower ? 24 : 30);
-    if (this.hands && this.video.readyState >= 2 && !this.sending && now - this.lastSend >= minGap) {
+    const minGap = 1000 / (this.lowPower ? 16 : 24);
+    const hasFrame = this.video.readyState >= 2
+      && this.video.videoWidth > 0 && this.video.videoHeight > 0
+      && this.canvas.width > 0 && this.canvas.height > 0;
+    if (this.hands && hasFrame && !this.sending && now >= this.errorCooldownUntil && now - this.lastSend >= minGap) {
       this.lastSend = now;
       this.sending = true;
+      this.framesSent += 1;
       try {
         await this.hands.send({ image: this.video });
+        this.lastError = null;
       } catch (error) {
-        this.status(`Błąd odczytu klatki: ${String(error)}`, 'error');
+        // `Błąd odczytu klatki` było w v0.6 wyrzucane setki razy na sekundę,
+        // gdy WASM nie wstał. Teraz zapisujemy pełny błąd do raportu, a UI
+        // dostaje jeden czytelny komunikat i krótką pauzę zamiast zalewu.
+        this.lastError = String(error);
+        diagnostics.push('error', 'hands.send', this.lastError);
+        this.errorCooldownUntil = now + 1200;
+        if (now - this.lastErrorAt > 5000) {
+          this.lastErrorAt = now;
+          this.status(
+            `Błąd odczytu klatki: ${this.lastError}. Spróbuj „Restart kamerki" i wyślij logi przyciskiem „Kopiuj logi".`,
+            'error',
+          );
+        }
       } finally {
         this.sending = false;
       }
@@ -181,6 +235,13 @@ export class HandTracker {
   }
 
   private handleResults(results: HandsResults): void {
+    this.results += 1;
+    const count = (results.multiHandLandmarks ?? []).length;
+    this.handsSeen += count;
+    if (count > 0 && !this.firstHandLogged) {
+      this.firstHandLogged = true;
+      diagnostics.push('info', 'hands', `Pierwsza dłoń wykryta po ${this.framesSent} klatkach.`);
+    }
     const ctx = this.context;
     const w = this.canvas.width;
     const h = this.canvas.height;
@@ -235,6 +296,9 @@ export class HandTracker {
     if (this.hands) void this.hands.close().catch(() => undefined);
     this.hands = null;
     this.sending = false;
+    this.lastError = null;
+    this.errorCooldownUntil = 0;
+    this.firstHandLogged = false;
     this.context.clearRect(0, 0, this.canvas.width, this.canvas.height);
     this.onFrame?.([], this.canvas.width / Math.max(this.canvas.height, 1));
   }

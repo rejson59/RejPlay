@@ -112,6 +112,48 @@ export function handResponsiveness(): number {
   return wristResponsiveness;
 }
 
+/**
+ * Kalibracja obrotu nadgarstka (v0.6.1).
+ *
+ * Stary wzór `atan2(palm.x, -palm.y)` dawał π dla zwykłej dłoni skierowanej
+ * palcami w górę, a clamp ±1 zamieniał to w stałą „1”: obrót nadgarstka był
+ * całkowicie niewidoczny — dokładnie to zgłosił użytkownik. Teraz mierzymy
+ * kąt normalnej dłoni wokół osi palców i integrujemy go z zawijaniem fazy,
+ * więc kąt jest ciągły (bez skoku przy ±π) i zaczyna się od zera w pozie,
+ * w której dłoń została pierwszy raz zobaczona.
+ */
+interface WristState { last: number | null; angle: number }
+const wristStates = new Map<string, WristState>();
+
+/** Wołane przy każdym restarcie kamerki — nowa sesja, nowa pozycja neutralna. */
+export function resetWristCalibration(): void {
+  wristStates.clear();
+}
+
+/** Przycisk „Kalibruj pozycję neutralną” w laboratorium. */
+export function recaptureWristNeutral(): void {
+  for (const state of wristStates.values()) state.angle = 0;
+}
+
+function wristTwist(key: string, raw: number): number {
+  let state = wristStates.get(key);
+  if (!state) {
+    state = { last: null, angle: 0 };
+    wristStates.set(key, state);
+  }
+  if (state.last === null) {
+    state.last = raw;
+    return 0;
+  }
+  let delta = raw - state.last;
+  while (delta > Math.PI) delta -= Math.PI * 2;
+  while (delta < -Math.PI) delta += Math.PI * 2;
+  state.last = raw;
+  // Filtr przeciw szumowi pojedynczej klatki na słabej kamerce.
+  if (Math.abs(delta) > 0.002) state.angle += delta;
+  return clamp(state.angle, -1.75, 1.75);
+}
+
 export function neutralHandPose(): HandPose {
   return {
     curl: Array.from({ length: 5 }, () => [0, 0, 0]),
@@ -199,9 +241,6 @@ export function computeHandPose(hand: TrackedHand, aspect = 4 / 3): HandPose {
   // Kciuk zgina się inaczej niż reszta — pierwszy staw dostaje odwiedzenie.
   pose.curl[0][0] = clamp(Math.abs(pose.spread[0]) * 0.7, 0, 0.55);
 
-  const palm = dir(0, 9);
-  pose.roll = clamp(Math.atan2(palm.x, -palm.y) * 0.8, -1.0, 1.0);
-  pose.pitch = clamp(Math.asin(clamp(normal.z, -1, 1)) * 0.55, -0.5, 0.5);
   // Pozycja 3D: cały kadr kamerki → cała przestrzeń przed kamerą.
   // Podgląd jest lustrzany (CSS scaleX(-1)), więc x trzeba odwrócić: dłoń
   // przesunięta w prawo w podglądzie ma trafić w prawo także w grze.
@@ -217,7 +256,36 @@ export function computeHandPose(hand: TrackedHand, aspect = 4 / 3): HandPose {
     z: clamp((palmSpan - 0.18) / 0.11, -1, 1),
   };
   pose.presence = 1;
-  pose.yaw = clamp(Math.atan2(normal.x, normal.z + 0.4) * 0.55, -0.8, 0.8);
+
+  /*
+   * Prawdziwy obrót nadgarstka (pronacja / supinacja).
+   *
+   * `fwd`  = kierunek palców (nadgarstek → nasada palca środkowego),
+   * `normal` = prostopadła do dłoni. Gdy wnętrze dłoni patrzy w kamerę,
+   * `normal` leży blisko osi Z; przy obrocie nadgarstka wychodzi w bok.
+   * Rzutujemy obie osie na płaszczyznę prostopadłą do `fwd` i mierzymy
+   * kąt — dzięki temu wynik nie zależy od tego, czy dłoń jest uniesiona,
+   * opuszczona albo odchylona w bok.
+   */
+  const fwd = dir(0, 9);
+  const cameraAxis = new THREE.Vector3(0, 0, 1);
+  const cPlane = cameraAxis.clone().addScaledVector(fwd, -cameraAxis.dot(fwd));
+  if (cPlane.lengthSq() < 1e-4) cPlane.set(0, 1, 0).addScaledVector(fwd, -fwd.y);
+  if (cPlane.lengthSq() < 1e-4) cPlane.set(1, 0, 0);
+  cPlane.normalize();
+  const sidePlane = new THREE.Vector3().crossVectors(fwd, cPlane).normalize();
+  const nPlane = normal.clone().addScaledVector(fwd, -normal.dot(fwd));
+  if (nPlane.lengthSq() < 1e-4) nPlane.copy(cPlane);
+  nPlane.normalize();
+  const rawTwist = Math.atan2(nPlane.dot(sidePlane), nPlane.dot(cPlane));
+  // Klucz po etykiecie MediaPipe: obie dłonie kalibrują się niezależnie,
+  // więc lustrzane odbicie nie wywraca jednej z nich na lewą stronę.
+  pose.roll = wristTwist(hand.label ?? 'Left', rawTwist);
+
+  // Przechylenie i odchylenie dłoni też bierzemy z osi palców, a nie z
+  // palm.y — dzięki temu ruch nadgarstka w przód / tył / na bok jest widoczny.
+  pose.pitch = clamp(Math.asin(clamp(fwd.z, -1, 1)) * 1.15, -1.1, 1.1);
+  pose.yaw = clamp(Math.atan2(fwd.x, Math.max(0.08, fwd.y)) * 0.85, -1.1, 1.1);
   return pose;
 }
 

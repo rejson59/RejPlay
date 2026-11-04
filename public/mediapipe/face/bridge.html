@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<title>RejPlay · izolowany model twarzy</title>
+<style>html,body{margin:0;padding:0;background:#000;overflow:hidden}canvas{display:block}</style>
+</head>
+<body>
+<canvas id="frame" width="320" height="240"></canvas>
+<!--
+  MediaPipe Hands i MediaPipe FaceMesh to dwa osobne, zminifikowane bundle
+  Emscripten. Ładowane do jednego dokumentu nadpisują sobie nie tylko
+  `createMediapipeSolutionsWasm`, ale całą masę krótkich globalnych `var`.
+  Efekt: WASM drugiego modelu nie wstaje, `hands.send()` rzuca
+  "Cannot read properties of undefined (reading 'buffer')", a głowa i oczy
+  nie są wykrywane. FaceMesh działa więc w tym izolowanym dokumencie, a
+  rodzic przesyła mu tylko kolejne klatki jako ImageBitmap (transfer, bez
+  kopii). Kadr nigdy nie opuszcza przeglądarki.
+-->
+<script src="./face_mesh.js"></script>
+<script>
+(function () {
+  'use strict';
+  var ORIGIN = location.origin;
+  var TAG_PARENT = '__rejplayFaceParent';
+  var TAG_CHILD = '__rejplayFace';
+  var BASE = new URL('./', location.href);
+  var canvas = document.getElementById('frame');
+  var ctx = canvas.getContext('2d', { alpha: false, willReadFrequently: false });
+  var fm = null;
+  var busy = false;
+  var pending = null;
+  var frames = 0;
+  var results = 0;
+  var faces = 0;
+  var iris = 0;
+  var lastError = null;
+
+  function post(type, payload, transfer) {
+    try {
+      parent.postMessage({ tag: TAG_CHILD, type: type, payload: payload || {} }, ORIGIN, transfer || []);
+    } catch (e) { /* rodzic mógł już zamknąć ramkę */ }
+  }
+  function fail(err) {
+    var msg = String((err && (err.message || err)) || err || 'nieznany błąd');
+    lastError = msg;
+    post('error', { message: msg.slice(0, 400) });
+  }
+  window.addEventListener('error', function (e) { fail(e.message); });
+  window.addEventListener('unhandledrejection', function (e) { fail(e.reason); });
+
+  function init(options) {
+    if (fm) { post('ready', { already: true }); return; }
+    if (typeof window.FaceMesh !== 'function') {
+      fail('face_mesh.js nie udostępnił konstruktora FaceMesh');
+      return;
+    }
+    try {
+      fm = new window.FaceMesh({
+        locateFile: function (file) { return new URL(file, BASE).href; }
+      });
+      fm.setOptions({
+        selfieMode: true,
+        maxNumFaces: 1,
+        refineLandmarks: options.refineLandmarks !== false,
+        minDetectionConfidence: typeof options.minDetectionConfidence === 'number' ? options.minDetectionConfidence : 0.35,
+        minTrackingConfidence: typeof options.minTrackingConfidence === 'number' ? options.minTrackingConfidence : 0.35
+      });
+      fm.onResults(function (r) {
+        results += 1;
+        var lm = r && r.multiFaceLandmarks && r.multiFaceLandmarks[0];
+        if (!lm || !lm.length) {
+          post('empty', { frames: frames, results: results, faces: faces, iris: iris });
+          return;
+        }
+        faces += 1;
+        if (lm.length >= 478) iris += 1;
+        var flat = new Float32Array(lm.length * 3);
+        for (var i = 0; i < lm.length; i += 1) {
+          flat[i * 3] = lm[i].x;
+          flat[i * 3 + 1] = lm[i].y;
+          flat[i * 3 + 2] = lm[i].z || 0;
+        }
+        post('landmarks', {
+          data: flat,
+          count: lm.length,
+          frames: frames, results: results, faces: faces, iris: iris
+        }, [flat.buffer]);
+      });
+      post('ready', { refineLandmarks: options.refineLandmarks !== false });
+    } catch (e) { fail(e); }
+  }
+
+  function processFrame(bitmap, seq) {
+    if (!fm) { if (bitmap && bitmap.close) bitmap.close(); return; }
+    if (busy) {
+      // Słaba kamerka / wolny CPU: nie kolejkujemy klatek, bierzemy ostatnią.
+      if (pending && pending.close) pending.close();
+      pending = bitmap;
+      pendingSeq = seq;
+      return;
+    }
+    run(bitmap, seq);
+  }
+
+  var pendingSeq = 0;
+  function run(bitmap, seq) {
+    busy = true;
+    try {
+      if (canvas.width !== bitmap.width || canvas.height !== bitmap.height) {
+        canvas.width = bitmap.width;
+        canvas.height = bitmap.height;
+      }
+      ctx.drawImage(bitmap, 0, 0);
+      if (bitmap.close) bitmap.close();
+      Promise.resolve()
+        .then(function () { return fm.send({ image: canvas }); })
+        .then(function () { finish(seq); })
+        .catch(function (e) { fail(e); finish(seq); });
+    } catch (e) {
+      if (bitmap && bitmap.close) { try { bitmap.close(); } catch (_) {} }
+      fail(e);
+      finish(seq);
+    }
+  }
+
+  function finish(seq) {
+    busy = false;
+    if (pending) {
+      var next = pending;
+      var nextSeq = pendingSeq;
+      pending = null;
+      run(next, nextSeq);
+    } else {
+      post('idle', { seq: seq, frames: frames, results: results, faces: faces, iris: iris, lastError: lastError });
+    }
+  }
+
+  window.addEventListener('message', function (ev) {
+    if (ev.origin !== ORIGIN) return;
+    var d = ev.data;
+    if (!d || d.tag !== TAG_PARENT) return;
+    if (d.type === 'init') init(d.options || {});
+    else if (d.type === 'frame' && d.bitmap) {
+      frames += 1;
+      processFrame(d.bitmap, d.seq || frames);
+    } else if (d.type === 'pixels' && d.buffer) {
+      // Fallback dla przeglądarek bez createImageBitmap.
+      frames += 1;
+      try {
+        var w = d.width | 0, h = d.height | 0;
+        if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+        ctx.putImageData(new ImageData(new Uint8ClampedArray(d.buffer), w, h), 0, 0);
+        if (!fm) { post('idle', { seq: d.seq }); return; }
+        if (busy) { post('idle', { seq: d.seq, busy: true }); return; }
+        busy = true;
+        Promise.resolve()
+          .then(function () { return fm.send({ image: canvas }); })
+          .then(function () { busy = false; })
+          .catch(function (e) { busy = false; fail(e); });
+      } catch (e) { fail(e); }
+    } else if (d.type === 'stats') {
+      post('stats', { frames: frames, results: results, faces: faces, iris: iris, busy: busy, lastError: lastError, hasModel: !!fm });
+    } else if (d.type === 'stop' && fm) {
+      try { var old = fm; fm = null; old.close().catch(function () {}); } catch (_) {}
+      post('stopped', {});
+    }
+  });
+
+  post('loaded', { hasModel: typeof window.FaceMesh === 'function' });
+})();
+</script>
+</body>
+</html>

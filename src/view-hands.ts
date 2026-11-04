@@ -115,21 +115,61 @@ interface FingerRig {
   normalAxis: THREE.Vector3;
 }
 
-function buildFingerRig(model: THREE.Object3D, side: 'L' | 'R'): FingerRig[] {
+interface WristRig {
+  bone: THREE.Object3D;
+  rest: THREE.Quaternion;
+  pitchAxis: THREE.Vector3;
+  yawAxis: THREE.Vector3;
+  rollAxis: THREE.Vector3;
+  /** Kierunek palców w lokalnej przestrzeni kości — oś skrętu nadgarstka. */
+  twistAxis: THREE.Vector3;
+}
+
+interface ViewHandRig {
+  fingers: FingerRig[];
+  wrist: WristRig | null;
+}
+
+/**
+ * v0.6.1: osie zgięcia wyznaczamy GEOMETRYCZNIE z restowej pozycji kości.
+ *
+ * Wcześniej w tym pliku (first-person) została stara wersja z `cross(dir,
+ * normal)` i ujemnym znakiem rozstawienia. Naprawa trafiła tylko do rigu
+ * third-person w src/human.ts, więc użytkownik wciąż widział palce jednej
+ * dłoni wyginające się na zewnątrz. Testujemy znak na konkretnej kości:
+ * dodatni kąt ma przybliżać opuszkę do wnętrza dłoni i oddalać palec od
+ * palca środkowego — dla obu rigów i obu stron, bez ręcznych stałych.
+ */
+function buildViewHandRig(model: THREE.Object3D, side: 'L' | 'R'): ViewHandRig {
   model.updateMatrixWorld(true);
   const wrist = findBone(model, side, 'Hand');
   const indexBase = findBone(model, side, 'Finger1');
   const pinkyBase = findBone(model, side, 'Finger4');
-  if (!wrist || !indexBase || !pinkyBase) return [];
+  const middleBase = findBone(model, side, 'Finger2');
+  if (!wrist || !indexBase || !pinkyBase || !middleBase) return { fingers: [], wrist: null };
 
-  const wristPos = wrist.getWorldPosition(V(0, 0, 0));
+  const wristPos = wrist.getWorldPosition(new THREE.Vector3());
+  const indexPos = indexBase.getWorldPosition(new THREE.Vector3());
+  const pinkyPos = pinkyBase.getWorldPosition(new THREE.Vector3());
   const normal = new THREE.Vector3()
-    .crossVectors(
-      indexBase.getWorldPosition(V(0, 0, 0)).sub(wristPos),
-      pinkyBase.getWorldPosition(V(0, 0, 0)).sub(wristPos),
-    )
+    .crossVectors(indexPos.clone().sub(wristPos), pinkyPos.clone().sub(wristPos))
     .normalize();
-  if (normal.lengthSq() < 0.5) normal.set(0, 1, 0);
+  if (normal.lengthSq() < 0.5) normal.set(0, 0, 1);
+  const middleDirWorld = middleBase.getWorldPosition(new THREE.Vector3()).sub(wristPos).normalize();
+
+  // Obrót nadgarstka dokładamy na KOŚCI Hand, a nie tylko na całym viewmodelu.
+  // Dzięki temu skręt widać na samych palcach (pronacja / supinacja), nawet
+  // gdy dłoń stoi nieruchomo w jednym miejscu kadru.
+  const wristWorldQuat = wrist.getWorldQuaternion(new THREE.Quaternion());
+  const wristInverse = wristWorldQuat.clone().invert();
+  const wristRig: WristRig = {
+    bone: wrist,
+    rest: wrist.quaternion.clone(),
+    pitchAxis: new THREE.Vector3(1, 0, 0).applyQuaternion(wristInverse),
+    yawAxis: new THREE.Vector3(0, 1, 0).applyQuaternion(wristInverse),
+    rollAxis: new THREE.Vector3(0, 0, 1).applyQuaternion(wristInverse),
+    twistAxis: middleDirWorld.clone().applyQuaternion(wristInverse).normalize(),
+  };
 
   const rigs: FingerRig[] = [];
   for (let f = 0; f < 5; f += 1) {
@@ -142,19 +182,31 @@ function buildFingerRig(model: THREE.Object3D, side: 'L' | 'R'): FingerRig[] {
       const worldQuat = bone.getWorldQuaternion(new THREE.Quaternion());
       const inverse = worldQuat.clone().invert();
       const direction = V(1, 0, 0).applyQuaternion(worldQuat).normalize();
-      const curlAxis = new THREE.Vector3()
-        .crossVectors(direction, normal)
-        .normalize()
-        .applyQuaternion(inverse);
+      const bonePos = bone.getWorldPosition(new THREE.Vector3());
+
+      const worldCurl = new THREE.Vector3().crossVectors(direction, normal).normalize();
+      const towardPalm = wristPos.clone().sub(bonePos).normalize();
+      const before = direction.dot(towardPalm);
+      const after = direction.clone().applyAxisAngle(worldCurl, 0.3).dot(towardPalm);
+      if (after < before) worldCurl.negate();
+      const curlAxis = worldCurl.clone().applyQuaternion(inverse);
+
+      const worldSpread = normal.clone();
+      if (j === 0) {
+        const radial = bonePos.clone().sub(wristPos).normalize();
+        const beforeSpread = radial.dot(middleDirWorld);
+        const afterSpread = radial.clone().applyAxisAngle(worldSpread, 0.3).dot(middleDirWorld);
+        if (afterSpread > beforeSpread) worldSpread.negate();
+      }
       rigs.push({
         bone,
         rest: bone.quaternion.clone(),
         curlAxis,
-        normalAxis: normal.clone().applyQuaternion(inverse),
+        normalAxis: worldSpread.applyQuaternion(inverse),
       });
     }
   }
-  return rigs;
+  return { fingers: rigs, wrist: wristRig };
 }
 
 /** Zostawiamy tylko trójkąty, których wierzchołki są skinowane do dłoni. */
@@ -230,8 +282,11 @@ export class AvatarViewHand {
   private readonly qRest = new THREE.Quaternion();
   private readonly qCurl = new THREE.Quaternion();
   private readonly qSpread = new THREE.Quaternion();
+  private readonly qWristRest = new THREE.Quaternion();
+  private readonly qWrist = new THREE.Quaternion();
   private model: THREE.Group | null = null;
   private rigs: FingerRig[] = [];
+  private wristRig: WristRig | null = null;
   private material: THREE.MeshStandardMaterial | null = null;
 
   constructor(private options: AvatarViewHandOptions) {
@@ -322,7 +377,9 @@ export class AvatarViewHand {
     clone.updateMatrixWorld(true);
     this.root.add(clone);
     this.model = clone;
-    this.rigs = buildFingerRig(clone, side);
+    const rig = buildViewHandRig(clone, side);
+    this.rigs = rig.fingers;
+    this.wristRig = rig.wrist;
   }
 
   setAppearance(appearance: Appearance, female: boolean, template?: HumanTemplate): void {
@@ -356,10 +413,22 @@ export class AvatarViewHand {
         this.qRest.copy(rig.rest);
         this.qRest.multiply(this.qCurl.setFromAxisAngle(rig.curlAxis, pose.curl[f][j]));
         if (j === 0) {
-          this.qRest.multiply(this.qSpread.setFromAxisAngle(rig.normalAxis, -pose.spread[f] * 0.7));
+          this.qRest.multiply(this.qSpread.setFromAxisAngle(rig.normalAxis, pose.spread[f] * 0.7));
         }
         rig.bone.quaternion.copy(this.qRest);
       }
+    }
+
+    // Skręt nadgarstka na samej kości Hand + wspomaganie na całym viewmodelu.
+    // `pose.roll` jest teraz ciągłym kątem (v0.6.1), więc obrót dłoni widać
+    // od razu, bez martwego zakresu i bez clampu do stałej wartości.
+    if (this.wristRig) {
+      const fade = pose.presence;
+      this.qWristRest.copy(this.wristRig.rest);
+      this.qWristRest.multiply(this.qWrist.setFromAxisAngle(this.wristRig.twistAxis, pose.roll * 0.95 * fade));
+      this.qWristRest.multiply(this.qWrist.setFromAxisAngle(this.wristRig.pitchAxis, pose.pitch * 0.55 * fade));
+      this.qWristRest.multiply(this.qWrist.setFromAxisAngle(this.wristRig.yawAxis, pose.yaw * 0.45 * fade));
+      this.wristRig.bone.quaternion.copy(this.qWristRest);
     }
 
     // Pełne pozycjonowanie 3D: kadr kamerki = kadr gry. Gdy dłoni nie ma,
@@ -370,9 +439,9 @@ export class AvatarViewHand {
     this.root.scale.setScalar(THREE.MathUtils.lerp(this.space.scale, this.space.trackedScale, pose.presence));
     const turn = THREE.MathUtils.clamp(motion.turn * 0.016, -0.045, 0.045);
     this.root.rotation.set(
-      pose.pitch * 0.3 + turn * 0.08,
-      pose.yaw * 0.7 - pose.roll * 0.25 + motion.sway * 0.04 - turn * 0.55,
-      pose.roll * 0.18 + turn * 0.22 + travelRoll(pose.wrist.x, pose.presence),
+      pose.pitch * 0.34 + turn * 0.08,
+      pose.yaw * 0.62 + motion.sway * 0.04 - turn * 0.55,
+      pose.roll * 0.38 + turn * 0.22 + travelRoll(pose.wrist.x, pose.presence),
     );
   }
 }
@@ -458,9 +527,9 @@ export class FallbackViewHand {
     const turn = THREE.MathUtils.clamp(motion.turn * 0.016, -0.045, 0.045);
     applyTrackedPosition(this.root.position, pose, this.space, motion);
     this.root.scale.setScalar(THREE.MathUtils.lerp(this.space.scale, this.space.trackedScale, pose.presence));
-    this.root.rotation.y = -pose.roll * 0.4 + pose.yaw * 0.5 + motion.sway * 0.04 - turn * 0.55;
-    this.root.rotation.x = pose.pitch * 0.35;
-    this.root.rotation.z = turn * 0.22 + travelRoll(pose.wrist.x, pose.presence);
+    this.root.rotation.y = pose.yaw * 0.55 + motion.sway * 0.04 - turn * 0.55;
+    this.root.rotation.x = pose.pitch * 0.4;
+    this.root.rotation.z = pose.roll * 0.42 + turn * 0.22 + travelRoll(pose.wrist.x, pose.presence);
   }
 }
 
