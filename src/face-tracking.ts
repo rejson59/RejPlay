@@ -1,50 +1,34 @@
 /**
  * Śledzenie twarzy, głowy i źrenic (MediaPipe FaceMesh, assets lokalne).
  *
- * 468 punktów twarzy + 10 punktów tęczówek (refineLandmarks). Z nich liczymy:
- *  - przechył głowy przód / tył (pitch) → ruch postaci,
- *  - przechył na bok (roll) → strafowanie,
- *  - obrót głowy (yaw) → wspomaganie rozglądania,
- *  - pozycję źrenicy względem kącików oka → ultra-precyzyjna kamera,
- *  - mrugnięcie (do testu kalibracji).
+ * 468 punktów twarzy + 10 punktów tęczówek (refineLandmarks). Matematyka
+ * sygnałów leży w `face-math.ts` (czysta, testowalna w Node); ten plik
+ * odpowiada wyłącznie za transport klatek i izolację modelu.
  *
- * v0.6.1 — IZOLACJA MODELU.
- * Hands i FaceMesh to dwa zminifikowane bundle Emscripten. W jednym dokumencie
- * nadpisują sobie globalne `var` (nie tylko `createMediapipeSolutionsWasm`),
- * przez co WASM drugiego z nich nie wstaje: `hands.send()` rzuca
- * "Cannot read properties of undefined (reading 'buffer')", a głowa i oczy
- * nie są wykrywane. FaceMesh działa więc w ukrytym, same-origin iframe
- * (public/mediapipe/face/bridge.html), a rodzic przesyła mu TYLKO kolejne,
- * pomniejszone klatki jako ImageBitmap. Nic nie jest nagrywane ani wysyłane —
- * kadr zostaje w przeglądarce, a strumień jest współdzielony z Hands.
+ * v0.6.1 — IZOLACJA MODELU. Hands i FaceMesh to dwa zminifikowane bundle
+ * Emscripten. W jednym dokumencie nadpisują sobie globalne `var`, przez co
+ * WASM drugiego z nich nie wstaje. FaceMesh działa więc w ukrytym, same-origin
+ * iframe (public/mediapipe/face/bridge.html), a rodzic przesyła mu TYLKO
+ * pomniejszone klatki jako ImageBitmap. Nic nie jest nagrywane ani wysyłane.
+ *
+ * v0.7.1 — ODPORNOŚĆ. Sesja ma numer (epoch), więc zaległy timer z poprzedniego
+ * uruchomienia nie może zgłosić błędu w nowej, zdrowej sesji. Start sprząta po
+ * sobie przy porażce, a watchdog wypuszcza pustą klatkę, gdy iframe zamilknie —
+ * bez tego kamera jechała ostatnim wektorem głowy w nieskończoność.
  */
 
-import type { NormalizedLandmark } from './hand-pose';
+import {
+  BlinkCalibrator, EMPTY_FACE, centroid, emptyFace, faceFrameFromLandmarks,
+  type FaceFrame,
+} from './face-math';
 import { diagnostics } from './diagnostics';
 import { lowPowerDevice } from './performance';
+import {
+  FrameWatchdog, finite, validLandmarks, type Landmark,
+} from './tracking-guard';
 
-export interface FaceFrame {
-  present: boolean;
-  /** Obrót głowy wokół osi pionowej (ok. −0.5..0.5). */
-  yaw: number;
-  /** Kiwnięcie: + = głowa w dół / w przód, − = głowa do tyłu. */
-  pitch: number;
-  /** Przechył na bok w radianach. */
-  roll: number;
-  /** Spojrzenie: +x = w prawo, +y = w dół, skala ok. −1..1. */
-  gazeX: number;
-  gazeY: number;
-  /** 0 = oko otwarte, 1 = zamknięte. */
-  blink: number;
-  /** Czy model zwrócił punkty tęczówek (refineLandmarks). */
-  iris: boolean;
-  landmarks: NormalizedLandmark[];
-}
-
-export const EMPTY_FACE: FaceFrame = {
-  present: false, yaw: 0, pitch: 0, roll: 0, gazeX: 0, gazeY: 0,
-  blink: 0, iris: false, landmarks: [],
-};
+export { EMPTY_FACE, faceFrameFromLandmarks };
+export type { FaceFrame };
 
 export interface FaceTrackerDiagnostics {
   isolated: boolean;
@@ -57,73 +41,27 @@ export interface FaceTrackerDiagnostics {
   frameHeight: number;
   refineLandmarks: boolean;
   lastError: string | null;
+  /** Czas od ostatniej wiadomości z izolowanego dokumentu (ms). */
+  lastFrameAgeMs: number;
+  /** Ile razy brak odczytu wymusił bezpieczne wyzerowanie sterowania. */
+  staleReleases: number;
+  /** Odrzucone klatki z niekompletnymi / nieskończonymi punktami. */
+  rejectedFrames: number;
+  blinkBaseline: number;
 }
 
 const MP_FACE = `${import.meta.env.BASE_URL}mediapipe/face/`;
 const TAG_CHILD = '__rejplayFace';
 const TAG_PARENT = '__rejplayFaceParent';
-
-const clamp = (value: number, min: number, max: number): number =>
-  Math.max(min, Math.min(max, value));
-
-const dist = (a: NormalizedLandmark, b: NormalizedLandmark): number =>
-  Math.hypot(a.x - b.x, a.y - b.y, (a.z - b.z) * 0.4);
-
-/** Średni punkt z listy indeksów (odporny na pojedynczy szum). */
-function centroid(lm: NormalizedLandmark[], indices: number[]): NormalizedLandmark {
-  let x = 0, y = 0, z = 0;
-  for (const i of indices) {
-    x += lm[i].x; y += lm[i].y; z += lm[i].z;
-  }
-  const n = indices.length || 1;
-  return { x: x / n, y: y / n, z: z / n };
-}
-
-/** Jedna klatka → sygnały kalibracyjne. Wszystko względne, bez stałych znaków. */
-export function faceFrameFromLandmarks(lm: NormalizedLandmark[] | undefined): FaceFrame {
-  if (!lm || lm.length < 468) return { ...EMPTY_FACE };
-  const nose = lm[1];
-  const forehead = lm[10];
-  const chin = lm[152];
-  const leftEar = lm[234];
-  const rightEar = lm[454];
-  const eyeSpan = Math.max(0.02, rightEar.x - leftEar.x);
-  const faceSpan = Math.max(0.02, chin.y - forehead.y);
-  const eyeCenterX = (leftEar.x + rightEar.x) / 2;
-
-  const yaw = clamp((nose.x - eyeCenterX) / eyeSpan, -1, 1);
-  const pitch = clamp((nose.y - (forehead.y + chin.y) / 2) / faceSpan, -1, 1);
-  const roll = clamp(Math.atan2(rightEar.y - leftEar.y, rightEar.x - leftEar.x), -1, 1);
-
-  const leftInner = lm[133], leftOuter = lm[33];
-  const rightInner = lm[263], rightOuter = lm[362];
-  const hasIris = lm.length >= 478;
-  let gazeX = 0;
-  let gazeY = 0;
-
-  if (hasIris) {
-    const leftIris = centroid(lm, [468, 469, 470, 471]);
-    const rightIris = centroid(lm, [473, 474, 475, 476]);
-    const lx = (leftIris.x - (leftOuter.x + leftInner.x) / 2) / Math.max(0.006, Math.abs(leftInner.x - leftOuter.x));
-    const rx = (rightIris.x - (rightOuter.x + rightInner.x) / 2) / Math.max(0.006, Math.abs(rightInner.x - rightOuter.x));
-    const ly = (leftIris.y - (lm[159].y + lm[145].y) / 2) / Math.max(0.004, Math.abs(lm[145].y - lm[159].y));
-    const ry = (rightIris.y - (lm[386].y + lm[374].y) / 2) / Math.max(0.004, Math.abs(lm[374].y - lm[386].y));
-    gazeX = clamp(((lx + rx) / 2) * 1.9, -1.6, 1.6);
-    gazeY = clamp(((ly + ry) / 2) * 1.9, -1.6, 1.6);
-  }
-
-  const leftOpen = dist(lm[159], lm[145]) / Math.max(0.006, dist(lm[33], lm[133]));
-  const rightOpen = dist(lm[386], lm[374]) / Math.max(0.006, dist(lm[362], lm[263]));
-  const blink = clamp(1 - ((leftOpen + rightOpen) / 2) / 0.32, 0, 1);
-
-  return { present: true, yaw, pitch, roll, gazeX, gazeY, blink, iris: hasIris, landmarks: lm };
-}
+/** Po 1,5 s ciszy głowa i oczy przestają sterować kamerą. */
+const FACE_TIMEOUT_MS = 1500;
+const READY_TIMEOUT_MS = 14000;
 
 interface BridgeMessage {
   tag?: string;
   type?: string;
   payload?: {
-    data?: Float32Array;
+    data?: Float32Array | number[];
     count?: number;
     frames?: number;
     results?: number;
@@ -157,8 +95,10 @@ export class FaceTracker {
   private ready = false;
   private sending = false;
   private frameId = 0;
+  private readyTimer = 0;
   private lastSend = 0;
   private seq = 0;
+  private epoch = 0;
   private readonly lowPower = lowPowerDevice();
   private drawEnabled = true;
   private readonly refineLandmarks = true;
@@ -166,6 +106,10 @@ export class FaceTracker {
   private stats = { frames: 0, results: 0, faces: 0, iris: 0 };
   private lastStatusAt = 0;
   private firstFaceLogged = false;
+  private readonly blink = new BlinkCalibrator();
+  private readonly watchdog = new FrameWatchdog(FACE_TIMEOUT_MS);
+  private staleReleases = 0;
+  private rejectedFrames = 0;
 
   constructor(options: FaceTrackerOptions) {
     this.video = options.video;
@@ -193,6 +137,10 @@ export class FaceTracker {
       frameHeight: this.frameCanvas?.height ?? 0,
       refineLandmarks: this.refineLandmarks,
       lastError: this.lastError,
+      lastFrameAgeMs: Math.round(this.watchdog.age()),
+      staleReleases: this.staleReleases,
+      rejectedFrames: this.rejectedFrames,
+      blinkBaseline: Number(this.blink.baseline.toFixed(3)),
     };
   }
 
@@ -208,10 +156,12 @@ export class FaceTracker {
   }
 
   private readonly onMessage = (event: MessageEvent<BridgeMessage>): void => {
-    if (event.origin !== location.origin || event.data?.tag !== TAG_CHILD) return;
+    if (!this.iframe || event.origin !== location.origin || event.data?.tag !== TAG_CHILD) return;
     if (this.iframe && event.source !== this.iframe.contentWindow) return;
     const msg = event.data;
     const payload = msg.payload ?? {};
+    // Każda wiadomość (także „idle") dowodzi, że izolowany dokument żyje.
+    this.watchdog.mark();
     switch (msg.type) {
       case 'loaded':
         if (payload.hasModel === false) {
@@ -229,54 +179,70 @@ export class FaceTracker {
         this.status(`Głowa i oczy: ${this.lastError}`, 'error');
         break;
       case 'landmarks': {
+        this.mergeStats(payload);
         const flat = payload.data;
         const count = payload.count ?? 0;
-        this.stats.frames = payload.frames ?? this.stats.frames;
-        this.stats.results = payload.results ?? this.stats.results;
-        this.stats.faces = payload.faces ?? this.stats.faces;
-        this.stats.iris = payload.iris ?? this.stats.iris;
-        if (!flat || count < 468) return;
-        const lm: NormalizedLandmark[] = new Array(count);
+        if (!flat || !Number.isInteger(count) || count < 468 || count > 600
+          || flat.length < count * 3) {
+          this.rejectedFrames += 1;
+          this.handle(emptyFace());
+          return;
+        }
+        const lm: Landmark[] = new Array(count);
         for (let i = 0; i < count; i += 1) {
-          lm[i] = { x: flat[i * 3], y: flat[i * 3 + 1], z: flat[i * 3 + 2] };
+          lm[i] = {
+            x: finite(flat[i * 3], Number.NaN),
+            y: finite(flat[i * 3 + 1], Number.NaN),
+            z: finite(flat[i * 3 + 2], Number.NaN),
+          };
+        }
+        if (!validLandmarks(lm, 468, 600)) {
+          this.rejectedFrames += 1;
+          this.handle(emptyFace());
+          return;
         }
         if (!this.firstFaceLogged && this.stats.faces > 0) {
           this.firstFaceLogged = true;
           diagnostics.push('info', 'face', `Pierwsza twarz wykryta po ${this.seq} klatkach · punktów ${count} · źrenice ${count >= 478 ? 'tak' : 'nie'}.`);
         }
-        this.handle(faceFrameFromLandmarks(lm));
+        this.handle(faceFrameFromLandmarks(lm, this.blink.baseline));
         break;
       }
       case 'empty':
-        this.stats.frames = payload.frames ?? this.stats.frames;
-        this.stats.results = payload.results ?? this.stats.results;
-        this.handle({ ...EMPTY_FACE });
+        this.mergeStats(payload);
+        this.handle(emptyFace());
         break;
       case 'idle':
-        this.stats.frames = payload.frames ?? this.stats.frames;
-        this.stats.results = payload.results ?? this.stats.results;
-        this.stats.faces = payload.faces ?? this.stats.faces;
-        this.stats.iris = payload.iris ?? this.stats.iris;
-        break;
       case 'stats':
-        this.stats.frames = payload.frames ?? this.stats.frames;
-        this.stats.results = payload.results ?? this.stats.results;
-        this.stats.faces = payload.faces ?? this.stats.faces;
-        this.stats.iris = payload.iris ?? this.stats.iris;
+        this.mergeStats(payload);
         break;
       default:
         break;
     }
   };
 
+  private mergeStats(payload: BridgeMessage['payload']): void {
+    if (!payload) return;
+    this.stats.frames = finite(payload.frames, this.stats.frames);
+    this.stats.results = finite(payload.results, this.stats.results);
+    this.stats.faces = finite(payload.faces, this.stats.faces);
+    this.stats.iris = finite(payload.iris, this.stats.iris);
+  }
+
   /** Używa istniejącego strumienia wideo — nie woła getUserMedia. */
   async start(): Promise<void> {
     if (this.running) return;
+    const epoch = ++this.epoch;
+    this.clearTimers();
     this.status('Wczytuję izolowany model głowy i oczu…');
     this.lastError = null;
     this.seq = 0;
     this.stats = { frames: 0, results: 0, faces: 0, iris: 0 };
     this.firstFaceLogged = false;
+    this.staleReleases = 0;
+    this.rejectedFrames = 0;
+    this.blink.reset();
+    this.watchdog.reset();
 
     // Słabsza kamerka: mniejszy kadr wejściowy = mniej pracy WASM i mniej
     // odrzuconych klatek. Przy zwykłym sprzęcie 480×360, na niskim 320×240.
@@ -301,12 +267,26 @@ export class FaceTracker {
     iframe.src = `${MP_FACE}bridge.html`;
     this.iframe = iframe;
 
-    await new Promise<void>((resolve, reject) => {
-      const timer = window.setTimeout(() => reject(new Error('Model twarzy nie odpowiedział w ciągu 20 s.')), 20000);
-      iframe.onload = () => { window.clearTimeout(timer); resolve(); };
-      iframe.onerror = () => { window.clearTimeout(timer); reject(new Error('Nie udało się otworzyć izolowanego modelu twarzy.')); };
-      document.body.appendChild(iframe);
-    });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const timer = window.setTimeout(
+          () => reject(new Error('Model twarzy nie odpowiedział w ciągu 20 s.')),
+          20000,
+        );
+        iframe.onload = () => { window.clearTimeout(timer); resolve(); };
+        iframe.onerror = () => {
+          window.clearTimeout(timer);
+          reject(new Error('Nie udało się otworzyć izolowanego modelu twarzy.'));
+        };
+        document.body.appendChild(iframe);
+      });
+    } catch (error) {
+      // Bez sprzątania zostawał osierocony listener + iframe + „wiecznie
+      // wczytuję…". Dłonie mogą dalej działać, ale stan musi być czysty.
+      this.stop();
+      throw error;
+    }
+    if (epoch !== this.epoch) return; // w międzyczasie ktoś zatrzymał sesję
 
     // Niższe progi pewności niż w v0.6: na słabej kamerce 0,55 odrzucało
     // niemal każdą twarz, więc głowa i oczy „nie chciały się wykrywać”.
@@ -319,22 +299,36 @@ export class FaceTracker {
     });
     this.running = true;
     this.lastSend = performance.now();
+    this.watchdog.mark();
     this.frameId = requestAnimationFrame(() => void this.tick());
-    // Watchdog: jeśli iframe wczytał się, ale model nie odpowiedział,
+
+    // Watchdog gotowości: jeśli iframe wczytał się, ale model nie odpowiedział,
     // użytkownik dostaje czytelny błąd zamiast wiecznego „wczytuję…".
-    window.setTimeout(() => {
-      if (!this.running || this.ready || this.lastError) return;
+    // Timer jest przypięty do epoch, więc nie dotknie kolejnej sesji.
+    this.readyTimer = window.setTimeout(() => {
+      if (epoch !== this.epoch || !this.running || this.ready || this.lastError) return;
       this.lastError = 'model twarzy nie odpowiedział z izolowanego dokumentu';
       this.status(
         `Głowa i oczy: ${this.lastError}. Naciśnij „Restart kamerki" i wyślij „Kopiuj logi".`,
         'error',
       );
-    }, 14000);
+    }, READY_TIMEOUT_MS);
   }
 
   private async tick(): Promise<void> {
     if (!this.running) return;
     const now = performance.now();
+    // Gdy izolowany dokument przestanie odpowiadać, nie zostawiamy „ostatniej
+    // twarzy" w sterowaniu: wypuszczamy pustą klatkę dokładnie raz.
+    if (this.watchdog.isStale(now)) {
+      this.watchdog.release();
+      this.staleReleases += 1;
+      this.handle(emptyFace());
+      if (now - this.lastStatusAt > 5000) {
+        this.lastStatusAt = now;
+        this.status('Głowa i oczy: brak odczytu z modelu. Sterowanie wyzerowane — wciąż działają dłonie.', 'error');
+      }
+    }
     // Backpressure w iframe sam odrzuca klatki, ale nie zarzucamy go ponad miarę.
     const minGap = 1000 / (this.lowPower ? 10 : 16);
     const videoOk = this.video.readyState >= 2 && this.video.videoWidth > 0 && this.video.videoHeight > 0;
@@ -368,8 +362,14 @@ export class FaceTracker {
   }
 
   private handle(frame: FaceFrame): void {
-    if (frame.present && this.context && this.canvas && this.drawEnabled) this.draw(frame);
-    this.onFrame?.(frame);
+    const safe: FaceFrame = { ...frame };
+    if (safe.present) {
+      // Mrugnięcie liczymy względem własnej szerokości oka użytkownika.
+      safe.blink = this.blink.next(safe.openness).blink;
+    }
+    if (safe.present && this.context && this.canvas && this.drawEnabled
+      && validLandmarks(safe.landmarks, 468, 600)) this.draw(safe);
+    this.onFrame?.(safe);
   }
 
   private draw(frame: FaceFrame): void {
@@ -387,7 +387,7 @@ export class FaceTracker {
       if (n === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
     });
     ctx.stroke();
-    if (frame.iris) {
+    if (frame.iris && frame.landmarks.length >= 478) {
       ctx.fillStyle = '#e4c99e';
       for (const set of [[468, 469, 470, 471, 472], [473, 474, 475, 476, 477]]) {
         const c = centroid(frame.landmarks, set);
@@ -401,10 +401,17 @@ export class FaceTracker {
     ctx.fillText(`głowa ${frame.pitch >= 0 ? '+' : ''}${frame.pitch.toFixed(2)} · wzrok ${frame.gazeX >= 0 ? '+' : ''}${frame.gazeX.toFixed(2)}`, 8, h - 10);
   }
 
+  private clearTimers(): void {
+    if (this.readyTimer) window.clearTimeout(this.readyTimer);
+    this.readyTimer = 0;
+  }
+
   stop(): void {
+    this.epoch += 1;
     this.running = false;
     this.ready = false;
     cancelAnimationFrame(this.frameId);
+    this.clearTimers();
     window.removeEventListener('message', this.onMessage);
     if (this.iframe) {
       try { this.post('stop'); } catch { /* ramka mogła już zniknąć */ }
@@ -414,7 +421,8 @@ export class FaceTracker {
     this.frameCanvas = null;
     this.frameCtx = null;
     this.sending = false;
+    this.watchdog.reset();
     this.context?.clearRect(0, 0, this.canvas?.width ?? 0, this.canvas?.height ?? 0);
-    this.onFrame?.({ ...EMPTY_FACE });
+    this.onFrame?.(emptyFace());
   }
 }

@@ -5,16 +5,28 @@
  * dostają TEN SAM kadr video. CameraRig pilnuje jednej zgody na kamerę,
  * jednego zegara i jednego miejsca, w którym sygnały zamieniane są na ruch:
  * głowa → chodzenie, oczy → kamera, palce → chwyt / odłożenie / użycie.
+ *
+ * v0.7.1 — ODPORNOŚĆ. Każdy sygnał ma znacznik czasu: gdy któryś tracker
+ * zamilknie, rig sam wypuszcza puste dłonie i pustą twarz, więc postać nie
+ * zamarza w ostatniej pozie, a kamera nie jedzie ostatnim wektorem głowy.
+ * Odłączenie kamerki wykrywa tor `ended` i próbuje wznowić strumień co
+ * najwyżej dwa razy, zamiast zostawiać gracza z martwym podglądem.
  */
 
 import { HandTracker } from './hand-tracking';
-import { FaceTracker, EMPTY_FACE, type FaceFrame } from './face-tracking';
+import { FaceTracker } from './face-tracking';
+import { emptyFace, type FaceFrame } from './face-math';
 import {
   CameraControl, type ControlFrame, type GestureEvent, type LabDiagnostics,
 } from './camera-control';
 import { recaptureWristNeutral, resetWristCalibration, type TrackedHand } from './hand-pose';
 import { diagnostics } from './diagnostics';
 import { lowPowerDevice } from './performance';
+import { FrameWatchdog } from './tracking-guard';
+
+const HAND_TIMEOUT_MS = 1000;
+const FACE_TIMEOUT_MS = 1800;
+const MAX_RECOVERY_ATTEMPTS = 2;
 
 export interface CameraRigDiagnostics {
   active: boolean;
@@ -25,6 +37,12 @@ export interface CameraRigDiagnostics {
   hands: ReturnType<HandTracker['diagnostics']>;
   face: ReturnType<FaceTracker['diagnostics']>;
   tests: LabDiagnostics;
+  /** Wiek ostatniego odczytu dłoni / twarzy i liczba bezpiecznych zwolnień. */
+  handAgeMs: number;
+  faceAgeMs: number;
+  handReleases: number;
+  faceReleases: number;
+  recoveryAttempts: number;
 }
 
 export interface CameraRigOptions {
@@ -58,8 +76,16 @@ export class CameraRig {
   private frameId = 0;
   private lastTick = 0;
   private lastDiag = 0;
-  private latestFace: FaceFrame = { ...EMPTY_FACE };
+  private latestFace: FaceFrame = emptyFace();
   private latestHands: TrackedHand[] = [];
+  private readonly handsWatchdog = new FrameWatchdog(HAND_TIMEOUT_MS);
+  private readonly faceWatchdog = new FrameWatchdog(FACE_TIMEOUT_MS);
+  private handReleases = 0;
+  private faceReleases = 0;
+  private recoveryAttempts = 0;
+  private recoveryTimer = 0;
+  private watchedTrack: MediaStreamTrack | null = null;
+  private trackEndListener: (() => void) | null = null;
   private labOpen = false;
   private readonly lowPower = lowPowerDevice();
   private constraint = 'nie rozpoczęto';
@@ -78,6 +104,7 @@ export class CameraRig {
       canvas: options.canvas,
       onFrame: (hands) => {
         this.latestHands = hands;
+        this.handsWatchdog.mark();
         options.onHands(hands, this.canvas.width / Math.max(this.canvas.height, 1));
       },
       onStatus: options.onStatus,
@@ -85,7 +112,10 @@ export class CameraRig {
     this.face = new FaceTracker({
       video: options.video,
       canvas: options.faceCanvas,
-      onFrame: (frame) => { this.latestFace = frame; },
+      onFrame: (frame) => {
+        this.latestFace = frame;
+        this.faceWatchdog.mark();
+      },
       onStatus: options.onStatus,
     });
     // Raport musi mieć sekcję kamerki także wtedy, gdy użytkownik jej jeszcze
@@ -101,7 +131,7 @@ export class CameraRig {
     return this.labOpen;
   }
 
-  /** Pełny stan do przycisku „Kopiuj logi”. */
+  /** Pełny stan do przycisku „Kopiuj logi". */
   diagnostics(): CameraRigDiagnostics {
     const track = this.stream?.getVideoTracks()[0];
     const settings = track?.getSettings();
@@ -116,16 +146,22 @@ export class CameraRig {
       hands: this.hands.diagnostics(),
       face: this.face.diagnostics(),
       tests: this.control.diagnostics(),
+      handAgeMs: Math.round(this.handsWatchdog.age()),
+      faceAgeMs: Math.round(this.faceWatchdog.age()),
+      handReleases: this.handReleases,
+      faceReleases: this.faceReleases,
+      recoveryAttempts: this.recoveryAttempts,
     };
   }
 
-  /** Przycisk „Kalibruj pozycję neutralną” obejmuje też nadgarstki. */
+  /** Przycisk „Kalibruj pozycję neutralną" obejmuje też nadgarstki. */
   recaptureNeutral(): void {
     this.control.beginCalibration();
     recaptureWristNeutral();
   }
 
   async restart(): Promise<void> {
+    this.recoveryAttempts = 0;
     this.stop();
     await this.start();
   }
@@ -199,17 +235,63 @@ export class CameraRig {
   /** Czekamy na pierwszy prawdziwy kadr — zerowe wymiary psuły WASM. */
   private async waitForFrame(): Promise<void> {
     if (this.video.videoWidth > 0 && this.video.videoHeight > 0) return;
-    await new Promise<void>((resolve) => {
-      const finish = (): void => {
-        this.video.removeEventListener('loadedmetadata', finish);
-        this.video.removeEventListener('canplay', finish);
+    const gotFrame = await new Promise<boolean>((resolve) => {
+      const finish = (ok: boolean): void => {
+        this.video.removeEventListener('loadedmetadata', onFrame);
+        this.video.removeEventListener('canplay', onFrame);
         window.clearTimeout(timer);
-        resolve();
+        resolve(ok);
       };
-      const timer = window.setTimeout(finish, 4000);
-      this.video.addEventListener('loadedmetadata', finish, { once: true });
-      this.video.addEventListener('canplay', finish, { once: true });
+      const onFrame = (): void => finish(this.video.videoWidth > 0 && this.video.videoHeight > 0);
+      const timer = window.setTimeout(() => finish(this.video.videoWidth > 0), 4000);
+      this.video.addEventListener('loadedmetadata', onFrame, { once: true });
+      this.video.addEventListener('canplay', onFrame, { once: true });
     });
+    if (!gotFrame) {
+      throw new Error('Kamerka nie dostarczyła kadru w ciągu 4 s. Spróbuj „Restart kamerki".');
+    }
+  }
+
+  private attachTrackWatch(stream: MediaStream): void {
+    this.detachTrackWatch();
+    const track = stream.getVideoTracks()[0];
+    if (!track) return;
+    this.watchedTrack = track;
+    this.trackEndListener = () => { void this.handleTrackEnd(); };
+    track.addEventListener('ended', this.trackEndListener);
+  }
+
+  private detachTrackWatch(): void {
+    if (this.watchedTrack && this.trackEndListener) {
+      this.watchedTrack.removeEventListener('ended', this.trackEndListener);
+    }
+    this.watchedTrack = null;
+    this.trackEndListener = null;
+  }
+
+  /** Kamerka odłączona / przełączona w trakcie gry: bounded auto-recovery. */
+  private async handleTrackEnd(): Promise<void> {
+    if (!this.running) return;
+    diagnostics.push('warn', 'camera', 'Tor wideo zakończył się — próba wznowienia.');
+    this.stop();
+    if (this.recoveryAttempts >= MAX_RECOVERY_ATTEMPTS || document.visibilityState === 'hidden') {
+      this.onStatus('Kamerka została odłączona. Podłącz ją i naciśnij „Restart kamerki".', 'error');
+      return;
+    }
+    this.recoveryAttempts += 1;
+    this.onStatus('Kamerka została odłączona. Próbuję wznowić…', 'error');
+    this.recoveryTimer = window.setTimeout(() => {
+      this.recoveryTimer = 0;
+      void this.start().then(() => {
+        this.recoveryAttempts = 0;
+        this.onStatus('Kamerka wznowiona — dłonie, głowa i oczy znów działają.', 'info');
+      }).catch((error: unknown) => {
+        this.onStatus(
+          `Nie udało się wznowić kamerki: ${String(error)}. Naciśnij „Restart kamerki".`,
+          'error',
+        );
+      });
+    }, 900);
   }
 
   async start(): Promise<void> {
@@ -219,49 +301,73 @@ export class CameraRig {
     }
     this.onStatus('Czekam na zgodę na kamerę…', 'info');
     resetWristCalibration();
-    const stream = await this.openStream();
-    this.stream = stream;
-    this.video.srcObject = stream;
-    try { await this.video.play(); } catch (error) {
-      diagnostics.push('warn', 'camera', `video.play(): ${String(error)}`);
-    }
-    await this.waitForFrame();
-    const width = Math.max(1, this.video.videoWidth || 320);
-    const height = Math.max(1, this.video.videoHeight || 240);
-    this.canvas.width = width;
-    this.canvas.height = height;
-    if (this.faceCanvas) {
-      this.faceCanvas.width = width;
-      this.faceCanvas.height = height;
-    }
-    diagnostics.setFact('kamerka', this.diagnostics());
-    this.onStatus(`Kamerka: ${this.constraint}, kadr ${width}x${height}. Wczytuję modele…`, 'info');
-
-    await this.hands.start(stream);
-    diagnostics.setFact('kamerka', this.diagnostics());
     try {
-      await this.face.start();
+      const stream = await this.openStream();
+      this.stream = stream;
+      this.video.srcObject = stream;
+      try { await this.video.play(); } catch (error) {
+        diagnostics.push('warn', 'camera', `video.play(): ${String(error)}`);
+      }
+      await this.waitForFrame();
+      const width = Math.max(1, this.video.videoWidth || 320);
+      const height = Math.max(1, this.video.videoHeight || 240);
+      this.canvas.width = width;
+      this.canvas.height = height;
+      if (this.faceCanvas) {
+        this.faceCanvas.width = width;
+        this.faceCanvas.height = height;
+      }
+      diagnostics.setFact('kamerka', this.diagnostics());
+      this.onStatus(`Kamerka: ${this.constraint}, kadr ${width}x${height}. Wczytuję modele…`, 'info');
+
+      await this.hands.start(stream);
+      diagnostics.setFact('kamerka', this.diagnostics());
+      try {
+        await this.face.start();
+      } catch (error) {
+        // Brak modelu twarzy nie może wyłączyć śledzenia dłoni z v0.5.
+        this.onStatus(`Dłonie działają, ale głowa/oczy nie: ${String(error)}`, 'error');
+        diagnostics.push('error', 'camera', `face.start(): ${String(error)}`);
+      }
+      this.attachTrackWatch(stream);
+      this.running = true;
+      this.lastTick = performance.now();
+      this.handsWatchdog.mark();
+      this.faceWatchdog.mark();
+      diagnostics.setFact('kamerka', this.diagnostics());
+      this.onStatus(
+        'Kamerka działa: dłonie 1:1, przechył głowy = ruch, źrenice = kamera. Otwórz laboratorium, aby skalibrować.',
+        'info',
+      );
+      this.frameId = requestAnimationFrame(() => this.tick());
     } catch (error) {
-      // Brak modelu twarzy nie może wyłączyć śledzenia dłoni z v0.5.
-      this.onStatus(`Dłonie działają, ale głowa/oczy nie: ${String(error)}`, 'error');
-      diagnostics.push('error', 'camera', `face.start(): ${String(error)}`);
+      // Bez sprzątania porażka zostawiała włączoną kamerę, działający
+      // tracker i osierocony iframe — kolejny start dokładał następne.
+      this.stop();
+      throw error;
     }
-    this.running = true;
-    this.lastTick = performance.now();
-    diagnostics.setFact('kamerka', this.diagnostics());
-    this.onStatus(
-      'Kamerka działa: dłonie 1:1, przechył głowy = ruch, źrenice = kamera. Otwórz laboratorium, aby skalibrować.',
-      'info',
-    );
-    this.frameId = requestAnimationFrame(() => this.tick());
   }
 
   private tick(): void {
     if (!this.running) return;
     const now = performance.now();
-    const dt = Math.min(0.12, Math.max(0.008, (now - this.lastTick) / 1000));
+    const rawDt = (now - this.lastTick) / 1000;
+    const dt = Number.isFinite(rawDt) ? Math.min(0.12, Math.max(0.008, rawDt)) : 1 / 60;
     this.lastTick = now;
-    const { control, gestures } = this.control.ingest(this.latestFace, this.latestHands, dt);
+    const visible = document.visibilityState !== 'hidden';
+    let hands = this.latestHands;
+    let face = this.latestFace;
+    if (visible && this.handsWatchdog.isStale(now)) {
+      this.handsWatchdog.release();
+      this.handReleases += 1;
+      hands = [];
+    }
+    if (visible && this.faceWatchdog.isStale(now)) {
+      this.faceWatchdog.release();
+      this.faceReleases += 1;
+      face = emptyFace();
+    }
+    const { control, gestures } = this.control.ingest(face, hands, dt);
     if (this.control.settings.enabled) this.onControl(control, dt);
     for (const gesture of gestures) this.onGesture(gesture);
     if (this.labOpen && now - this.lastDiag > 90) {
@@ -275,13 +381,18 @@ export class CameraRig {
   stop(): void {
     this.running = false;
     cancelAnimationFrame(this.frameId);
+    if (this.recoveryTimer) window.clearTimeout(this.recoveryTimer);
+    this.recoveryTimer = 0;
+    this.detachTrackWatch();
     this.face.stop();
     this.hands.stop();
     this.stream?.getTracks().forEach((track) => track.stop());
     this.stream = null;
     this.video.srcObject = null;
-    this.latestFace = { ...EMPTY_FACE };
+    this.latestFace = emptyFace();
     this.latestHands = [];
+    this.handsWatchdog.reset();
+    this.faceWatchdog.reset();
     this.control.zero();
     this.constraint = 'zatrzymana';
     diagnostics.setFact('kamerka', this.diagnostics());
