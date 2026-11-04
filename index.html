@@ -171,7 +171,7 @@
 
             <div class="sidebar__note">
               <span class="dot"></span>
-              RejPlay · v0.4<br />
+              RejPlay · v0.5<br />
               Multiplayer bez logowania
             </div>
           </aside>
@@ -192,7 +192,7 @@
 
             <section class="live-strip" aria-label="Co nowego w RejPlay">
               <article><span class="live-strip__icon">◎</span><div><b>Wspólne Atrium</b><small>Pozycje i awatary graczy przez Supabase Realtime</small></div></article>
-              <article><span class="live-strip__icon">✋</span><div><b>Dłonie 1:1</b><small>21 punktów dłoni, 15 stawów, pozycja nadgarstka w 3D</small></div></article>
+              <article><span class="live-strip__icon">✋</span><div><b>Dłonie 1:1</b><small>21 punktów, 15 stawów i pełna pozycja dłoni w 3D</small></div></article>
               <article><span class="live-strip__icon">◈</span><div><b>Płynność i dotyk</b><small>Auto jakość, cienie i DPR · wygodny HUD na telefonach i tabletach</small></div></article>
             </section>
 
@@ -336,7 +336,7 @@
         </div>
 
         <footer class="footer wrap">
-          <span><strong>RejPlay</strong> · vertical slice 0.4</span>
+          <span><strong>RejPlay</strong> · vertical slice 0.5</span>
           <span>Three.js · Vite · Supabase Realtime · GitHub Pages</span>
         </footer>
       </section>
@@ -345,6 +345,12 @@
       <section id="lobby" class="lobby" aria-hidden="true" aria-label="Lobby Atrium">
         <div id="lobby-stage" class="stage stage--lobby"></div>
         <div class="lobby__vignette" aria-hidden="true"></div>
+        <div class="lobby__crosshair" id="lobby-crosshair" aria-hidden="true"><span></span></div>
+        <div class="pointer-hint pointer-hint--lobby" id="lobby-pointer-hint" aria-live="polite">
+          <strong>Widok z oczu · kursor wolny</strong>
+          <span id="lobby-pointer-hint-text">Kliknij w widok, by przechwycić kursor i rozglądać się bez końca.</span>
+          <span><kbd>Esc</kbd> zwalnia kursor · <kbd>V</kbd> kamera za plecami</span>
+        </div>
 
         <header class="lobby__top">
           <button type="button" class="btn btn--sm btn--glass" id="back-home">← Ekran główny</button>
@@ -376,12 +382,17 @@
           <div><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd><span>ruch</span></div>
           <div><kbd>Spacja</kbd><span>skok</span></div>
           <div><kbd>E</kbd><span>machnięcie</span></div>
-          <div><kbd>przeciągnij</kbd><span>obrót kamery</span></div>
-          <p>Kliknij „Demonofobia · graj”, żeby rozpocząć dochodzenie.</p>
+          <div><kbd>przeciągnij</kbd><span>rozejrzyj się</span></div>
+          <div><kbd>V</kbd><span>widok z oczu / za plecami</span></div>
+          <div><kbd>klik</kbd><span>celownik → portal</span></div>
+          <p>W widoku z oczu widzisz własne dłonie awatara. Włącz kamerę, a podążą za Twoimi rękami w całym kadrze — także w górę i w dół.</p>
         </div>
 
         <div class="lobby__tools" id="lobby-tools">
           <button type="button" class="btn btn--sm btn--glass" id="wave-btn">Machaj <kbd>E</kbd></button>
+          <button type="button" class="btn btn--sm btn--glass" id="lobby-view-toggle" aria-pressed="true" title="Przełącz widok Atrium: z oczu albo za plecami">
+            Widok: z oczu <kbd>V</kbd>
+          </button>
           <button type="button" class="btn btn--sm btn--glass" data-hand-toggle>Śledzenie dłoni · kamerka</button>
           <button type="button" class="btn btn--sm btn--accent" id="play-horror">
             Demonofobia · graj <span aria-hidden="true">→</span>
@@ -414,6 +425,12 @@
         </header>
 
         <div class="game__crosshair" aria-hidden="true"></div>
+
+        <div class="pointer-hint" id="pointer-hint" aria-live="polite">
+          <strong>Kursor zwolniony</strong>
+          <span id="pointer-hint-text">Kliknij w widok gry, aby znów rozglądać się w pełnym zakresie 360°.</span>
+          <span><kbd>Esc</kbd> zwalnia kursor · ponowne <kbd>Esc</kbd> wychodzi z gry</span>
+        </div>
 
         <div class="game__hud" id="game-hud">
           <div class="hud__nerves">
@@ -462,10 +479,17 @@
               narzędziami i złóż raport, zanim skończą Ci się nerwy.
             </p>
             <ul class="intro__keys">
-              <li><kbd>W A S D</kbd> ruch · <kbd>mysz</kbd> rozglądanie (bez blokady kursora)</li>
+              <li><kbd>W A S D</kbd> ruch · <kbd>mysz</kbd> rozglądanie 360° z blokadą kursora</li>
               <li><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> narzędzia · <kbd>E</kbd> przytrzymaj, aby skanować</li>
               <li><kbd>F</kbd> latarka · <kbd>P</kbd> foto-dowód · <kbd>J</kbd> notatnik · <kbd>Shift</kbd> bieg</li>
+              <li><kbd>Esc</kbd> zwalnia kursor (do klikania HUD-u i notatnika) · klik w ekran wznawia blokadę</li>
+              <li><kbd>[</kbd> <kbd>]</kbd> czułość myszy · działa też w trakcie rundy</li>
             </ul>
+            <label class="intro__slider" for="look-sensitivity">
+              <span>Czułość myszy</span>
+              <input type="range" id="look-sensitivity" min="0.6" max="2" step="0.1" value="1" />
+              <output id="look-sensitivity-value">1.0×</output>
+            </label>
             <p class="intro__note">
               Oryginalna gra RejPlay. Nie zawiera nazw, postaci ani materiałów z innych
               gier — inspiracją jest sam gatunek dochodzeniowego horroru.
@@ -571,10 +595,16 @@
         <div class="hand-panel__readout">
           <span class="hand-panel__value" id="hand-readout">Kamerka wyłączona</span>
           <span class="hand-panel__status" id="hand-status">Obraz nie opuszcza przeglądarki.</span>
+          <span class="hand-panel__space" id="hand-space">Pozycja 3D: pokaż dłonie w kadrze</span>
         </div>
+        <label class="hand-panel__slider" for="hand-responsiveness">
+          <span>Odpowiedź pozycji 3D</span>
+          <input type="range" id="hand-responsiveness" min="0.45" max="2.2" step="0.05" value="1" />
+          <output id="hand-responsiveness-value">1:1</output>
+        </label>
         <div class="hand-panel__legend">
           <span><kbd>21</kbd> punktów na dłoń</span><span><kbd>15</kbd> stawów na awatarze</span>
-          <span><kbd>2</kbd> dłonie naraz</span><span><kbd>0</kbd> danych opuszcza przeglądarkę</span>
+          <span><kbd>3D</kbd> x / y / głębokość</span><span><kbd>0</kbd> danych opuszcza przeglądarkę</span>
         </div>
       </div>
 

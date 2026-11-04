@@ -439,12 +439,24 @@ export async function loadHumanAssets(): Promise<HumanAssets> {
 const Q_REST = new THREE.Quaternion();
 const Q_CURL = new THREE.Quaternion();
 const Q_SPREAD = new THREE.Quaternion();
+const Q_ARM = new THREE.Quaternion();
+const Q_LIFT = new THREE.Quaternion();
+const Q_SWING = new THREE.Quaternion();
 
 interface FingerRig {
   bone: THREE.Object3D;
   rest: THREE.Quaternion;
   curlAxis: THREE.Vector3;
   normalAxis: THREE.Vector3;
+}
+
+/** Kość ramienia poddawana pozycji dłoni (podnoszenie / odwodzenie). */
+interface ArmRig {
+  bone: THREE.Object3D;
+  rest: THREE.Quaternion;
+  liftAxis: THREE.Vector3;
+  swingAxis: THREE.Vector3;
+  weight: number;
 }
 
 type State = 'idle' | 'walk' | 'emote';
@@ -483,6 +495,7 @@ export class HumanAvatar implements Avatar {
     L: new HandAnimator(), R: new HandAnimator(),
   };
   private readonly handRigs: Record<'L' | 'R', FingerRig[]> = { L: [], R: [] };
+  private readonly armRigs: Record<'L' | 'R', ArmRig[]> = { L: [], R: [] };
   private handOverride = false;
   /** Po zniknięciu dłoni palce wracają do animacji płynnie, nie skokiem. */
   private handFade = 0;
@@ -590,6 +603,25 @@ export class HumanAvatar implements Avatar {
       const pinkyBase = find('Finger4');
       if (!wrist || !indexBase || !pinkyBase) continue;
 
+      // Pozycja dłoni w kadrze steruje też ramieniem: podniesienie ręki
+      // unosi całe ramię, przesunięcie w bok odwodzi je. Osie wyliczamy z
+      // restowej orientacji kości, więc działa dla obu stron i wszystkich
+      // 13 rigów Rocketbox bez ręcznego kalibrowania.
+      for (const [bone, weight] of [
+        [find('UpperArm'), 1],
+        [find('Forearm'), 0.42],
+      ] as Array<[THREE.Object3D | undefined, number]>) {
+        if (!bone) continue;
+        const inverse = bone.getWorldQuaternion(new THREE.Quaternion()).invert();
+        this.armRigs[side].push({
+          bone,
+          rest: bone.quaternion.clone(),
+          liftAxis: new THREE.Vector3(1, 0, 0).applyQuaternion(inverse),
+          swingAxis: new THREE.Vector3(0, 0, 1).applyQuaternion(inverse),
+          weight,
+        });
+      }
+
       wrist.getWorldPosition(wristPos);
       indexBase.getWorldPosition(indexPos);
       pinkyBase.getWorldPosition(pinkyPos);
@@ -654,6 +686,19 @@ export class HumanAvatar implements Avatar {
           }
           rig.bone.quaternion.copy(Q_REST);
         }
+      }
+
+      // y = wysokość dłoni → uniesienie ramienia, x = pozycja w poziomie →
+      // odwiedzenie. Mnożnik `presence` pilnuje, żeby brak dłoni nie zamrażał
+      // animacji idle (kości wracają pod kontrolę miksera).
+      const fade = pose.presence;
+      const lift = -pose.wrist.y * 1.05 * fade;
+      const swing = pose.wrist.x * 0.52 * fade;
+      for (const rig of this.armRigs[side]) {
+        Q_ARM.copy(rig.rest);
+        Q_ARM.multiply(Q_LIFT.setFromAxisAngle(rig.liftAxis, lift * rig.weight));
+        Q_ARM.multiply(Q_SWING.setFromAxisAngle(rig.swingAxis, swing * rig.weight));
+        rig.bone.quaternion.copy(Q_ARM);
       }
     }
   }

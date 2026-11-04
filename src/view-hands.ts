@@ -24,6 +24,83 @@ import {
 
 const V = (x: number, y: number, z: number): THREE.Vector3 => new THREE.Vector3(x, y, z);
 
+/** Wąski ekran w pionie ma małe pole widzenia w poziomie — poszerzamy FOV. */
+export function viewmodelFov(aspect: number): number {
+  return THREE.MathUtils.clamp(60 + Math.max(0, 0.9 - aspect) * 34, 60, 78);
+}
+
+/**
+ * Objętość śledzenia: kadr kamerki (znormalizowany −1..1) odwzorowany na
+ * przestrzeń przed kamerą viewmodelu. Dzięki temu przesunięcie dłoni o 10%
+ * szerokości kadru przesuwa dłoń w grze o 10% szerokości ekranu — nie o 3 px.
+ */
+interface HandSpace {
+  halfW: number;
+  halfH: number;
+  restX: number;
+  restY: number;
+  restZ: number;
+  scale: number;
+  /** Skala w trakcie śledzenia (na wąskim ekranie nie zmniejszamy już dłoni). */
+  trackedScale: number;
+}
+
+function makeHandSpace(aspect: number, fov: number, side: 'L' | 'R'): HandSpace {
+  const halfH = Math.tan(THREE.MathUtils.degToRad(fov) / 2) * 0.62;
+  const halfW = halfH * Math.max(0.3, aspect);
+  const portrait = aspect < 0.85;
+  const x = portrait ? halfW * 0.78 : THREE.MathUtils.clamp(halfW * 0.60, 0.10, 0.33);
+  const y = portrait ? -halfH * 0.80 : -THREE.MathUtils.clamp(halfH * 1.12, 0.26, 0.40);
+  // W pionie dłoń musi być wyraźnie mniejsza, inaczej zasłania pół ekranu.
+  const scale = portrait ? 0.34 : THREE.MathUtils.clamp(aspect / 1.45, 0.6, 1);
+  return {
+    halfW,
+    halfH,
+    restX: side === 'L' ? -x : x,
+    restY: y,
+    restZ: -0.62,
+    scale,
+    trackedScale: portrait ? scale : scale * 0.7,
+  };
+}
+
+/** Pozycja 1:1 z kamerki + miękki powrót do spoczynku, gdy dłoń znika. */
+function applyTrackedPosition(
+  out: THREE.Vector3,
+  pose: HandPose,
+  space: HandSpace,
+  motion: HandMotion,
+): THREE.Vector3 {
+  const p = pose.presence;
+  // 0.94 = lekki margines, żeby dłoń przy samej krawędzi kadru nie wjechała
+  // całkiem poza ekran. Poza tym skala jest liniowa w całym kadrze.
+  const tx = THREE.MathUtils.clamp(
+    pose.wrist.x * space.halfW * 0.94,
+    -space.halfW * 1.08,
+    space.halfW * 1.08,
+  );
+  // W pionie zostawiamy dłoniom dolną połowę ekranu: przy pełnym 1:1 w górę
+  // do kadru wjeżdżałoby całe przedramię awatara i zasłaniało widok. Zakres
+  // nadal jest duży (ponad połowa wysokości ekranu względem spoczynku), a w
+  // poziomie odwzorowanie jest w pełni liniowe w całym kadrze kamerki.
+  const ty = -space.halfH * 0.42 + pose.wrist.y * space.halfH * 0.30;
+  const tz = space.restZ + pose.wrist.z * 0.17;
+  // Kołysanie i opóźnienie przy skręcie głowy słabną, gdy dłoń jest śledzona:
+  // wtedy ma być wierna ruchowi, a nie animacji postaci.
+  const turn = THREE.MathUtils.clamp(motion.turn * 0.016, -0.045, 0.045) * (1 - p * 0.65);
+  const sway = Math.abs(motion.sway) * 0.006 * (1 - p * 0.6);
+  return out.set(
+    THREE.MathUtils.lerp(space.restX, tx, p) + turn,
+    THREE.MathUtils.lerp(space.restY, ty, p) + sway,
+    THREE.MathUtils.lerp(space.restZ, tz, p),
+  );
+}
+
+/** Delikatny przechył: dłoń prowadzona w bok nie jedzie jak na szynach. */
+function travelRoll(x: number, presence: number): number {
+  return THREE.MathUtils.clamp(-x * 0.13, -0.17, 0.17) * presence;
+}
+
 function findBone(root: THREE.Object3D, side: 'L' | 'R', name: string): THREE.Object3D | undefined {
   return (
     root.getObjectByName(`Bip01 ${side} ${name}`) ??
@@ -147,6 +224,7 @@ export class AvatarViewHand {
   private readonly base: THREE.Vector3;
   private readonly side: 'L' | 'R';
   private readonly assets: HumanAssets;
+  private space: HandSpace;
   private readonly animator = new HandAnimator({ idle: true });
   // Scratch — 15 stawów × 2 dłonie nie może alokować 60 kwaternionów co klatkę.
   private readonly qRest = new THREE.Quaternion();
@@ -160,6 +238,7 @@ export class AvatarViewHand {
     this.base = options.base.clone();
     this.side = options.side;
     this.assets = options.assets;
+    this.space = makeHandSpace(16 / 9, 60, this.side);
     this.root.position.copy(this.base);
     this.rebuild();
   }
@@ -170,14 +249,9 @@ export class AvatarViewHand {
    * proporcjonalnie do aspectu i zmniejszamy cały viewmodel.
    */
   setViewport(aspect: number, fov = 60): void {
-    const halfH = Math.tan(THREE.MathUtils.degToRad(fov) / 2) * 0.62;
-    const halfW = halfH * Math.max(0.3, aspect);
-    const portrait = aspect < 0.85;
-    const x = portrait ? halfW * 0.78 : THREE.MathUtils.clamp(halfW * 0.60, 0.10, 0.33);
-    const y = portrait ? -halfH * 0.80 : -THREE.MathUtils.clamp(halfH * 1.12, 0.26, 0.40);
-    this.base.set(this.side === 'L' ? -x : x, y, -0.62);
-    // W pionie dłoń musi być wyraźnie mniejsza, inaczej zasłania pół ekranu.
-    this.root.scale.setScalar(portrait ? 0.34 : THREE.MathUtils.clamp(aspect / 1.45, 0.6, 1));
+    this.space = makeHandSpace(aspect, fov, this.side);
+    this.base.set(this.space.restX, this.space.restY, this.space.restZ);
+    this.root.scale.setScalar(this.space.scale);
     this.root.position.copy(this.base);
   }
 
@@ -288,21 +362,17 @@ export class AvatarViewHand {
       }
     }
 
-    // Trójwymiarowe pozycjonowanie nadgarstka. Limity nie pozwalają dłoniom
-    // przeciąć się na środku ekranu ani uciec poza kadr.
-    const w = pose.wrist;
-    const dx = THREE.MathUtils.clamp(w.x * 0.075, -0.085, 0.085);
-    const dy = THREE.MathUtils.clamp(w.y * 0.075, -0.09, 0.09);
+    // Pełne pozycjonowanie 3D: kadr kamerki = kadr gry. Gdy dłoni nie ma,
+    // obecność wygasa i dłoń wraca do spoczynku przy dolnej krawędzi ekranu.
+    applyTrackedPosition(this.root.position, pose, this.space, motion);
+    // Śledzona dłoń wędruje po całym ekranie, więc lekko ją oddalamy: krótsze
+    // przedramię nie zasłania widoku przy uniesieniu ręki nad głowę.
+    this.root.scale.setScalar(THREE.MathUtils.lerp(this.space.scale, this.space.trackedScale, pose.presence));
     const turn = THREE.MathUtils.clamp(motion.turn * 0.016, -0.045, 0.045);
-    this.root.position.set(
-      this.base.x + dx + turn,
-      this.base.y + dy + Math.abs(motion.sway) * 0.006,
-      this.base.z + w.z * 0.055,
-    );
     this.root.rotation.set(
       pose.pitch * 0.3 + turn * 0.08,
       pose.yaw * 0.7 - pose.roll * 0.25 + motion.sway * 0.04 - turn * 0.55,
-      pose.roll * 0.18 + turn * 0.22,
+      pose.roll * 0.18 + turn * 0.22 + travelRoll(pose.wrist.x, pose.presence),
     );
   }
 }
@@ -318,11 +388,13 @@ export class FallbackViewHand {
   private readonly bases: THREE.Group[] = [];
   private readonly side: number;
   private readonly base: THREE.Vector3;
+  private space: HandSpace;
   private readonly animator = new HandAnimator({ idle: true });
 
   constructor(side: 'L' | 'R', skin: string, base: THREE.Vector3) {
     this.side = side === 'L' ? 1 : -1;
     this.base = base.clone();
+    this.space = makeHandSpace(16 / 9, 60, side);
     this.root.position.copy(this.base);
     this.material = new THREE.MeshStandardMaterial({ color: skin, roughness: 0.84 });
     const segment = (radius: number, length: number): THREE.Mesh => {
@@ -363,13 +435,10 @@ export class FallbackViewHand {
   }
 
   setViewport(aspect: number, fov = 60): void {
-    const halfH = Math.tan(THREE.MathUtils.degToRad(fov) / 2) * 0.62;
-    const halfW = halfH * Math.max(0.3, aspect);
-    const portrait = aspect < 0.85;
-    const x = portrait ? halfW * 0.78 : THREE.MathUtils.clamp(halfW * 0.60, 0.10, 0.33);
-    const y = portrait ? -halfH * 0.80 : -THREE.MathUtils.clamp(halfH * 1.12, 0.26, 0.40);
-    this.base.set(this.side > 0 ? -x : x, y, -0.62);
-    this.root.scale.setScalar(portrait ? 0.34 : THREE.MathUtils.clamp(aspect / 1.45, 0.6, 1));
+    const side: 'L' | 'R' = this.side > 0 ? 'L' : 'R';
+    this.space = makeHandSpace(aspect, fov, side);
+    this.base.set(this.space.restX, this.space.restY, this.space.restZ);
+    this.root.scale.setScalar(this.space.scale);
     this.root.position.copy(this.base);
   }
 
@@ -386,16 +455,12 @@ export class FallbackViewHand {
       this.bases[f].rotation.z =
         (f === 0 ? -this.side * 0.92 : 0) - this.side * pose.spread[f] * 0.7;
     }
-    const w = pose.wrist;
     const turn = THREE.MathUtils.clamp(motion.turn * 0.016, -0.045, 0.045);
-    this.root.position.set(
-      this.base.x + THREE.MathUtils.clamp(w.x * 0.075, -0.085, 0.085) + turn,
-      this.base.y + THREE.MathUtils.clamp(w.y * 0.075, -0.09, 0.09) + Math.abs(motion.sway) * 0.006,
-      this.base.z + w.z * 0.055,
-    );
+    applyTrackedPosition(this.root.position, pose, this.space, motion);
+    this.root.scale.setScalar(THREE.MathUtils.lerp(this.space.scale, this.space.trackedScale, pose.presence));
     this.root.rotation.y = -pose.roll * 0.4 + pose.yaw * 0.5 + motion.sway * 0.04 - turn * 0.55;
     this.root.rotation.x = pose.pitch * 0.35;
-    this.root.rotation.z = turn * 0.22;
+    this.root.rotation.z = turn * 0.22 + travelRoll(pose.wrist.x, pose.presence);
   }
 }
 
