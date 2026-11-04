@@ -4,8 +4,9 @@ import { Character, type Appearance } from './character';
 import type { HumanAssets } from './human';
 import { HorrorGame, type HorrorResult, type HorrorState } from './horror';
 import { BOTS, GAMES, PALETTE } from './games';
-import { posesFromHands, type HandPosePair, type TrackedHand } from './hand-pose';
+import { neutralHandPosePair, posesFromHands, type HandPosePair, type TrackedHand } from './hand-pose';
 import type { OnlinePeer } from './online';
+import { FirstPersonHands } from './first-person-hands';
 import {
   QualityManager,
   deviceHints,
@@ -115,9 +116,18 @@ export class World {
     appearance: Appearance;
   }>();
   private readonly portals: Portal[] = [];
+  private readonly portalHits: THREE.Object3D[] = [];
+  private readonly centerNdc = new THREE.Vector2(0, 0);
+  private portalAimed = false;
+  private lobbySkipMouse = 0;
   private readonly heroOrbs: Orb[] = [];
   private readonly centerpiece = new THREE.Group();
   private readonly heroPlatform = new THREE.Group();
+  /** Viewmodel first-person w Atrium (te same dłonie awatara, bez narzędzia). */
+  private readonly lobbyHands: FirstPersonHands;
+  private firstPerson = true;
+  private lastLobbyYaw = 0;
+  private lastHandPair: HandPosePair = neutralHandPosePair();
 
   private readonly clock = new THREE.Clock();
   private readonly raycaster = new THREE.Raycaster();
@@ -147,6 +157,9 @@ export class World {
   private previewAngle = 0.35;
   private yaw = 0.35;
   private pitch = 0.3;
+  /** Osobny kąt patrzenia w FP: kamera 3D unosi się w górę przy tym samym
+   *  kącie, który w first-person oznaczałby gapienie się w ciemne niebo. */
+  private lookPitch = -0.08;
   private dragging = false;
   private dragMoved = 0;
   private pointerStart = { x: 0, y: 0 };
@@ -211,6 +224,12 @@ export class World {
       appearance: options.appearance,
     });
 
+    this.lobbyHands = new FirstPersonHands({
+      assets: this.assets,
+      appearance: options.appearance,
+    });
+    this.lobbyCamera.rotation.order = 'YXZ';
+
     this.horror.setLookSensitivity(deviceHints().coarse ? 1.15 : 1);
     this.buildHero();
     this.buildLobby();
@@ -250,11 +269,45 @@ export class World {
     this.joystick.x = 0;
     this.joystick.y = 0;
     this.horror.setActive(mode === 'game');
+    // W first-person własna sylwetka zasłaniałaby kamerę. Pozycja i tak jest
+    // wysyłana do Presence, więc inni gracze widzą nasz awatar normalnie.
+    this.player.root.visible = !(mode === 'lobby' && this.firstPerson);
     if (mode === 'lobby') {
       this.camReady = false;
     } else {
       this.setLabelsVisible(true);
     }
+  }
+
+  /** Celownik FP trafia w portal? main.ts podświetla wtedy krzyżyk. */
+  get crosshairOnPortal(): boolean {
+    return this.portalAimed;
+  }
+
+  /** Klik w wolny kursor: true, jeśli trafił w portal (wtedy nie lockujemy). */
+  tryLobbyClick(clientX: number, clientY: number): boolean {
+    if (this.mode !== 'lobby') return false;
+    return this.pickPortal(clientX, clientY);
+  }
+
+  /** Klik przy przechwyconym kursorze: użyj tego, co jest na środku ekranu. */
+  useFirstPersonPortal(): boolean {
+    if (this.mode !== 'lobby' || !this.firstPerson) return false;
+    this.lobbyCamera.updateMatrixWorld();
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    return this.pickPortal(rect.left + rect.width / 2, rect.top + rect.height / 2);
+  }
+
+  /** Atrium: widok z oczu (domyślny) albo klasyczna kamera za plecami. */
+  get firstPersonView(): boolean {
+    return this.firstPerson;
+  }
+
+  setFirstPerson(enabled: boolean): void {
+    if (this.firstPerson === enabled) return;
+    this.firstPerson = enabled;
+    this.camReady = false;
+    this.player.root.visible = !(this.mode === 'lobby' && enabled);
   }
 
   setPlayerColor(color: string): void {
@@ -270,6 +323,7 @@ export class World {
     this.heroAvatar.setAppearance(appearance);
     this.player.setAppearance(appearance);
     this.horror.setAvatar(this.assets, appearance);
+    this.lobbyHands.setAppearance(this.assets, appearance);
   }
 
   /** Pozycja lokalnego gracza wysyłana do Supabase Realtime presence. */
@@ -326,19 +380,28 @@ export class World {
     return this.remote.size;
   }
 
-  /** Kąty palców z kamerki trafiają i na awatary, i na dłonie first-person. */
+  /** Ostatni odczyt — panel kamerki pokazuje z niego pozycję x/y/z. */
+  get handPosePair(): HandPosePair {
+    return this.lastHandPair;
+  }
+
+  /** Kąty palców i pozycja 3D z kamerki trafiają na awatary i dłonie FP. */
   setHandPose(hands: TrackedHand[], aspect: number): void {
     const pair = posesFromHands(hands, aspect);
+    this.lastHandPair = pair;
     this.heroAvatar.setHandPose(pair);
     this.player.setHandPose(pair);
     this.horror.setHandPose(pair);
+    this.lobbyHands.setHandPose(pair);
   }
 
   /** Bezpośredni odczyt (np. testy / inne źródła śledzenia). */
   setHandPosePair(pair: HandPosePair): void {
+    this.lastHandPair = pair;
     this.heroAvatar.setHandPose(pair);
     this.player.setHandPose(pair);
     this.horror.setHandPose(pair);
+    this.lobbyHands.setHandPose(pair);
   }
 
   /** Zbliżenie podglądu na potrzeby edytora postaci. */
@@ -381,6 +444,12 @@ export class World {
       this.renderer.autoClear = false;
       this.renderer.clearDepth();
       this.renderer.render(this.horror.viewScene, this.horror.viewCamera);
+      this.renderer.autoClear = true;
+    } else if (this.mode === 'lobby' && this.firstPerson) {
+      this.renderer.render(this.lobbyScene, this.lobbyCamera);
+      this.renderer.autoClear = false;
+      this.renderer.clearDepth();
+      this.renderer.render(this.lobbyHands.scene, this.lobbyHands.camera);
       this.renderer.autoClear = true;
     } else {
       this.renderer.render(
@@ -694,6 +763,7 @@ export class World {
       group.add(frame, disc, hit, label.sprite);
       this.lobbyScene.add(group);
       this.portals.push({ hit, group, label, id: game.id, index: i });
+      this.portalHits.push(hit);
     });
 
     // Gracz
@@ -750,8 +820,30 @@ export class World {
     window.addEventListener('blur', () => this.keys.clear());
 
     const canvas = this.renderer.domElement;
+
+    // Atrium first-person z przechwyconym kursorem: nieskończone delty myszy,
+    // bez zatrzymywania się na krawędzi monitora (problem przy 2 ekranach).
+    document.addEventListener('pointerlockchange', () => {
+      if (document.pointerLockElement === canvas) this.lobbySkipMouse = 2;
+    });
+    window.addEventListener('mousemove', (event: MouseEvent) => {
+      if (this.mode !== 'lobby' || !this.firstPerson) return;
+      if (document.pointerLockElement !== canvas) return;
+      if (this.lobbySkipMouse > 0) {
+        this.lobbySkipMouse -= 1;
+        return;
+      }
+      const dx = THREE.MathUtils.clamp(event.movementX || 0, -600, 600);
+      const dy = THREE.MathUtils.clamp(event.movementY || 0, -600, 600);
+      this.yaw -= dx * 0.005;
+      this.lookPitch = THREE.MathUtils.clamp(this.lookPitch + dy * 0.002, -1.1, 1.1);
+    });
+
     canvas.addEventListener('pointerdown', (event: PointerEvent) => {
       if (this.mode === 'game') return;
+      // Klik z celownikiem obsługuje main.ts (useFirstPersonPortal) — nie
+      // uruchamiamy tu mechaniki przeciągania ani przechwytywania wskaźnika.
+      if (document.pointerLockElement === canvas) return;
       this.dragging = true;
       this.dragMoved = 0;
       this.pointerStart = { x: event.clientX, y: event.clientY };
@@ -761,8 +853,11 @@ export class World {
 
     canvas.addEventListener('pointermove', (event: PointerEvent) => {
       if (!this.dragging || this.mode === 'game') return;
-      const dx = event.clientX - this.pointerLast.x;
-      const dy = event.clientY - this.pointerLast.y;
+      if (document.pointerLockElement === canvas) return;
+      // movementX/Y nie zacina się na krawędzi monitora; clientX/Y zostaje
+      // jako fallback dla przeglądarek, które nie podają delt w PointerEvent.
+      const dx = event.movementX || event.clientX - this.pointerLast.x;
+      const dy = event.movementY || event.clientY - this.pointerLast.y;
       this.pointerLast = { x: event.clientX, y: event.clientY };
       this.dragMoved += Math.abs(dx) + Math.abs(dy);
 
@@ -772,6 +867,9 @@ export class World {
         // przesuwanie się światła po scenie.
         if (this.previewClose) this.previewAngle -= dx * 0.008;
         else this.heroAngle -= dx * 0.008;
+      } else if (this.firstPerson) {
+        this.yaw -= dx * 0.005;
+        this.lookPitch = THREE.MathUtils.clamp(this.lookPitch + dy * 0.002, -1.1, 1.1);
       } else {
         this.yaw -= dx * 0.005;
         this.pitch = THREE.MathUtils.clamp(this.pitch + dy * 0.002, -0.12, 0.8);
@@ -781,8 +879,12 @@ export class World {
     const endDrag = (event: PointerEvent) => {
       if (!this.dragging) return;
       this.dragging = false;
+      if (document.pointerLockElement === canvas) return;
+      // W FP pojedynczy klik obsługuje main.ts (celownik / ponowny lock),
+      // żeby portal nie otwierał się dwa razy. W 3D zostaje stary mechanizm.
       if (
         this.mode === 'lobby' &&
+        !this.firstPerson &&
         this.dragMoved < 8 &&
         Math.hypot(
           event.clientX - this.pointerStart.x,
@@ -796,21 +898,19 @@ export class World {
     canvas.addEventListener('pointercancel', endDrag);
   }
 
-  private pickPortal(clientX: number, clientY: number): void {
+  private pickPortal(clientX: number, clientY: number): boolean {
     const rect = this.renderer.domElement.getBoundingClientRect();
     const ndc = new THREE.Vector2(
       ((clientX - rect.left) / rect.width) * 2 - 1,
       -((clientY - rect.top) / rect.height) * 2 + 1,
     );
     this.raycaster.setFromCamera(ndc, this.lobbyCamera);
-    const hits = this.raycaster.intersectObjects(
-      this.portals.map((portal) => portal.hit),
-      false,
-    );
-    if (hits.length > 0) {
-      const id = hits[0].object.userData.gameId as string | undefined;
-      if (id) this.portalHandler?.(id);
-    }
+    const hits = this.raycaster.intersectObjects(this.portalHits, false);
+    const id = hits.length > 0
+      ? hits[0].object.userData.gameId as string | undefined
+      : undefined;
+    if (id) this.portalHandler?.(id);
+    return Boolean(id);
   }
 
   private resize(): void {
@@ -824,6 +924,7 @@ export class World {
       camera.updateProjectionMatrix();
     }
     this.horror.setViewport(aspect);
+    this.lobbyHands.setViewport(aspect);
   }
 
   // --------------------------------------------------------------------- loop
@@ -856,6 +957,14 @@ export class World {
     } else {
       this.updateLobby(dt);
       this.renderer.render(this.lobbyScene, this.lobbyCamera);
+      if (this.firstPerson) {
+        // Dłonie rysujemy na osobnej scenie po wyczyszczeniu Z, dokładnie tak
+        // jak w grze — dzięki temu nie przecinają się z awatarami i portalami.
+        this.renderer.autoClear = false;
+        this.renderer.clearDepth();
+        this.renderer.render(this.lobbyHands.scene, this.lobbyHands.camera);
+        this.renderer.autoClear = true;
+      }
     }
   }
 
@@ -889,6 +998,8 @@ export class World {
   }
 
   private updateLobby(dt: number): void {
+    const turn = dt > 0 ? THREE.MathUtils.clamp((this.yaw - this.lastLobbyYaw) / dt, -6, 6) : 0;
+    this.lastLobbyYaw = this.yaw;
     let ix = this.joystick.x;
     let iy = this.joystick.y;
     if (this.keys.has('KeyW') || this.keys.has('ArrowUp')) iy += 1;
@@ -935,6 +1046,13 @@ export class World {
       this.player.root.rotation.y = approachAngle(
         this.player.root.rotation.y,
         targetYaw,
+        dt * 9,
+      );
+    } else if (this.firstPerson) {
+      // W FP awatar (widziany przez innych graczy) patrzy tam, gdzie kamera.
+      this.player.root.rotation.y = approachAngle(
+        this.player.root.rotation.y,
+        this.yaw + Math.PI,
         dt * 9,
       );
     }
@@ -1012,24 +1130,49 @@ export class World {
 
     this.centerpiece.rotation.y = Math.sin(this.elapsed * 0.08) * 0.05;
 
-    const target = this.vTarget.set(position.x, position.y + 1.3, position.z);
-    const distance = 8.2 * Math.cos(this.pitch * 0.55);
-    const desired = this.vDesired.set(
-      target.x + Math.sin(this.yaw) * distance,
-      target.y + 2.1 + this.pitch * 5.5,
-      target.z + Math.cos(this.yaw) * distance,
-    );
-    const lookAt = this.vLookAt.copy(target);
-
-    if (!this.camReady) {
-      this.lobbyCamera.position.copy(desired);
-      this.camTarget.copy(lookAt);
-      this.camReady = true;
+    if (this.firstPerson) {
+      // Kamera w oczach postaci. Pozycji NIE wygładzamy: opóźnienie kamery
+      // względem ruchu w FP wywołuje mdłości. Kołysanie jest bardzo małe.
+      const bob = Math.sin(this.elapsed * 9) * 0.011 * intensity;
+      this.lobbyCamera.position.set(
+        position.x,
+        position.y + 1.62 + bob,
+        position.z,
+      );
+      this.lobbyCamera.rotation.set(this.lookPitch, this.yaw, 0, 'YXZ');
+      this.lobbyHands.update(dt, bob * 9, turn);
     } else {
-      this.lobbyCamera.position.lerp(desired, 1 - Math.exp(-dt * 6));
-      this.camTarget.lerp(lookAt, 1 - Math.exp(-dt * 9));
+      const target = this.vTarget.set(position.x, position.y + 1.3, position.z);
+      const distance = 8.2 * Math.cos(this.pitch * 0.55);
+      const desired = this.vDesired.set(
+        target.x + Math.sin(this.yaw) * distance,
+        target.y + 2.1 + this.pitch * 5.5,
+        target.z + Math.cos(this.yaw) * distance,
+      );
+      const lookAt = this.vLookAt.copy(target);
+
+      if (!this.camReady) {
+        this.lobbyCamera.position.copy(desired);
+        this.camTarget.copy(lookAt);
+        this.camReady = true;
+      } else {
+        this.lobbyCamera.position.lerp(desired, 1 - Math.exp(-dt * 6));
+        this.camTarget.lerp(lookAt, 1 - Math.exp(-dt * 9));
+      }
+      this.lobbyCamera.lookAt(this.camTarget);
+      // Animatory dłoni pracują też w 3D, żeby przełączenie widoku nie skakało.
+      this.lobbyHands.update(dt, 0, turn);
     }
-    this.lobbyCamera.lookAt(this.camTarget);
+
+    // Celownik: jeden rzut promienia z samego środka ekranu, tylko przy locku.
+    this.portalAimed = false;
+    if (this.firstPerson && document.pointerLockElement === this.renderer.domElement) {
+      // Kąt kamery zmieniamy w tej samej klatce — bez odświeżenia macierzy
+      // promień celownika korzystałby z poprzedniej klatki (widoczne przy 2 FPS).
+      this.lobbyCamera.updateMatrixWorld();
+      this.raycaster.setFromCamera(this.centerNdc, this.lobbyCamera);
+      this.portalAimed = this.raycaster.intersectObjects(this.portalHits, false).length > 0;
+    }
 
     // Etykiety trzymają stały rozmiar na ekranie, nawet gdy ktoś podejdzie blisko.
     const camera = this.lobbyCamera.position;

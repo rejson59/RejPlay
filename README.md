@@ -9,6 +9,11 @@ własnego serwera, ale gra bez połączenia z bazą nadal działa lokalnie.
 Nie ma katalogu wielu światów, zapowiedzi gier, karuzeli ani zmyślonych metryk.
 W `public/art/` jest jeden plik: `house.jpg` (kafelek gry i baner).
 
+**v0.5:** pełna pozycja dłoni w 3D (x / y / głębokość) zamiast tylko palców
+i drobnych ruchów nadgarstka, first-person w Atrium, przechwycenie kursora
+z pełnym obrotem 360° dla wielu monitorów, adaptacyjne wygładzanie i czułość
+ruchu do ustawienia na żywo.
+
 ---
 
 ## Co działa teraz
@@ -36,8 +41,8 @@ momentu załadowania modeli.
 Siedmiokrokowy modal (strona główna, lewy pasek, baner, start gry). Nawigacja:
 `Dalej` / `Wstecz`, kropki, strzałki, `Esc`. Ilustracje to czysty CSS i tekst.
 
-Kroki: ruch bez blokady kursora → trzy narzędzia → skanowanie `E` →
-foto-dowód `P` → nalot → notatnik `J` → raport i wyjście.
+Kroki: ruch z przechwyconym kursorem (pełny obrót 360°) → trzy narzędzia →
+skanowanie `E` → foto-dowód `P` → nalot → notatnik `J` → raport i wyjście.
 
 ### Edytor postaci
 
@@ -79,12 +84,26 @@ obu dłoni na `<canvas>` nad podglądem.
 
 **To nie jest rozpoznawanie gestów ani odtwarzanie animacji.** Model zwraca 21
 punktów 3D na dłoń; `src/hand-pose.ts` liczy z nich **kąty zgięcia 15 stawów**
-(5 palców × 3 ogniwa), rozstawienie, roll, pitch, yaw oraz **pozycję nadgarstka
-w 3D** (x / y / głębokość z punktu 0). `src/human.ts` odwzorowuje kąty na kości
-`Bip01_*_Finger*` awatarów, a `src/view-hands.ts` na dłonie first-person.
-Poruszenie jednym palcem przed kamerą porusza tym samym palcem awatara —
-z wygładzaniem, bez cooldownu, bez „wykrytego gestu”. Przesunięcie dłoni w
-kadrze przesuwa całą dłoń awatara w lewo/prawo, górę/dół i bliżej/dalej kamery.
+(5 palców × 3 ogniwa), rozstawienie, roll, pitch, yaw oraz **pełną pozycję dłoni
+w 3D**. `src/human.ts` odwzorowuje kąty na kości `Bip01_*_Finger*`, a pozycję
+na `UpperArm` / `Forearm` awatara; `src/view-hands.ts` prowadzi dłonie
+first-person. Poruszenie jednym palcem przed kamerą porusza tym samym palcem
+awatara — z wygładzaniem, bez cooldownu, bez „wykrytego gestu”.
+
+**Pozycja 3D (v0.5).** Kadr kamerki jest mapowany liniowo na przestrzeń przed
+kamerą: `x` steruje poziomem w całym kadrze (dłoń w prawo → dłoń w prawo,
+bez odwrócenia lustra), `y` wysokością, a `z` głębokością wyliczoną z rozmiaru
+dłoni (odległość nadgarstek → nasada palca środkowego; MediaPipe `lm.z[0]` jest
+względne i nie nadaje się do tego celu). Dłonie pierwszoosobowe wędrują po
+całym ekranie, a `presence` wygładza powrót do spoczynku, gdy dłoń zniknie.
+W pionie zakres jest celowo ograniczony do dolnej połowy kadru: przy pełnym 1:1
+do góry wjeżdżałoby całe przedramię awatara i zasłaniało widok.
+
+Wygładzanie pozycji jest **adaptacyjne**: szybki ruch skraca czas tłumienia
+(brak „gumy”), a bezruch wydłuża go i wycina szum detekcji. Suwak
+**„Odpowiedź pozycji 3D”** w panelu kamerki pozwala wybrać między
+`Płynnie` a `Bardzo 1:1` (`rejplay:hand-responsiveness`). Panel pokazuje też
+na żywo wartości `x / y / z` obu dłoni.
 
 **Dłonie first-person to oryginalne dłonie awatara.** Nie ma już osobnego
 proceduralnego viewmodelu z kapsułek. `AvatarViewHand` klonuje rigowany
@@ -137,6 +156,45 @@ na dole. Viewmodel dostosowuje FOV, rozstaw i skalę dłoni do proporcji ekranu 
 na wąskim telefonie dłonie nie znikają poza kadrem ani nie zasłaniają połowy
 ekranu. Hybrydowe wykrywanie dotyku obsługuje też tablety z myszą.
 
+### Atrium first-person i dłonie przed oczami (v0.5)
+
+Atrium ma teraz **widok z oczu** jako domyślny: kamera na wysokości 1,62 m,
+własna sylwetka ukryta (dla innych graczy w Presence jest widoczna normalnie),
+a przed oczami widać **te same rigowane dłonie awatara** co w grze — bez
+narzędzia, z rozluźnionym chwytem. `src/first-person-hands.ts` trzyma osobną,
+lekką scenę viewmodelu (własne światło, czysty Z-buffer), rysowaną przez ten
+sam renderer po scenie lobby. Kamerka prowadzi tu dłonie w całym kadrze,
+więc wrażenie jest bliskie VR, ale bez gogli.
+
+`V` lub przycisk **„Widok: z oczu / 3D”** wraca do dawnej kamery za plecami
+(gdzie widać całą postać i ruchy ramion). Wybór zapisuje się w
+`rejplay:lobby-view`. Zdjęcie `P` w FP składa scenę lobby i viewmodel w jedno
+PNG. Portal działa w obu widokach: przy wolnym kursorze klika się go myszą,
+a przy przechwyconym — celownikiem z samego środka ekranu (podświetla się,
+gdy trafia w portal).
+
+### Mysz, dwa monitory i pełny obrót 360° (v0.5)
+
+Bez przechwycenia kursora ruch myszy zatrzymywał się na krawędzi okna: na dwóch
+monitorach kursor uciekał na drugi ekran, przeglądarka przestawała wysyłać
+`movementX/Y` i nie dało się obrócić o pełny kąt. Teraz po starcie rundy gra
+(prosząc o `unadjustedMovement`, z fallbackiem na zwykły lock) przejmuje kursor,
+a delty są nieograniczone krawędzią ekranu — działa też w Atrium FP po jednym
+kliku w widok 3D.
+
+- pierwsze 1–2 zdarzenia `mousemove` po locku są ignorowane (skok
+  „wyśrodkowania” kursora potrafił obrócić kamerę o pół obrotu),
+- `Esc` tylko zwalnia kursor, dzięki czemu HUD, narzędzia i karty zjaw w
+  notatniku są klikalne; ponowne `Esc` wychodzi z gry,
+- `J` / `Tab` otwierając notatnik zwalnia kursor, zamykając — przejmuje go
+  z powrotem; ekran wyniku i wyjście zawsze zwalniają blokadę,
+- suwak w intro oraz `[` / `]` zmieniają czułość myszy w każdej chwili
+  (`rejplay:look-sensitivity`, 0,6×–2×),
+- gdy przeglądarka odmówi locka (np. osadzona ramka bez `allow="pointer-lock"`),
+  podpowiedź tłumaczy fallback: przytrzymanie lewego przycisku i trzymanie
+  kursora przy krawędzi okna daje **ciągły** obrót oparty o zegar ścienny,
+  więc nawet przy 2 FPS nie zwalnia razem z animacją.
+
 ### Lobby `Atrium` i multiplayer
 
 Spokojna, filmowa scena: beton, ciepłe latarnie, księżyc, obelisk, brama.
@@ -148,8 +206,9 @@ Spokojna, filmowa scena: beton, ciepłe latarnie, księżyc, obelisk, brama.
 - **wspólny czat** zapisywany w `rejplay_chat` i dostarczany przez
   `postgres_changes` (historia 12 ostatnich wiadomości),
 - 4 boty demonstracyjne, lista graczy z odznaką „online”,
-- `WASD` / strzałki, `Spacja`, przeciąganie myszą, sterowanie dotykowe,
-- `E` / **Machaj** — emote bez VR; kamerka natomiast steruje palcami 1:1.
+- `WASD` / strzałki, `Spacja`, przeciąganie myszą lub pointer lock, dotyk,
+- `V` — pierwszoosobowy widok z oczu ↔ kamera trzecioosobowa,
+- `E` / **Machaj** — emote bez VR; kamerka steruje palcami **i pozycją 3D**.
 
 ### Supabase `rejson-widgets`
 
@@ -210,8 +269,9 @@ trzy narzędzia, sześć zjaw.
 | Nerwy | maleją z czasem, szybciej po ciemku, podczas zjawisk i nalotu |
 | Raport | `J` / `Tab` → wybierz zjawę; pomyłka kosztuje 24 nerwy |
 
-Sterowanie: `WASD` + mysz (`movementX/Y`, bez pointer locku), `Shift` bieg,
-`F` latarka, `Esc` / `← Wyjdź` powrót. Na dotyku: joystick + `Skanuj`, `Bieg`,
+Sterowanie: `WASD` + mysz z **pointer lockiem** (nieograniczone `movementX/Y`,
+pełny obrót 360°), `Shift` bieg, `F` latarka, `Esc` najpierw zwalnia kursor,
+ponowne `Esc` / `← Wyjdź` wychodzi z gry. Na dotyku: joystick + `Skanuj`, `Bieg`,
 `Foto`, `Narzędzie`, `Notatnik`, `Latarka` (przyciski trzymane palcem mają
 wizualny stan wciśnięcia).
 
@@ -230,7 +290,10 @@ wizualny stan wciśnięcia).
 | `F` | latarka (gra) |
 | `J` / `Tab` | notatnik (gra) |
 | `Shift` | bieg (gra) |
-| `Esc` | zamknięcie kamerki / samouczka / edytora (poza grą) · wyjście z gry |
+| `V` | Atrium: widok z oczu ↔ kamera za plecami (`rejplay:lobby-view`) |
+| klik w widok 3D | przejęcie kursora; przy locku w Atrium = użyj portalu pod celownikiem |
+| `[` `]` | czułość myszy w trakcie rundy (`rejplay:look-sensitivity`) |
+| `Esc` | w grze / FP: najpierw zwalnia kursor, ponowne `Esc` wychodzi; poza grą zamyka kamerki / samouczek / edytor |
 
 ---
 
@@ -271,8 +334,9 @@ src/performance.ts             adaptacyjna jakość: profile, EMA klatek, DPR, c
 src/character.ts               slot gracza: rigowana postać + zastępnik
 src/human.ts                   13 GLB, maski głowy/ubrania, retarget dłoni, kolory skóry
 src/hand-tracking.ts           getUserMedia + MediaPipe Hands: 21 punktów obu dłoni
-src/hand-pose.ts               21 punktów → 15 kątów, rozstaw, obroty, pozycja nadgarstka 3D
+src/hand-pose.ts               21 punktów → 15 kątów, rozstaw, obroty, pozycja dłoni 3D
 src/view-hands.ts              prawdziwe dłonie awatara (SkinnedMesh) + narzędzie LCD
+src/first-person-hands.ts      wspólny viewmodel dłoni first-person dla Atrium
 src/online.ts                  Supabase Realtime Presence / czat / profile / zdarzenia
 src/real-props.ts              gotowe rekwizyty CC0 Poly Haven
 src/horror-decor.ts            proceduralne tekstury, meble, światła i kurz
@@ -315,7 +379,7 @@ public/art/                    house.jpg — jedyna okładka
 | 8 strojów w wariantach męskich **i damskich** (poprawne UV) | Systemu warstw ubioru / fizyki tkanin |
 | Animacje motion capture: idle, chód, machanie | Mimiki twarzy i trackingu całego ciała |
 | Kolor skóry na twarzy i dłoniach, kolor włosów na całej głowie | Pełnego kreatora twarzy, wagi, wieku |
-| 21 punktów → 15 stawów + pozycja nadgarstka 3D, 2 dłonie naraz | Śledzenia łokcia i ramion (jest nadgarstek) |
+| 21 punktów → 15 stawów + pozycja dłoni x/y/z + ramiona, 2 dłonie naraz | Śledzenia łokcia z osobnego sensora (kąt wyliczamy z pozycji) |
 | 8 gotowych modeli CC0 z PBR, jeden renderer, światła PBR | Metahuman / silnika typu Unreal w przeglądarce |
 | Auto jakość (DPR, cienie, kurz, fps) i układ dotykowy na telefon/tablet | Profilowania na realnym GPU i fizycznych urządzeniach |
 | Prawdziwych graczy, czat i profile w Supabase | Serwerowego autorytatywnego world state / anty-cheat |

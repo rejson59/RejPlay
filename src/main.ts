@@ -15,6 +15,7 @@ import { loadHumanAssets, type HumanAssets } from './human';
 import type { HorrorResult, HorrorState } from './horror';
 import { World } from './world';
 import { HandTracker } from './hand-tracking';
+import { handResponsiveness, setHandResponsiveness } from './hand-pose';
 import { OnlineClient, type OnlinePeer, type OnlineStatus } from './online';
 
 const $ = <T extends HTMLElement = HTMLElement>(selector: string): T => {
@@ -126,6 +127,11 @@ const skinList = $('#skin-list');
 const hairList = $('#hair-list');
 const outfitList = $('#outfit-list');
 const gameIntro = $('#game-intro');
+const pointerHint = $('#pointer-hint');
+const pointerHintText = $('#pointer-hint-text');
+const lobbyPointerHint = $('#lobby-pointer-hint');
+const lobbyPointerHintText = $('#lobby-pointer-hint-text');
+const lobbyCrosshair = $('#lobby-crosshair');
 const gameHud = $('#game-hud');
 const gameTools = $('#game-tools');
 const gameJournal = $('#game-journal');
@@ -157,6 +163,12 @@ const handVideo = $<HTMLVideoElement>('#hand-video');
 const handCanvas = $<HTMLCanvasElement>('#hand-canvas');
 const handReadout = $('#hand-readout');
 const handStatus = $('#hand-status');
+const handSpace = $('#hand-space');
+const handResponsivenessInput = $<HTMLInputElement>('#hand-responsiveness');
+const handResponsivenessValue = $('#hand-responsiveness-value');
+const lookSensitivityInput = $<HTMLInputElement>('#look-sensitivity');
+const lookSensitivityValue = $('#look-sensitivity-value');
+const lobbyViewToggle = $<HTMLButtonElement>('#lobby-view-toggle');
 const handToggles = document.querySelectorAll<HTMLElement>('[data-hand-toggle]');
 const livePill = $('#live-pill');
 const liveStatus = $('#live-status');
@@ -326,22 +338,65 @@ const handTracker = new HandTracker({
   video: handVideo,
   canvas: handCanvas,
   onFrame: (hands, aspect) => {
-    // Surowy odczyt 21 punktów na dłoń → kąty 15 stawów → kości awatara
-    // i dłonie first-person w grze. Zero klasyfikacji gestów, zero animacji
-    // wyzwalanych „rozpoznanym układem palców”.
+    // 21 punktów → 15 kątów stawów ORAZ pozycja x / y / głębokość całej dłoni.
+    // Trafia na kości awatara, ramiona i dłonie first-person (gra + Atrium).
+    // Zero klasyfikacji gestów, zero animacji wyzwalanych układem palców.
     world.setHandPose(hands, aspect);
     handReadout.textContent =
       hands.length === 0
         ? 'Pokaż dłonie w kadrze'
         : hands.length === 1
-          ? '1 dłoń · 15 stawów 1:1'
-          : '2 dłonie · 30 stawów 1:1';
+          ? '1 dłoń · palce + pozycja 1:1'
+          : '2 dłonie · palce + pozycja 1:1';
+    renderHandSpace();
   },
   onStatus: (message, kind) => {
     handStatus.textContent = message;
     handStatus.classList.toggle('is-error', kind === 'error');
   },
 });
+
+const fmtAxis = (value: number): string =>
+  `${value >= 0 ? '+' : ''}${value.toFixed(2)}`;
+
+/** Podgląd liczbowy: użytkownik widzi, że wysokość i głębokość też są czytane. */
+function renderHandSpace(): void {
+  const pair = world.handPosePair;
+  const side = (pose: typeof pair.L): string => pose.present
+    ? `x ${fmtAxis(pose.wrist.x)} · y ${fmtAxis(pose.wrist.y)} · z ${fmtAxis(pose.wrist.z)}`
+    : '—';
+  handSpace.textContent = pair.L.present || pair.R.present
+    ? `Pozycja 3D · L ${side(pair.L)} · P ${side(pair.R)}`
+    : 'Pozycja 3D: pokaż dłonie w kadrze';
+}
+
+const LOBBY_VIEW_KEY = 'rejplay:lobby-view';
+
+function syncLobbyViewButton(): void {
+  const fp = world.firstPersonView;
+  lobbyViewToggle.innerHTML = fp
+    ? 'Widok: z oczu <kbd>V</kbd>'
+    : 'Widok: 3D <kbd>V</kbd>';
+  lobbyViewToggle.setAttribute('aria-pressed', String(fp));
+  lobbyViewToggle.title = fp
+    ? 'Atrium first-person — dłonie awatara przed oczami. Kliknij, aby zobaczyć całą postać.'
+    : 'Kamera za plecami. Kliknij, aby wrócić do widoku z oczu.';
+}
+
+function toggleLobbyView(): void {
+  if (!worldReady) return;
+  const fp = !world.firstPersonView;
+  world.setFirstPerson(fp);
+  try { localStorage.setItem(LOBBY_VIEW_KEY, fp ? 'fp' : 'orbit'); } catch { /* tryb prywatny */ }
+  syncLobbyViewButton();
+  syncLobbyPointerUI();
+  showToast(
+    lobbyToast,
+    fp
+      ? 'Widok z oczu: przeciągnij, żeby się rozejrzeć. Kamerka prowadzi dłonie w całym kadrze.'
+      : 'Kamera za plecami — widzisz całą swoją postać. V wraca do widoku z oczu.',
+  );
+}
 
 function syncHandButtons(): void {
   const on = handTracker.active;
@@ -357,6 +412,9 @@ async function openHands(): Promise<void> {
     await handTracker.start();
     handPanel.classList.add('is-on');
     syncHandOverlay();
+    if (lobby.classList.contains('is-active')) {
+      showToast(lobbyToast, 'Kamerka działa. W widoku z oczu dłonie podążają za pozycją Twoich rąk — także w górę i w dół.');
+    }
   } catch (error) {
     handPanel.classList.remove('is-on');
     handReadout.textContent = 'Kamerka niedostępna';
@@ -373,6 +431,7 @@ function closeHands(): void {
   handReadout.textContent = 'Kamerka wyłączona';
   handStatus.textContent = 'Obraz nie opuszcza przeglądarki.';
   handStatus.classList.remove('is-error');
+  handSpace.textContent = 'Pozycja 3D: pokaż dłonie w kadrze';
   syncHandButtons();
 }
 
@@ -605,12 +664,15 @@ function enterLobby(): void {
   document.title = `${LOBBY_NAME} · RejPlay`;
   world.setPreviewClose(false);
   world.mount(lobbyStage, 'lobby');
+  // Nie przejmujemy kursora automatycznie: w Atrium jest sporo klikalnego UI
+  // (czat, narzędzia, kamerka). Gracz wchodzi w lock jednym klikiem w widok 3D.
+  syncLobbyPointerUI();
   online.update({ mode: 'lobby' });
   renderPlayerList();
   seedChat();
   recordVisit('plaza');
   online.event('lobby_enter');
-  showToast(lobbyToast, `${LOBBY_NAME} · WASD = ruch, E = machnięcie, kamerka = ruchy palców 1:1`);
+  showToast(lobbyToast, `${LOBBY_NAME} · widok z oczu: WASD = ruch, przeciągnij = rozglądanie, V = kamera 3D`);
 }
 
 function goHome(): void {
@@ -619,6 +681,8 @@ function goHome(): void {
   lobby.setAttribute('aria-hidden', 'true');
   home.setAttribute('aria-hidden', 'false');
   document.body.classList.remove('in-lobby');
+  releasePointerLock();
+  syncLobbyPointerUI();
   document.title = 'RejPlay — Demonofobia i Atrium 3D';
   chatInput.blur();
   online.update({ mode: 'home' });
@@ -676,6 +740,10 @@ function renderHorrorState(state: HorrorState): void {
   if (lightButton) lightButton.classList.toggle('is-active', state.flashlight);
 
   gameJournal.hidden = !state.journal;
+  // Notatnik ma klikalne karty zjaw, a ekran wyniku przyciski — kursor musi
+  // być wolny. Po zamknięciu notatnika klawiszem J przejmujemy go z powrotem.
+  if (state.journal || state.result) releasePointerLock();
+  syncPointerHint();
   const journalSignature = `${state.journal}|${evidenceSignature}|${state.canReport}`;
   if (state.journal && journalSignature !== lastJournalSignature) {
     lastJournalSignature = journalSignature;
@@ -759,6 +827,9 @@ function renderGameTools(): void {
 function showHorrorResult(result: HorrorResult): void {
   online.event(result.win ? 'game_win' : 'game_fail', result.ghost);
   roundActive = false;
+  pointerLockArmed = false;
+  releasePointerLock();
+  syncPointerHint();
   showToast(gameToast, result.win ? 'Raport przyjęty. Udało się rozpoznać zjawę.' : result.reason);
 }
 
@@ -776,9 +847,9 @@ const TUTORIAL_STEPS: TutorialStep[] = [
   {
     tag: 'Ruch',
     title: 'Wejdź do domu i rozejrzyj się',
-    text: 'Klawisze W A S D prowadzą postać, a myszką rozglądasz się bez blokady kursora. Shift to krótki sprint. Na telefonie użyj joysticka po lewej i przeciągnij palcem po prawej stronie ekranu.',
+    text: 'Klawisze W A S D prowadzą postać. Po starcie gra przechwytuje kursor, więc myszką obrócisz się o dowolny kąt — także przy dwóch monitorach. Esc zwalnia kursor do klikania HUD-u, klik w widok przejmuje go z powrotem. Shift to sprint, [ i ] zmieniają czułość. Na telefonie użyj joysticka i przeciągnij palcem.',
     glyph: 'W A S D',
-    caption: 'kursor zostaje wolny',
+    caption: 'pełny obrót 360° z blokadą kursora',
   },
   {
     tag: 'Narzędzia',
@@ -871,6 +942,159 @@ function closeTutorial(): void {
   button.textContent = 'Powtórz samouczek';
 }
 
+// --------------------------------------- blokada kursora / pełny obrót 360°
+// Bez pointer locku przy dwóch monitorach kursor ucieka poza okno, a przeglądarka
+// przestaje wysyłać movementX/Y — obrót „staje” na krawędzi ekranu. Blokada
+// daje nieograniczone delty myszy. Zwalniamy ją dla notatnika, wyniku i na Esc,
+// żeby ich przyciski (karty zjaw, wyjście) nadal dało się kliknąć. Działa tak
+// samo w grze i w first-person Atrium; tam klik z celownikiem używa portalu.
+const mouseCapable = window.matchMedia('(pointer: fine)').matches;
+/** Hybridowe laptopy/tablety: dotyk nie powinien wywoływać blokady kursora. */
+let lastPointerType = 'mouse';
+document.addEventListener('pointerdown', (event) => {
+  lastPointerType = event.pointerType;
+}, true);
+let pointerLockArmed = false;
+let lobbyLockArmed = false;
+let pointerWasLocked = false;
+let pointerLockDenied = false;
+let lastPointerUnlock = -10000;
+/** Krótkie okno tylko na ten sam klawisz Esc, który zwolnił kursor. */
+const UNLOCK_GRACE_MS = 220;
+
+function activeCanvas(): HTMLCanvasElement | null {
+  if (game.classList.contains('is-active')) return gameStage.querySelector('canvas');
+  if (lobby.classList.contains('is-active')) return lobbyStage.querySelector('canvas');
+  return null;
+}
+
+function pointerLocked(): boolean {
+  const canvas = activeCanvas();
+  return Boolean(canvas && document.pointerLockElement === canvas);
+}
+
+function gameLockAllowed(): boolean {
+  return Boolean(roundActive && pointerLockArmed && gameIntro.hidden
+    && gameJournal.hidden && gameResult.hidden);
+}
+
+function lobbyLockAllowed(): boolean {
+  return lobbyLockArmed && worldReady && world.firstPersonView
+    && lobby.classList.contains('is-active');
+}
+
+function plainPointerLock(canvas: HTMLCanvasElement): void {
+  try {
+    const result = canvas.requestPointerLock() as Promise<void> | void;
+    if (result && typeof result.catch === 'function') {
+      result.catch(() => { pointerLockDenied = true; syncPointerHint(); });
+    }
+  } catch {
+    pointerLockDenied = true;
+    syncPointerHint();
+  }
+}
+
+function requestPointerLock(force = false): void {
+  if (!mouseCapable || !worldReady || pointerLocked()) return;
+  if (!force && !gameLockAllowed() && !lobbyLockAllowed()) return;
+  const canvas = activeCanvas();
+  if (!canvas) return;
+  // Surowy ruch bez akceleracji systemowej = prawdziwe 1:1 myszy. Opcja nie
+  // jest wszędzie dostępna, więc odrzucenie/ wyjątek odpala zwykły wariant.
+  try {
+    const opts = { unadjustedMovement: true } as PointerLockOptions;
+    const result = canvas.requestPointerLock(opts) as Promise<void> | void;
+    if (result && typeof result.catch === 'function') result.catch(() => plainPointerLock(canvas));
+  } catch {
+    plainPointerLock(canvas);
+  }
+}
+
+function releasePointerLock(): void {
+  if (document.pointerLockElement) document.exitPointerLock();
+}
+
+function syncPointerHint(): void {
+  const locked = pointerLocked();
+  const g = gameLockAllowed();
+  const l = lobbyLockAllowed();
+  document.body.classList.toggle('pointer-locked', locked);
+  pointerHint.classList.toggle('is-visible', g && !locked);
+  lobbyPointerHint.classList.toggle('is-visible', l && !locked);
+  lobbyCrosshair.classList.toggle('is-on', l && locked);
+  pointerHintText.textContent = pointerLockDenied
+    ? 'Przeglądarka odmówiła przechwycenia kursora. Otwórz stronę w nowej karcie albo przytrzymaj lewy przycisk i trzymaj kursor przy krawędzi okna — obrót będzie ciągły.'
+    : 'Kliknij w widok, aby znów rozglądać się w pełnym zakresie 360°.';
+  lobbyPointerHintText.textContent = pointerLockDenied
+    ? 'Brak blokady kursora: przytrzymaj lewy przycisk i trzymaj kursor przy krawędzi okna, albo otwórz stronę w nowej karcie.'
+    : 'Kliknij w widok, by przechwycić kursor i rozglądać się bez końca. Celownik + klik otwierają portal.';
+}
+
+document.addEventListener('pointerlockchange', () => {
+  const locked = pointerLocked();
+  if (pointerWasLocked && !locked) lastPointerUnlock = performance.now();
+  pointerWasLocked = locked;
+  if (locked) pointerLockDenied = false;
+  syncPointerHint();
+});
+document.addEventListener('pointerlockerror', () => {
+  pointerLockDenied = true;
+  syncPointerHint();
+});
+
+/** Stan FP w Atrium: uzbraja lock, pokazuje celownik i zwalnia kursor w 3D. */
+function syncLobbyPointerUI(): void {
+  const fp = worldReady && lobby.classList.contains('is-active') && world.firstPersonView;
+  document.body.classList.toggle('in-lobby-fp', fp);
+  lobbyLockArmed = fp && mouseCapable;
+  if (!fp && document.pointerLockElement) releasePointerLock();
+  lobbyCrosshair.classList.remove('is-aimed');
+  syncPointerHint();
+}
+
+// Klik w sam widok 3D wznawia blokadę. HUD, narzędzia i notatnik są rodzeństwem
+// #game-stage, więc ich przyciski nie wywołają przejęcia kursora.
+gameStage.addEventListener('pointerdown', (event) => {
+  if (event.pointerType === 'touch') return;
+  requestPointerLock();
+});
+
+lobbyStage.addEventListener('pointerdown', (event) => {
+  if (event.pointerType === 'touch' || !worldReady || !world.firstPersonView) return;
+  // Przy już przechwyconym kursorze klik = „użyj” tego, co pod celownikiem.
+  if (pointerLocked()) {
+    world.useFirstPersonPortal();
+    return;
+  }
+  // Przy wolnym kursorze klik w portal wchodzi do gry (nie zabieramy kursora),
+  // a klik w pusty widok przejmuje go i pozwala rozglądać się w nieskończoność.
+  if (!world.tryLobbyClick(event.clientX, event.clientY)) requestPointerLock();
+});
+
+// ------------------------------------------------------------------ ustawienia
+
+const LOOK_KEY = 'rejplay:look-sensitivity';
+const HAND_KEY = 'rejplay:hand-responsiveness';
+let lookSensitivity = 1;
+
+function applyLookSensitivity(value: number, announce = false): void {
+  lookSensitivity = Math.min(2, Math.max(0.6, value));
+  if (worldReady) world.horror.setLookSensitivity(lookSensitivity);
+  lookSensitivityInput.value = String(lookSensitivity);
+  lookSensitivityValue.textContent = `${lookSensitivity.toFixed(1)}×`;
+  try { localStorage.setItem(LOOK_KEY, String(lookSensitivity)); } catch { /* tryb prywatny */ }
+  if (announce) showToast(gameToast, `Czułość myszy: ${lookSensitivity.toFixed(1)}× ([ / ] zmieniają w każdej chwili)`);
+}
+
+function applyHandResponsiveness(value: number): void {
+  const v = Math.min(2.2, Math.max(0.45, value));
+  setHandResponsiveness(v);
+  handResponsivenessInput.value = String(v);
+  handResponsivenessValue.textContent = v < 0.8 ? 'Płynnie' : v > 1.25 ? 'Bardzo 1:1' : '1:1';
+  try { localStorage.setItem(HAND_KEY, String(v)); } catch { /* tryb prywatny */ }
+}
+
 // -------------------------------------------------------------- wejście do gry
 
 function openGame(from: 'home' | 'lobby'): void {
@@ -891,6 +1115,10 @@ function openGame(from: 'home' | 'lobby'): void {
   home.setAttribute('aria-hidden', 'true');
   document.body.classList.add('in-game');
   document.body.classList.remove('in-lobby');
+  releasePointerLock();
+  lobbyLockArmed = false;
+  pointerLockArmed = false;
+  syncLobbyPointerUI();
   document.title = 'Demonofobia · RejPlay';
   recordVisit('demonofobia');
   online.update({ mode: 'game' });
@@ -919,12 +1147,19 @@ function startGameRound(): void {
   world.mount(gameStage, 'game'); // setActive(true) → HorrorGame.start()
   world.horror.beginInput();
   syncHandOverlay();
+  // To wciąż ten sam gest kliknięcia „Rozpocznij” — można przejąć kursor.
+  pointerLockArmed = mouseCapable && lastPointerType !== 'touch';
+  lobbyLockArmed = false;
+  requestPointerLock(true);
+  syncPointerHint();
   online.event('game_start');
   showToast(gameToast, 'Przytrzymaj E, aby skanować. 1 / 2 / 3 zmieniają narzędzia.');
 }
 
 function exitGame(): void {
   roundActive = false;
+  pointerLockArmed = false;
+  releasePointerLock();
   game.classList.remove('is-active');
   game.setAttribute('aria-hidden', 'true');
   document.body.classList.remove('in-game');
@@ -947,6 +1182,8 @@ function exitGame(): void {
     world.mount(heroStage, 'home');
     renderRecent();
   }
+  // Powrót do Atrium FP musi na nowo uzbroić lock i celownik.
+  syncLobbyPointerUI();
 }
 
 // ------------------------------------------------------------------- listeners
@@ -992,6 +1229,9 @@ let worldReady = false;
 function syncQualityLabel(): void {
   if (worldReady) qualityLabel.textContent = world.qualityControl.buttonLabel;
 }
+lobbyViewToggle.addEventListener('click', toggleLobbyView);
+lookSensitivityInput.addEventListener('input', () => applyLookSensitivity(Number(lookSensitivityInput.value)));
+handResponsivenessInput.addEventListener('input', () => applyHandResponsiveness(Number(handResponsivenessInput.value)));
 qualityToggle.addEventListener('click', () => {
   if (!worldReady) return;
   world.qualityControl.cycle();
@@ -1107,7 +1347,10 @@ gameJournal.addEventListener('click', (event) => {
     return;
   }
   const action = (event.target as HTMLElement).closest<HTMLElement>('[data-game-action]');
-  if (action?.dataset.gameAction === 'close-journal') world.horror.toggleJournal();
+  if (action?.dataset.gameAction === 'close-journal') {
+    world.horror.toggleJournal();
+    requestPointerLock(true);
+  }
 });
 
 gameResult.addEventListener('click', (event) => {
@@ -1138,17 +1381,44 @@ window.addEventListener('keydown', (event) => {
   }
   if (game.classList.contains('is-active')) {
     if (event.key === 'Escape') {
+      // Pierwsze Esc tylko zwalnia kursor. Przeglądarka robi to sama i czasem
+      // w ogóle nie dostarcza keydown, więc oba porządki zdarzeń są obsłużone.
+      if (pointerLocked() || performance.now() - lastPointerUnlock < UNLOCK_GRACE_MS) {
+        releasePointerLock();
+        syncPointerHint();
+        return;
+      }
       if (!gameIntro.hidden) exitGame();
       else if (world.horror && !gameJournal.hidden) world.horror.toggleJournal();
       else if (!gameResult.hidden) exitGame();
       else exitGame();
+      return;
+    }
+    if (event.code === 'KeyJ' || event.code === 'Tab') {
+      // Gesty klawisza: przy otwarciu oddajemy kursor notatnikowi, przy
+      // zamknięciu od razu przejmujemy go z powrotem (brak cooldownu Esc).
+      if (!gameJournal.hidden) requestPointerLock(true);
+      else releasePointerLock();
+    }
+    if (event.code === 'BracketLeft' || event.code === 'BracketRight') {
+      applyLookSensitivity(lookSensitivity + (event.code === 'BracketRight' ? 0.1 : -0.1), true);
     }
     return;
   }
   if (!lobby.classList.contains('is-active')) return;
   if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return;
   if (event.key === 'Escape') {
+    if (pointerLocked() || performance.now() - lastPointerUnlock < UNLOCK_GRACE_MS) {
+      releasePointerLock();
+      syncPointerHint();
+      return;
+    }
     goHome();
+    return;
+  }
+  if (event.code === 'KeyV') {
+    event.preventDefault();
+    toggleLobbyView();
     return;
   }
   if (event.code === 'KeyE') {
@@ -1309,6 +1579,18 @@ async function boot(): Promise<void> {
   });
   wireWorld();
   worldReady = true;
+  // Atrium domyślnie jest first-person, ale wybór użytkownika pamiętamy.
+  let lobbyFp = true;
+  try { lobbyFp = localStorage.getItem(LOBBY_VIEW_KEY) !== 'orbit'; } catch { /* tryb prywatny */ }
+  world.setFirstPerson(lobbyFp);
+  syncLobbyViewButton();
+  syncLobbyPointerUI();
+  // Na dotyku palec pokonuje krótszą drogę niż mysz — v0.4 dawała tam 1.15×.
+  const defaultLook = mouseCapable ? 1 : 1.15;
+  try { applyLookSensitivity(Number(localStorage.getItem(LOOK_KEY)) || defaultLook); }
+  catch { applyLookSensitivity(defaultLook); }
+  try { applyHandResponsiveness(Number(localStorage.getItem(HAND_KEY)) || handResponsiveness()); }
+  catch { applyHandResponsiveness(1); }
   syncQualityLabel();
   // Auto może zmienić profil w trakcie gry — odświeżamy etykietę raz na sekundę.
   window.setInterval(syncQualityLabel, 1000);
@@ -1338,6 +1620,7 @@ async function boot(): Promise<void> {
         : lobby.classList.contains('is-active') ? 'lobby' : 'home',
       ...world.getPlayerState(),
     });
+    lobbyCrosshair.classList.toggle('is-aimed', world.crosshairOnPortal);
   }, 160);
   // Tylko dev: umożliwia testom wstrzyknąć surowy odczyt dłoni bez kamery.
   if (import.meta.env.DEV) {

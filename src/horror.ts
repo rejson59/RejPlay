@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { buildDecor, type Decor } from './horror-decor';
-import { AvatarViewHand, FallbackViewHand, ToolViewmodel } from './view-hands';
+import { AvatarViewHand, FallbackViewHand, ToolViewmodel, viewmodelFov } from './view-hands';
 import type { HumanAssets } from './human';
 import type { Appearance } from './character';
 import { CHARACTER_MODELS } from './games';
@@ -173,6 +173,12 @@ export class HorrorGame {
   private lookVelocity = 0;
   private lastYaw = 0;
   private lookScale = 1;
+  /** Pierwsze ruchy po przejęciu kursora to „wyśrodkowanie” — ignorujemy je. */
+  private skipLockMouse = 0;
+  /** Fallback bez pointer locku: przytrzymanie myszy + ciągły obrót przy krawędzi. */
+  private mouseHeld = false;
+  private edgeX = 0;
+  private edgeY = 0;
   private touchSprint = false;
   private quality: QualityProfile | null = null;
   private viewportAspect = 16 / 9;
@@ -368,7 +374,7 @@ export class HorrorGame {
     this.viewportAspect = aspect;
     // Wąski ekran w pionie ma bardzo małe pole widzenia w poziomie —
     // poszerzamy FOV viewmodelu, żeby obie dłonie zmieściły się w kadrze.
-    this.viewFov = THREE.MathUtils.clamp(60 + Math.max(0, 0.9 - aspect) * 34, 60, 78);
+    this.viewFov = viewmodelFov(aspect);
     if (Math.abs(this.viewCamera.fov - this.viewFov) > 0.1) {
       this.viewCamera.fov = this.viewFov;
       this.viewCamera.updateProjectionMatrix();
@@ -467,21 +473,68 @@ export class HorrorGame {
     window.addEventListener('blur', () => {
       this.keys.clear();
       this.endInteract();
+      this.mouseHeld = false;
+      this.edgeX = 0;
+      this.edgeY = 0;
     });
 
-    // Rozglądanie bez pointer locku: movementX/Y działa przy wolnym kursorze,
-    // dzięki czemu przyciski HUD-u i notatnika pozostają klikalne.
+    // Dwa tryby myszy. Z pointer lockiem delty są nieograniczone krawędzią
+    // ekranu (kluczowe przy wielu monitorach) i trafiają prosto na canvas —
+    // bez filtra UI. Gdy kursor jest wolny, zachowujemy stary tryb: HUD i
+    // notatnik pozostają klikalne, a rozglądanie ignoruje ruch nad przyciskami.
+    // Gdy przeglądarka przejmie kursor, pierwsze 1–2 zdarzenia mousemove to
+    // skok „wyśrodkowania kursora” (setki pikseli). Bez ignora kamera robiła
+    // pół obrotu w ułamku sekundy, zanim gracz w ogóle dotknął myszy.
+    document.addEventListener('pointerlockchange', () => {
+      if (document.pointerLockElement === this.canvas) {
+        this.skipLockMouse = 2;
+        this.edgeX = 0;
+        this.edgeY = 0;
+      }
+    });
+
     document.addEventListener('mousemove', (event) => {
       if (!this.active || this.journal || this.result || this.dragging) return;
-      const target = event.target as HTMLElement | null;
-      if (target?.closest('button, input, select, .game__top, .game__tools, .game__touch')) return;
-      this.look(event.movementX, event.movementY);
+      // Przy locku delty są wiarygodne (brak krawędzi monitora), więc tylko
+      // odcinamy absurdalne skoki. Przy wolnym kursorze limit jest ciaśniejszy,
+      // bo wyskok na drugi ekran potrafi wygenerować tysiące pikseli naraz.
+      const locked = document.pointerLockElement === this.canvas;
+      const limit = locked ? 600 : 180;
+      const dx = THREE.MathUtils.clamp(event.movementX || 0, -limit, limit);
+      const dy = THREE.MathUtils.clamp(event.movementY || 0, -limit, limit);
+      if (locked) {
+        if (this.skipLockMouse > 0) {
+          this.skipLockMouse -= 1;
+          return;
+        }
+        this.look(dx, dy);
+        return;
+      }
+      // Wolny kursor: przy przytrzymanym przycisku ignorujemy filtr UI, żeby
+      // dało się rozglądać także nad paskiem narzędzi i HUD-em.
+      if (!this.mouseHeld) {
+        const target = event.target as HTMLElement | null;
+        if (target?.closest('button, input, select, .game__top, .game__tools, .game__touch')) return;
+      }
+      this.look(dx, dy);
+      this.trackEdge(event.clientX, event.clientY);
     });
 
-    // Przeciąganie palcem (mobile). Mysz obsługuje mousemove powyżej.
+    document.addEventListener('mousedown', (event) => {
+      if (this.active && event.button === 0 && event.target === this.canvas) this.mouseHeld = true;
+    });
+    document.addEventListener('mouseup', () => { this.mouseHeld = false; this.edgeX = 0; this.edgeY = 0; });
+    // Przeciąganie palcem (mobile) + przechwycenie myszy, gdy lock jest niedostępny.
     this.canvas.addEventListener('pointerdown', (event: PointerEvent) => {
       if (!this.active || this.journal || this.result) return;
-      if (event.pointerType === 'mouse') return;
+      if (event.pointerType === 'mouse') {
+        if (document.pointerLockElement !== this.canvas) {
+          // Bez tego kursor uciekający na drugi monitor przerywałby strumień
+          // mousemove nawet w trakcie trzymania przycisku.
+          try { this.canvas.setPointerCapture(event.pointerId); } catch { /* brak wsparcia */ }
+        }
+        return;
+      }
       this.dragging = true;
       this.lastPointer = { x: event.clientX, y: event.clientY };
       // Przechwytujemy palec: rozglądanie nie urwie się, gdy przesunie się
@@ -499,6 +552,17 @@ export class HorrorGame {
     };
     this.canvas.addEventListener('pointerup', endDrag);
     this.canvas.addEventListener('pointercancel', endDrag);
+  }
+
+  /** Zapisuje, jak blisko krawędzi okna jest kursor (do obrotu ciągłego). */
+  private trackEdge(x: number, y: number): void {
+    const edge = 72;
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    this.edgeX = x < edge ? -(edge - x) / edge
+      : x > w - edge ? (x - (w - edge)) / edge : 0;
+    this.edgeY = y < edge ? -(edge - y) / edge
+      : y > h - edge ? (y - (h - edge)) / edge : 0;
   }
 
   look(dx: number, dy: number): void {
@@ -730,7 +794,20 @@ export class HorrorGame {
     return false;
   }
 
-  private updateMovement(dt: number): void {
+  private updateMovement(dt: number, realDt = dt): void {
+    // Fallback dla przeglądarek / ramek, które odmówiły pointer locku: trzymając
+    // przycisk przy krawędzi okna, gracz obraca się dalej bez końca — kursor
+    // nie musi (i nie może) wychodzić na drugi monitor, żeby zrobić pełne 360°.
+    if (this.mouseHeld && document.pointerLockElement !== this.canvas
+      && (this.edgeX !== 0 || this.edgeY !== 0)) {
+      // Zegar ścienny, nie dławiony dt: na wolnym komputerze obrót nie zwalnia
+      // razem z animacją (inaczej fallback byłby bezużyteczny przy 2 FPS).
+      const step = Math.min(realDt, 0.25);
+      this.yawTarget -= this.edgeX * step * 2.8 * this.lookScale;
+      this.pitchTarget = THREE.MathUtils.clamp(
+        this.pitchTarget - this.edgeY * step * 1.9 * this.lookScale, -1.2, 1.2,
+      );
+    }
     // Rozglądanie z lekkim opóźnieniem: kamera nie „skacze” przy każdym
     // ruchu myszy, tylko dogania cel (jak głowa przy prawdziwym chodzie).
     const lookK = 1 - Math.exp(-dt * 18);
@@ -936,7 +1013,7 @@ export class HorrorGame {
 
     this.elapsed += realDt;
     this.seconds += realDt;
-    this.updateMovement(dt);
+    this.updateMovement(dt, realDt);
     this.updateScan(realDt);
     this.updateEvents(realDt);
     this.decor?.update(realDt, this.elapsed, this.flicker);

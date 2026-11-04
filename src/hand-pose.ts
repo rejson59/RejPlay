@@ -37,10 +37,15 @@ export interface HandPose {
   roll: number;
   /** Przechylenie dłoni w stronę / od kamery. */
   pitch: number;
-  /** Pozycja nadgarstka w kadrze, znormalizowana do −1..1 (x, y, głębokość). */
+  /** Pozycja nadgarstka w kadrze, znormalizowana do −1..1 (x, y, głębokość).
+   *  x: −1 = lewa krawędź odbitego podglądu, +1 = prawa; y: −1 = dół, +1 = góra;
+   *  z: +1 = dłoń bliżej kamery (większa), −1 = dalej. */
   wrist: { x: number; y: number; z: number };
   /** Obrót nadgarstka wokół osi pionowej. */
   yaw: number;
+  /** Wyładzona obecność dłoni (0..1) — pozwala wrócić do pozycji spoczynkowej
+   *  bez teleportu, gdy dłoń znika z kadru. */
+  presence: number;
   present: boolean;
 }
 
@@ -92,6 +97,21 @@ const GRIP_SPREAD = [0.20, -0.05, -0.01, 0.04, 0.10];
 
 const clamp = THREE.MathUtils.clamp;
 
+/**
+ * Jak bardzo dłoń ma „kleić się” do odczytu. 1 = domyślne 1:1, niżej =
+ * bardziej płynnie (przy drżącej kamerce), wyżej = jeszcze mniejsze opóźnienie.
+ * Ustawienie jest globalne, bo ten sam odczyt zasila awatara, grę i Atrium.
+ */
+let wristResponsiveness = 1;
+
+export function setHandResponsiveness(value: number): void {
+  wristResponsiveness = clamp(value, 0.45, 2.2);
+}
+
+export function handResponsiveness(): number {
+  return wristResponsiveness;
+}
+
 export function neutralHandPose(): HandPose {
   return {
     curl: Array.from({ length: 5 }, () => [0, 0, 0]),
@@ -100,6 +120,7 @@ export function neutralHandPose(): HandPose {
     pitch: 0,
     wrist: { x: 0, y: 0, z: 0 },
     yaw: 0,
+    presence: 0,
     present: false,
   };
 }
@@ -181,13 +202,21 @@ export function computeHandPose(hand: TrackedHand, aspect = 4 / 3): HandPose {
   const palm = dir(0, 9);
   pose.roll = clamp(Math.atan2(palm.x, -palm.y) * 0.8, -1.0, 1.0);
   pose.pitch = clamp(Math.asin(clamp(normal.z, -1, 1)) * 0.55, -0.5, 0.5);
-  // Trzeci wymiar: nie tylko kąty palców, ale gdzie w kadrze jest nadgarstek.
+  // Pozycja 3D: cały kadr kamerki → cała przestrzeń przed kamerą.
+  // Podgląd jest lustrzany (CSS scaleX(-1)), więc x trzeba odwrócić: dłoń
+  // przesunięta w prawo w podglądzie ma trafić w prawo także w grze.
   const w = hand.landmarks[0];
+  const middleBase = hand.landmarks[9];
+  // Odległość nadgarstek → nasada palca środkowego jest stabilnym przybliżeniem
+  // odległości od kamery: im dłoń bliżej, tym większy jest ten wektor. MediaPipe
+  // zwraca z względem nadgarstka, więc sam lm.z[0] nie nadaje się do tego celu.
+  const palmSpan = Math.hypot((middleBase.x - w.x) * aspect, middleBase.y - w.y);
   pose.wrist = {
-    x: clamp((w.x - 0.5) * 2, -1, 1),
+    x: clamp((0.5 - w.x) * 2, -1, 1),
     y: clamp((0.5 - w.y) * 2, -1, 1),
-    z: clamp(-w.z * 2.4, -1, 1),
+    z: clamp((palmSpan - 0.18) / 0.11, -1, 1),
   };
+  pose.presence = 1;
   pose.yaw = clamp(Math.atan2(normal.x, normal.z + 0.4) * 0.55, -0.8, 0.8);
   return pose;
 }
@@ -221,6 +250,7 @@ export function blendPose(current: HandPose, target: HandPose, k: number): void 
   current.wrist.x += (target.wrist.x - current.wrist.x) * k;
   current.wrist.y += (target.wrist.y - current.wrist.y) * k;
   current.wrist.z += (target.wrist.z - current.wrist.z) * k;
+  current.presence += ((target.present ? 1 : 0) - current.presence) * k;
   current.present = target.present;
 }
 
@@ -247,6 +277,7 @@ export class HandAnimator {
   private readonly pitchV = channel();
   private readonly yawV = channel();
   private readonly wristV = { x: channel(), y: channel(), z: channel() };
+  private readonly presenceV = channel();
   private readonly rest = neutralHandPose();
   private readonly tracked = neutralHandPose();
 
@@ -301,6 +332,7 @@ export class HandAnimator {
     r.wrist.x = Math.sin(time * 0.53 + side) * 0.012 * idle;
     r.wrist.y = Math.sin(time * 0.87 + side * 1.3) * 0.011 * idle;
     r.wrist.z = Math.sin(time * 0.41 + side) * 0.008 * idle;
+    r.presence = 0;
     r.present = false;
     return r;
   }
@@ -346,9 +378,20 @@ export class HandAnimator {
     out.roll = this.integrate(this.rollV, t.roll, d, 0.15);
     out.pitch = this.integrate(this.pitchV, t.pitch, d, 0.15);
     out.yaw = this.integrate(this.yawV, t.yaw, d, 0.16);
-    out.wrist.x = this.integrate(this.wristV.x, t.wrist.x, d, 0.19);
-    out.wrist.y = this.integrate(this.wristV.y, t.wrist.y, d, 0.19);
-    out.wrist.z = this.integrate(this.wristV.z, t.wrist.z, d, 0.21);
+    // Adaptacyjne wygładzanie pozycji: gdy dłoń jedzie szybko, tłumienie
+    // maleje (brak „gumy” i opóźnienia przy ruchu w lewo/prawo); gdy stoi,
+    // rośnie i wycina szum detekcji. Dzięki temu ruch jest jednocześnie 1:1
+    // i stabilny — bez stałego kompromisu między lagiem a drżeniem.
+    const speed = Math.hypot(
+      t.wrist.x - out.wrist.x,
+      t.wrist.y - out.wrist.y,
+      (t.wrist.z - out.wrist.z) * 0.5,
+    ) / d;
+    const wristTime = clamp(0.10 - speed * 0.020, 0.032, 0.10) / wristResponsiveness;
+    out.wrist.x = this.integrate(this.wristV.x, t.wrist.x, d, wristTime);
+    out.wrist.y = this.integrate(this.wristV.y, t.wrist.y, d, wristTime);
+    out.wrist.z = this.integrate(this.wristV.z, t.wrist.z, d, wristTime * 1.35);
+    out.presence = clamp(this.integrate(this.presenceV, target.present ? 1 : 0, d, 0.13), 0, 1);
     out.present = target.present;
     return out;
   }

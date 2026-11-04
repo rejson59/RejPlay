@@ -3047,3 +3047,131 @@ body.has-touch .toast--game {
 @media (max-width: 900px) {
   .home .search { max-width: 170px; }
 }
+
+/* ============================================================== v0.5 / FP + 3D
+   Panel kamerki pokazuje teraz też surową pozycję x / y / głębokość, a Atrium
+   ma przełącznik widoku z oczu. */
+
+.hand-panel__space {
+  margin-top: 4px;
+  color: var(--text-soft);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 10.5px;
+  line-height: 1.55;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+#lobby-view-toggle[aria-pressed='true'] {
+  border-color: rgba(200, 160, 106, 0.65);
+  color: #e4c99e;
+}
+
+@media (max-width: 1160px) {
+  .controls-hint { width: 210px; }
+  .controls-hint p { font-size: 10px; line-height: 1.5; }
+}
+
+/* ========================================================= v0.5 / pointer lock
+   Bez blokady kursora ruch myszy zatrzymuje się na krawędzi monitora (bardzo
+   widoczne przy dwóch ekranach). Podpowiedź pokazujemy tylko, gdy kursor jest
+   zwolniony — sama nigdy nie przechwytuje kliknięć w widok gry. */
+
+.pointer-hint {
+  position: absolute;
+  z-index: 30;
+  top: 88px;
+  left: 50%;
+  display: none;
+  width: min(430px, calc(100% - 40px));
+  padding: 12px 16px;
+  transform: translateX(-50%);
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  background: rgba(18, 23, 25, 0.9);
+  color: var(--text);
+  text-align: center;
+  pointer-events: none;
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.45);
+}
+.pointer-hint.is-visible { display: flex; flex-direction: column; gap: 4px; }
+.pointer-hint strong { color: var(--accent); font-family: var(--display); font-size: 15px; }
+.pointer-hint span { color: var(--muted); font-size: 11px; line-height: 1.5; }
+.pointer-hint kbd { padding: 1px 5px; font-size: 10px; }
+body.has-touch .pointer-hint { display: none !important; }
+body.pointer-locked .game__crosshair { opacity: 1; }
+
+@media (max-width: 760px) {
+  .pointer-hint { top: 68px; padding: 8px 12px; }
+  .pointer-hint span { font-size: 10px; }
+}
+
+/* ================================================ v0.5 / celownik i ustawienia */
+
+.lobby__crosshair {
+  position: absolute;
+  z-index: 9;
+  top: 50%;
+  left: 50%;
+  width: 18px;
+  height: 18px;
+  transform: translate(-50%, -50%);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease, transform 120ms ease;
+}
+.lobby__crosshair.is-on { opacity: 0.55; }
+.lobby__crosshair.is-aimed { opacity: 1; transform: translate(-50%, -50%) scale(1.35); }
+.lobby__crosshair::before,
+.lobby__crosshair::after {
+  content: '';
+  position: absolute;
+  background: rgba(255, 255, 255, 0.8);
+  border-radius: 2px;
+}
+.lobby__crosshair::before { top: 8px; left: 0; width: 18px; height: 2px; }
+.lobby__crosshair::after { left: 8px; top: 0; width: 2px; height: 18px; }
+.lobby__crosshair span {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  width: 6px;
+  height: 6px;
+  border: 1px solid var(--accent);
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.4);
+}
+.lobby__crosshair.is-aimed span { border-color: #f4d9a6; background: rgba(200, 160, 106, 0.35); }
+
+.pointer-hint--lobby { top: 96px; }
+body.in-lobby-fp .pointer-hint--lobby { z-index: 20; }
+
+.intro__slider,
+.hand-panel__slider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 4px 0 10px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.intro__slider { margin: 10px 0 14px; padding: 9px 12px; border: 1px solid var(--line); border-radius: 10px; }
+.hand-panel__slider { padding-top: 10px; border-top: 1px solid var(--line); }
+.intro__slider span,
+.hand-panel__slider span { flex: 0 0 auto; }
+.intro__slider input,
+.hand-panel__slider input { flex: 1 1 auto; min-width: 60px; accent-color: var(--accent); }
+.intro__slider output,
+.hand-panel__slider output {
+  flex: 0 0 62px;
+  color: var(--accent);
+  font-family: var(--display);
+  font-size: 12px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 760px) {
+  .pointer-hint--lobby { top: 62px; }
+  .lobby__crosshair { display: none; }
+}
