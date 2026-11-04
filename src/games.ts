@@ -18,14 +18,14 @@ export const GAMES: GameInfo[] = [
     id: 'demonofobia',
     title: 'Demonofobia',
     description:
-      'Dom przy Wrzosowej 12. Wejdź z latarką, zbierz trzy dowody i rozpoznaj zjawę, zanim skończą Ci się nerwy.',
+      'Dom przy Wrzosowej 12. Wejdź z latarką, zbierz sześć śladów i rozpoznaj zjawę, zanim skończą Ci się nerwy.',
     tag: 'Horror · Dochodzenie',
     players: 'Dochodzenie solo · Atrium online',
     color: '#8b7355',
     accent: '#3f4a4a',
     art: `${import.meta.env.BASE_URL}art/house.jpg`,
     ready: true,
-    claim: 'Nocne dochodzenie w opuszczonym domu. Trzy narzędzia, sześć zjaw, nalot i jedna szansa na poprawny raport.',
+    claim: 'Nocne dochodzenie w opuszczonym domu. Samochód-baza, pas z sześcioma narzędziami, dziesięć zjaw i nalot.',
   },
 ];
 
@@ -129,11 +129,3 @@ export function outfitBody(outfit: OutfitDef, female: boolean): string {
 export function getOutfit(id: string): OutfitDef {
   return OUTFITS.find((entry) => entry.id === id) ?? OUTFITS[0];
 }
-
-/** Boty w lobby. Docelowo zastąpią ich gracze z serwera pokoi. */
-export const BOTS = [
-  { name: 'Ada', color: '#6f8a86' },
-  { name: 'Miko', color: '#a4654c' },
-  { name: 'Wera', color: '#b9a37d' },
-  { name: 'Bruno', color: '#7d8791' },
-];

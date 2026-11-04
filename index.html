@@ -11,6 +11,17 @@
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='15' fill='%23141a1c'/%3E%3Cpath d='M32 9 55 32 32 55 9 32Z' fill='none' stroke='%23c8a06a' stroke-width='3' stroke-linejoin='round'/%3E%3Cpath d='M27 23 42 32 27 41Z' fill='%23e4c99e'/%3E%3Ccircle cx='32' cy='9' r='4.2' fill='%23e4c99e'/%3E%3C/svg%3E" />
     <title>RejPlay — Demonofobia i Atrium 3D</title>
 
+    <!-- Wspólne konto głównej strony. Tylko ten sam origin współdzieli
+         localStorage; w dev (localhost) skrypt celowo nie jest pobierany. -->
+    <script>
+      if (location.hostname === 'rejson59.github.io') {
+        var s = document.createElement('script');
+        s.src = '/js/rejson-account.js?v=1';
+        s.async = true;
+        document.head.appendChild(s);
+      }
+    </script>
+
     <!-- Motyw ZANIM pojawi się CSS: bez tego ciemny motyw mruga na jasno. -->
     <script>
       (function () {
@@ -108,6 +119,10 @@
                 <span class="quality-toggle__ico" aria-hidden="true">◈</span>
                 <span class="quality-toggle__label" id="quality-label">Jakość: auto</span>
               </button>
+              <button type="button" class="account-chip" id="account-chip" title="Konto rejson59.github.io — logowanie i rejestracja">
+                <span class="account-chip__dot" aria-hidden="true"></span>
+                <span id="account-name">Zaloguj się</span>
+              </button>
               <button type="button" class="profile-chip" data-action="open-editor" title="Edytuj postać">
                 <span class="profile-chip__avatar" id="chip-avatar" aria-hidden="true">K</span>
                 <span class="profile-chip__name" id="chip-nick">Gracz</span>
@@ -146,6 +161,9 @@
               <button type="button" class="sidebar__link" data-hand-toggle>
                 <span class="sidebar__ico">✋</span> Śledzenie dłoni · kamerka
               </button>
+              <button type="button" class="sidebar__link" data-action="open-camera-lab">
+                <span class="sidebar__ico">◉</span> Laboratorium kamery
+              </button>
               <a class="sidebar__link" href="#how">
                 <span class="sidebar__ico">≡</span> Jak to działa
               </a>
@@ -163,16 +181,16 @@
 
             <div class="friends">
               <div class="friends__head">
-                <span>Boty demonstracyjne</span>
-                <span class="friends__count">4</span>
+                <span>Gracze online</span>
+                <span class="friends__count" id="friends-count">0</span>
               </div>
               <div class="friends__row" id="friends-row"></div>
             </div>
 
             <div class="sidebar__note">
               <span class="dot"></span>
-              RejPlay · v0.5<br />
-              Multiplayer bez logowania
+              RejPlay · v0.6<br />
+              Konta z rejson59.github.io · VR bez VR
             </div>
           </aside>
 
@@ -182,7 +200,7 @@
               <div>
                 <span class="hero__kicker"><span class="hero__spark"></span> Nowa odsłona · multiplayer 3D</span>
                 <h1>Wejdź razem.<br /><em>Zbadaj sam.</em></h1>
-                <p>Jedno dochodzenie, wspólne Atrium i Twój awatar. Dłonie z kamerki odwzorowane 1:1, a gracze widzą się na żywo — bez zakładania konta.</p>
+                <p>Jedno dochodzenie, wspólne Atrium i Twój awatar. Dłonie, głowa i oczy z kamerki sterują grą bez klawiatury — a konta są te same co na rejson59.github.io.</p>
               </div>
               <div class="home-heading__actions">
                 <button type="button" class="btn btn--ghost" id="tutorial-open" data-tutorial-open>Jak grać? · samouczek</button>
@@ -193,7 +211,7 @@
             <section class="live-strip" aria-label="Co nowego w RejPlay">
               <article><span class="live-strip__icon">◎</span><div><b>Wspólne Atrium</b><small>Pozycje i awatary graczy przez Supabase Realtime</small></div></article>
               <article><span class="live-strip__icon">✋</span><div><b>Dłonie 1:1</b><small>21 punktów, 15 stawów i pełna pozycja dłoni w 3D</small></div></article>
-              <article><span class="live-strip__icon">◈</span><div><b>Płynność i dotyk</b><small>Auto jakość, cienie i DPR · wygodny HUD na telefonach i tabletach</small></div></article>
+              <article><span class="live-strip__icon">◈</span><div><b>VR bez VR</b><small>Głowa = ruch, oczy = kamera, palce = chwytanie · 25 darmowych assetów CC0/MIT</small></div></article>
             </section>
 
             <!-- Wyróżniony świat: obraz jest tylko w kafelku, nigdy w tle strony -->
@@ -250,7 +268,7 @@
                 <div class="hub-card__body">
                   <span class="section__kicker">Wspólny punkt zbiórki</span>
                   <h3 id="hub-name">Atrium</h3>
-                  <p>Lobby 3D nie jest osobną grą. Widzisz w nim prawdziwych graczy przez Supabase Realtime oraz cztery boty demonstracyjne. Możesz do nich machnąć klawiszem E albo poruszać palcami przed kamerą — awatar powtórzy ruch 1:1.</p>
+                  <p>Lobby 3D nie jest osobną grą. Widzisz wyłącznie prawdziwych graczy przez Supabase Realtime — boty demonstracyjne zniknęły. Utwórz drużynę, wyślij kod znajomym i rozpocznijcie dochodzenie razem. Konto jest współdzielone z główną stroną.</p>
                   <button type="button" class="btn btn--sm btn--primary" data-game="plaza">Wejdź do lobby</button>
                 </div>
               </div>
@@ -328,7 +346,7 @@
               <h2>Jedna przeglądarka, jeden awatar, jedno dochodzenie</h2>
               <div class="how__grid">
                 <div><span>01</span><h3>Stwórz postać</h3><p>Wybierz sylwetkę, skórę, włosy i ubranie w edytorze. Ustawienia zapisują się w przeglądarce.</p></div>
-                <div><span>02</span><h3>Wejdź do lobby</h3><p>W Atrium widzisz prawdziwych graczy i boty. Pozycje, wygląd i czat synchronizują się przez Supabase.</p></div>
+                <div><span>02</span><h3>Wejdź do lobby</h3><p>W Atrium widzisz prawdziwych graczy. Załóż drużynę, udostępnij kod i grajcie razem — pozycje, wygląd i czat idą przez Supabase.</p></div>
                 <div><span>03</span><h3>Wybierz świat</h3><p>Kliknij kafelek gry. W Demonofobii Twoje własne dłonie awatara trzymają narzędzia.</p></div>
               </div>
             </section>
@@ -336,7 +354,7 @@
         </div>
 
         <footer class="footer wrap">
-          <span><strong>RejPlay</strong> · vertical slice 0.5</span>
+          <span><strong>RejPlay</strong> · v0.6 · VR bez VR</span>
           <span>Three.js · Vite · Supabase Realtime · GitHub Pages</span>
         </footer>
       </section>
@@ -360,17 +378,21 @@
           </div>
           <div class="status-pill status-pill--glass">
             <span class="dot"></span>
-            <span id="online-count">1 gracz online · 4 boty demo</span>
+            <span id="online-count">1 gracz online</span>
           </div>
         </header>
 
         <aside class="panel panel--players">
-          <h3>Gracze <span class="panel__count" id="player-count">5</span></h3>
+          <h3>Gracze <span class="panel__count" id="player-count">1</span></h3>
           <ul id="player-list"></ul>
+          <div class="party" id="party-panel">
+            <div class="party__head"><b>Drużyna</b><span id="party-code">brak</span></div>
+            <div id="party-body"></div>
+          </div>
         </aside>
 
         <aside class="panel panel--chat">
-          <h3>Czat <span class="panel__tag">demo · tylko ta karta</span></h3>
+          <h3>Czat <span class="panel__tag" id="chat-scope">Atrium · wszyscy</span></h3>
           <div class="chat__log" id="chat-log" aria-live="polite"></div>
           <form id="chat-form" autocomplete="off">
             <input id="chat-input" type="text" maxlength="80" placeholder="Napisz coś..." aria-label="Wiadomość na czacie" />
@@ -394,6 +416,7 @@
             Widok: z oczu <kbd>V</kbd>
           </button>
           <button type="button" class="btn btn--sm btn--glass" data-hand-toggle>Śledzenie dłoni · kamerka</button>
+          <button type="button" class="btn btn--sm btn--glass" data-action="open-camera-lab">Laboratorium kamery</button>
           <button type="button" class="btn btn--sm btn--accent" id="play-horror">
             Demonofobia · graj <span aria-hidden="true">→</span>
           </button>
@@ -475,13 +498,15 @@
             <h2>Demonofobia</h2>
             <p>
               Dom przy Wrzosowej 12 jest pusty od lat, ale coś w nim zostawia ślady.
-              Wejdź z latarką, przeszukaj cztery pokoje, zbierz dowody trzema
-              narzędziami i złóż raport, zanim skończą Ci się nerwy.
+              Dojeżdżasz samochodem-bazą, bierzesz z pasa jedno z sześciu narzędzi,
+              szukasz sześciu śladów i rozpoznajesz jedną z dziesięciu zjaw —
+              zanim skończą Ci się nerwy.
             </p>
             <ul class="intro__keys">
               <li><kbd>W A S D</kbd> ruch · <kbd>mysz</kbd> rozglądanie 360° z blokadą kursora</li>
-              <li><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> narzędzia · <kbd>E</kbd> przytrzymaj, aby skanować</li>
-              <li><kbd>F</kbd> latarka · <kbd>P</kbd> foto-dowód · <kbd>J</kbd> notatnik · <kbd>Shift</kbd> bieg</li>
+              <li><kbd>1</kbd>–<kbd>6</kbd> weź z pasa · <kbd>Q</kbd> odłóż · <kbd>E</kbd> przytrzymaj, aby skanować</li>
+              <li><kbd>F</kbd> latarka · <kbd>P</kbd> foto-dowód (bez pliku) · <kbd>J</kbd> notatnik · <kbd>Shift</kbd> bieg</li>
+              <li>Pas na biodrze: spójrz w dół i zaciśnij palce, żeby chwycić; otwarta dłoń odkłada</li>
               <li><kbd>Esc</kbd> zwalnia kursor (do klikania HUD-u i notatnika) · klik w ekran wznawia blokadę</li>
               <li><kbd>[</kbd> <kbd>]</kbd> czułość myszy · działa też w trakcie rundy</li>
             </ul>
@@ -496,7 +521,8 @@
             </p>
             <div class="intro__actions">
               <button type="button" class="btn btn--primary" id="game-start">Rozpocznij dochodzenie</button>
-              <button type="button" class="btn btn--ghost" data-tutorial-open>Samouczek · 7 kroków</button>
+              <button type="button" class="btn btn--ghost" data-action="open-camera-lab">Konfiguracja kamery · głowa, oczy, dłonie</button>
+              <button type="button" class="btn btn--ghost" data-tutorial-open>Samouczek · 8 kroków</button>
               <button type="button" class="btn btn--ghost" id="game-cancel">Wróć</button>
             </div>
           </div>
@@ -584,7 +610,7 @@
       <!-- ======================= ŚLEDZENIE DŁONI (KAMERKA) ====================== -->
       <div id="hand-panel" class="hand-panel" aria-hidden="true">
         <div class="hand-panel__head">
-          <span class="hand-panel__title"><span class="dot"></span> Przechwytywanie dłoni</span>
+          <span class="hand-panel__title"><span class="dot"></span> Kamerka · dłonie, głowa, oczy</span>
           <button type="button" class="hand-panel__close" id="hand-close" aria-label="Wyłącz kamerę">×</button>
         </div>
         <div class="hand-panel__view">
@@ -594,7 +620,7 @@
         </div>
         <div class="hand-panel__readout">
           <span class="hand-panel__value" id="hand-readout">Kamerka wyłączona</span>
-          <span class="hand-panel__status" id="hand-status">Obraz nie opuszcza przeglądarki.</span>
+          <span class="hand-panel__status" id="hand-status">Obraz nie opuszcza przeglądarki. Laboratorium kamery robi kalibrację i testy.</span>
           <span class="hand-panel__space" id="hand-space">Pozycja 3D: pokaż dłonie w kadrze</span>
         </div>
         <label class="hand-panel__slider" for="hand-responsiveness">
@@ -605,6 +631,79 @@
         <div class="hand-panel__legend">
           <span><kbd>21</kbd> punktów na dłoń</span><span><kbd>15</kbd> stawów na awatarze</span>
           <span><kbd>3D</kbd> x / y / głębokość</span><span><kbd>0</kbd> danych opuszcza przeglądarkę</span>
+        </div>
+      </div>
+
+      <!-- =============== LABORATORIUM KAMERY (v0.6) =============== -->
+      <div id="camera-lab" class="camera-lab" aria-hidden="true">
+        <div class="camera-lab__backdrop" data-action="close-camera-lab"></div>
+        <div class="camera-lab__panel" role="dialog" aria-modal="true" aria-labelledby="lab-title">
+          <header class="camera-lab__head">
+            <div>
+              <span class="section__kicker">VR bez VR · konfiguracja wstępna</span>
+              <h2 id="lab-title">Laboratorium kamery</h2>
+            </div>
+            <button type="button" class="camera-lab__x" data-action="close-camera-lab" aria-label="Zamknij laboratorium">×</button>
+          </header>
+          <p class="camera-lab__lead">
+            Jedna kamerka, trzy testy. Po nich głowa prowadzi postać, oczy prowadzą kamerę,
+            a palce biorą i odkładają narzędzia z pasa — klawiatura i mysz zostają tylko jako zapasowe.
+          </p>
+          <div class="camera-lab__grid">
+            <div class="camera-lab__left">
+              <div id="lab-view" class="lab-view">
+                <canvas id="lab-face-canvas" aria-hidden="true"></canvas>
+                <span class="lab-view__badge" id="lab-badge">Kamerka wyłączona</span>
+              </div>
+              <p class="lab-status" id="lab-status">Włącz kamerę, ustaw twarz i obie dłonie w kadrze.</p>
+              <div class="lab-tests">
+                <article class="lab-test" id="lab-test-hands">
+                  <span class="lab-test__mark">○</span>
+                  <div><b>1 · Dłonie</b><small>Pokaż obie dłonie z pięcioma wyprostowanymi palcami, potem zaciśnij i otwórz.</small></div>
+                  <span class="lab-test__value" id="lab-hands-value">0/2</span>
+                </article>
+                <article class="lab-test" id="lab-test-head">
+                  <span class="lab-test__mark">○</span>
+                  <div><b>2 · Głowa</b><small>Kiwnij lekko przód / tył i przechyl głowę w lewo / prawo.</small></div>
+                  <span class="lab-test__value" id="lab-head-value">0%</span>
+                </article>
+                <article class="lab-test" id="lab-test-eyes">
+                  <span class="lab-test__mark">○</span>
+                  <div><b>3 · Oczy</b><small>Spójrz w lewo, prawo, górę i dół (albo mrugnij) — bez ruszania głową.</small></div>
+                  <span class="lab-test__value" id="lab-eyes-value">0%</span>
+                </article>
+              </div>
+            </div>
+            <div class="camera-lab__right">
+              <div class="lab-readout" id="lab-readout">
+                <div><span>Głowa · przód/tył</span><b id="lab-pitch">+0.00</b></div>
+                <div><span>Głowa · bok</span><b id="lab-roll">+0.00</b></div>
+                <div><span>Wzrok · x / y</span><b id="lab-gaze">+0.00 / +0.00</b></div>
+                <div><span>Dłonie · L / R</span><b id="lab-hands">— / —</b></div>
+                <div><span>Chwyt · L / R</span><b id="lab-pinch">— / —</b></div>
+                <div><span>Slot na pasie</span><b id="lab-slot">1</b></div>
+              </div>
+              <label class="lab-slider"><span>Czułość oczu <output id="lab-gaze-value">1.00×</output></span>
+                <input type="range" id="lab-gaze" min="0.3" max="2.5" step="0.05" value="1" /></label>
+              <label class="lab-slider"><span>Czułość przechyłu głowy <output id="lab-head-value-out">1.00×</output></span>
+                <input type="range" id="lab-head" min="0.3" max="2.5" step="0.05" value="1" /></label>
+              <label class="lab-slider"><span>Martwa strefa <output id="lab-deadzone-value">0.07</output></span>
+                <input type="range" id="lab-deadzone" min="0" max="0.3" step="0.01" value="0.07" /></label>
+              <label class="lab-slider"><span>Wygładzanie <output id="lab-smooth-value">0.55</output></span>
+                <input type="range" id="lab-smooth" min="0" max="0.95" step="0.05" value="0.55" /></label>
+              <label class="lab-check"><input type="checkbox" id="lab-invert" /> Odwróć poziom spojrzenia</label>
+              <div class="lab-buttons">
+                <button type="button" class="btn btn--sm btn--ghost" id="lab-calibrate">Kalibruj pozycję neutralną</button>
+                <button type="button" class="btn btn--sm btn--ghost" id="lab-reset">Powtórz testy</button>
+                <button type="button" class="btn btn--sm btn--primary" id="lab-enable">Włącz grę bez klawiatury</button>
+              </div>
+              <div class="lab-progress"><span id="lab-progress-bar"></span></div>
+              <p class="lab-note" id="lab-note">
+                Kalibracja: patrz prosto, trzymaj głowę nieruchomo przez ~2 sekundy. Obraz z kamerki
+                nie opuszcza przeglądarki i nie jest nigdzie zapisywany.
+              </p>
+            </div>
+          </div>
         </div>
       </div>
 

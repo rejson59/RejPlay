@@ -1,6 +1,5 @@
 import './style.css';
 import {
-  BOTS,
   CHARACTER_MODELS,
   GAMES,
   LOBBY_NAME,
@@ -12,11 +11,16 @@ import {
 } from './games';
 import { DEFAULT_APPEARANCE, type Appearance } from './character';
 import { loadHumanAssets, type HumanAssets } from './human';
-import type { HorrorResult, HorrorState } from './horror';
+import { TOOLS, type HorrorResult, type HorrorState } from './horror';
 import { World } from './world';
-import { HandTracker } from './hand-tracking';
+import { CameraRig } from './camera-rig';
+import type { ControlFrame, GestureEvent, LabDiagnostics } from './camera-control';
 import { handResponsiveness, setHandResponsiveness } from './hand-pose';
-import { OnlineClient, type OnlinePeer, type OnlineStatus } from './online';
+import {
+  OnlineClient, SUPABASE_ANON_KEY, SUPABASE_URL,
+  type OnlinePeer, type OnlineStatus, type PartyState,
+} from './online';
+import { CommunityAccount, type CommunitySession } from './community-account';
 
 const $ = <T extends HTMLElement = HTMLElement>(selector: string): T => {
   const element = document.querySelector(selector);
@@ -94,6 +98,24 @@ const online = new OnlineClient({
   mode: 'home',
   x: 0, y: 0, z: 0, yaw: 0,
 });
+let accountSession: CommunitySession | null = null;
+let partyState: PartyState | null = null;
+let pendingParty = new URLSearchParams(location.search).get('party')?.toUpperCase() ?? null;
+const account = new CommunityAccount({
+  url: SUPABASE_URL,
+  key: SUPABASE_ANON_KEY,
+  onSession: (session) => {
+    accountSession = session;
+    online.setAccount(session);
+    renderAccount();
+    if (session && !readStored('rejplay:nick')) applyNick(session.username);
+    if (session && pendingParty) {
+      const code = pendingParty;
+      pendingParty = null;
+      void joinPartyByCode(code);
+    }
+  },
+});
 
 // ------------------------------------------------------------------ referencje
 
@@ -166,6 +188,24 @@ const handStatus = $('#hand-status');
 const handSpace = $('#hand-space');
 const handResponsivenessInput = $<HTMLInputElement>('#hand-responsiveness');
 const handResponsivenessValue = $('#hand-responsiveness-value');
+// Laboratorium kamery (v0.6): jeden strumień, trzy testy, kalibracja.
+const cameraLab = $('#camera-lab');
+const labView = $('#lab-view');
+const labFaceCanvas = $<HTMLCanvasElement>('#lab-face-canvas');
+const labStatus = $('#lab-status');
+const labBadge = $('#lab-badge');
+const labTestHands = $('#lab-test-hands');
+const labTestHead = $('#lab-test-head');
+const labTestEyes = $('#lab-test-eyes');
+const labProgressBar = $('#lab-progress-bar');
+const labNote = $('#lab-note');
+const labGaze = $<HTMLInputElement>('#lab-gaze');
+const labHead = $<HTMLInputElement>('#lab-head');
+const labDeadzone = $<HTMLInputElement>('#lab-deadzone');
+const labSmooth = $<HTMLInputElement>('#lab-smooth');
+const labInvert = $<HTMLInputElement>('#lab-invert');
+const labEnable = $<HTMLButtonElement>('#lab-enable');
+let autoEnabledHandsFree = false;
 const lookSensitivityInput = $<HTMLInputElement>('#look-sensitivity');
 const lookSensitivityValue = $('#look-sensitivity-value');
 const lobbyViewToggle = $<HTMLButtonElement>('#lobby-view-toggle');
@@ -175,6 +215,11 @@ const liveStatus = $('#live-status');
 const liveCount = $('#live-count');
 const liveList = $('#live-list');
 const liveSub = $('#live-sub');
+const accountChip = $<HTMLButtonElement>('#account-chip');
+const accountName = $('#account-name');
+const partyBody = $('#party-body');
+const partyCodeLabel = $('#party-code');
+const chatScope = $('#chat-scope');
 
 let world!: World;
 
@@ -246,21 +291,22 @@ function renderFeatured(): void {
   $('#featured-title').textContent = game.title;
   $('#featured-tag').textContent = game.tag;
   $('#featured-desc').textContent = game.claim;
-  $('#featured-meta').textContent = `${game.tag} · ${game.players} · bez logowania`;
+  $('#featured-meta').textContent = `${game.tag} · ${game.players} · konto z rejson59.github.io`;
   $('#featured-art').style.setProperty('--feat-art', `url('${game.art}')`);
 }
 
 function renderFriends(): void {
-  $('#friends-row').innerHTML = BOTS.slice(0, 3)
-    .map(
-      (bot) => `
+  // Zero botów demonstracyjnych: wyłącznie realne Presence z Supabase.
+  const peers = onlinePeers.filter((peer) => peer.mode !== 'game').slice(0, 4);
+  $('#friends-count').textContent = String(peers.length);
+  $('#friends-row').innerHTML = peers.length
+    ? peers.map((peer) => `
         <div class="friend">
-          <span class="friend__avatar" style="--fc:${bot.color}">${escapeHtml(bot.name.slice(0, 1))}</span>
-          <span>${escapeHtml(bot.name)}</span>
-          <span class="friend__status" title="Bot demonstracyjny"></span>
-        </div>`,
-    )
-    .join('');
+          <span class="friend__avatar" style="--fc:${escapeHtml(peer.color)}">${escapeHtml(peer.nick.slice(0, 1))}</span>
+          <span>${escapeHtml(peer.nick)}</span>
+          ${peer.verified ? '<span class="friend__status" title="Konto głównej strony">✓</span>' : ''}
+        </div>`).join('')
+    : '<div class="friend friend--empty">Nikogo jeszcze nie ma — wejdź pierwszy</div>';
 }
 
 function readRecent(): string[] {
@@ -334,14 +380,14 @@ function applyTheme(theme: 'light' | 'dark'): void {
 
 // ----------------------------------------------------- śledzenie dłoni / kamerka
 
-const handTracker = new HandTracker({
+const cameraRig = new CameraRig({
   video: handVideo,
   canvas: handCanvas,
-  onFrame: (hands, aspect) => {
+  faceCanvas: labFaceCanvas,
+  onHands: (hands, aspect) => {
     // 21 punktów → 15 kątów stawów ORAZ pozycja x / y / głębokość całej dłoni.
     // Trafia na kości awatara, ramiona i dłonie first-person (gra + Atrium).
-    // Zero klasyfikacji gestów, zero animacji wyzwalanych układem palców.
-    world.setHandPose(hands, aspect);
+    if (worldReady) world.setHandPose(hands, aspect);
     handReadout.textContent =
       hands.length === 0
         ? 'Pokaż dłonie w kadrze'
@@ -353,8 +399,17 @@ const handTracker = new HandTracker({
   onStatus: (message, kind) => {
     handStatus.textContent = message;
     handStatus.classList.toggle('is-error', kind === 'error');
+    labStatus.textContent = message;
+    labStatus.style.color = kind === 'error' ? 'var(--danger, #e08a7a)' : '';
   },
+  onControl: (control: ControlFrame, dt: number) => {
+    if (worldReady) world.applyCameraControl(control, dt);
+  },
+  onGesture: (gesture: GestureEvent) => handleCameraGesture(gesture),
+  onDiagnostics: (diagnostics: LabDiagnostics) => renderLab(diagnostics),
 });
+// Zachowana nazwa dla reszty kodu (panel kamerki z v0.5 działa bez zmian).
+const handTracker = cameraRig;
 
 const fmtAxis = (value: number): string =>
   `${value >= 0 ? '+' : ''}${value.toFixed(2)}`;
@@ -439,6 +494,158 @@ function closeHands(): void {
 function syncHandOverlay(): void {
   handTracker.setOverlayVisible(!game.classList.contains('is-active'));
 }
+
+// --------------------------------------- laboratorium kamery / VR bez VR
+
+function handleCameraGesture(gesture: GestureEvent): void {
+  if (!worldReady || !world.horror) return;
+  if (gesture.type === 'aim') {
+    world.horror.aimSlot(gesture.slot);
+    return;
+  }
+  if (!game.classList.contains('is-active')) return;
+  if (gesture.type === 'grab') world.horror.grabAimed();
+  else if (gesture.type === 'release') world.horror.dropTool();
+  else if (gesture.type === 'useStart') world.horror.setInteracting(true);
+  else if (gesture.type === 'useEnd') world.horror.setInteracting(false);
+}
+
+const fmt = (v: number): string => `${v >= 0 ? '+' : ''}${v.toFixed(2)}`;
+
+function renderLab(d: LabDiagnostics): void {
+  $('#lab-pitch').textContent = fmt(d.face?.pitch ?? 0);
+  $('#lab-roll').textContent = fmt(d.face?.roll ?? 0);
+  $('#lab-gaze').textContent = `${fmt(d.face?.gazeX ?? 0)} / ${fmt(d.face?.gazeY ?? 0)}`;
+  $('#lab-hands').textContent = `${d.hands}/2 · L ${d.left.curl.toFixed(2)} / R ${d.right.curl.toFixed(2)}`;
+  $('#lab-pinch').textContent = `${d.left.pinch.toFixed(2)} / ${d.right.pinch.toFixed(2)}`;
+  $('#lab-slot').textContent = String(d.slot + 1);
+  $('#lab-hands-value').textContent = `${d.hands}/2`;
+  $('#lab-head-value').textContent = `${Math.round(Math.min(1, d.ranges.pitch / 0.13) * 50 + Math.min(1, d.ranges.roll / 0.07) * 50)}%`;
+  $('#lab-eyes-value').textContent = `${Math.round(Math.min(1, d.ranges.gazeX / 0.22) * 70 + Math.min(1, Math.max(d.ranges.gazeY / 0.14, d.ranges.blink)) * 30)}%`;
+  labTestHands.classList.toggle('is-passed', d.tests.hands);
+  labTestHead.classList.toggle('is-passed', d.tests.head);
+  labTestEyes.classList.toggle('is-passed', d.tests.eyes);
+  const passed = Number(d.calibrated) + Number(d.tests.hands) + Number(d.tests.head) + Number(d.tests.eyes);
+  labProgressBar.style.width = `${(passed / 4) * 100}%`;
+  // Po udanej konfiguracji włączamy sterowanie samoczynnie — od tego momentu
+  // klawiatura i mysz są tylko zapasowe, nie potrzebne do gry.
+  if (d.ready && !d.enabled && !autoEnabledHandsFree && cameraRig.active) {
+    autoEnabledHandsFree = true;
+    cameraRig.control.settings.enabled = true;
+    cameraRig.control.save();
+    syncLabSettings();
+    showToast(globalToast, 'Konfiguracja zakończona — grasz głową, oczami i dłońmi. Klawiatura i mysz nie są potrzebne.');
+  }
+  labBadge.textContent = d.face?.present
+    ? `twarz ✓ · źrenice ${d.face.iris ? '✓' : '—'} · dłonie ${d.hands}/2`
+    : 'szukam twarzy i dłoni…';
+  labEnable.disabled = !d.ready && !d.enabled;
+  labEnable.textContent = d.enabled
+    ? 'Wyłącz sterowanie bez klawiatury'
+    : d.ready ? 'Włącz grę bez klawiatury' : 'Wykonaj testy i kalibrację';
+  if (!d.settings.enabled) {
+    labNote.textContent = d.ready
+      ? 'Wszystkie testy zaliczone. Włącz sterowanie — od teraz głowa, oczy i dłonie wystarczą.'
+      : 'Kalibracja: patrz prosto przez ~2 s. Potem pokaż dłonie, kiwnij głową i rozejrzyj się oczami.';
+  }
+}
+
+function syncLabSettings(): void {
+  const s = cameraRig.control.settings;
+  labGaze.value = String(s.gazeSensitivity);
+  labHead.value = String(s.headSensitivity);
+  labDeadzone.value = String(s.deadzone);
+  labSmooth.value = String(s.smoothing);
+  labInvert.checked = s.invertX;
+  $('#lab-gaze-value').textContent = `${s.gazeSensitivity.toFixed(2)}×`;
+  $('#lab-head-value-out').textContent = `${s.headSensitivity.toFixed(2)}×`;
+  $('#lab-deadzone-value').textContent = s.deadzone.toFixed(2);
+  $('#lab-smooth-value').textContent = s.smoothing.toFixed(2);
+  labEnable.textContent = s.enabled ? 'Wyłącz sterowanie bez klawiatury' : 'Włącz grę bez klawiatury';
+}
+
+async function openCameraLab(): Promise<void> {
+  cameraLab.classList.add('is-active');
+  cameraLab.setAttribute('aria-hidden', 'false');
+  // Jeden i ten sam element <video>: przenosimy go do laboratorium, żeby nie
+  // prosić o drugą zgodę na kamerę i nie mnożyć strumieni.
+  labView.insertBefore(handVideo, labView.firstChild);
+  labView.insertBefore(handCanvas, labFaceCanvas);
+  handPanel.classList.remove('is-active');
+  handPanel.setAttribute('aria-hidden', 'true');
+  cameraRig.setLabOpen(true);
+  syncLabSettings();
+  renderLab(cameraRig.control.diagnostics());
+  if (!handTracker.active) {
+    labStatus.textContent = 'Uruchamianie kamerki…';
+    try {
+      await handTracker.start();
+    } catch (error) {
+      labStatus.textContent = error instanceof Error ? error.message : String(error);
+      labBadge.textContent = 'Kamerka niedostępna';
+    }
+  }
+  syncHandButtons();
+  cameraRig.setOverlayVisible(true);
+}
+
+function closeCameraLab(): void {
+  cameraLab.classList.remove('is-active');
+  cameraLab.setAttribute('aria-hidden', 'true');
+  cameraRig.setLabOpen(false);
+  const view = document.querySelector<HTMLElement>('.hand-panel__view');
+  if (view) {
+    view.insertBefore(handVideo, view.firstChild);
+    view.appendChild(handCanvas);
+  }
+  handPanel.setAttribute('aria-hidden', handTracker.active ? 'false' : 'true');
+  syncHandOverlay();
+}
+
+([
+  [labGaze, 'gazeSensitivity', $('#lab-gaze-value'), '×'],
+  [labHead, 'headSensitivity', $('#lab-head-value-out'), '×'],
+  [labDeadzone, 'deadzone', $('#lab-deadzone-value'), ''],
+  [labSmooth, 'smoothing', $('#lab-smooth-value'), ''],
+] as Array<[HTMLInputElement, 'gazeSensitivity' | 'headSensitivity' | 'deadzone' | 'smoothing', HTMLElement, string]>).forEach(
+  ([input, key, output, suffix]) => {
+    input.addEventListener('input', () => {
+      cameraRig.control.settings[key] = Number(input.value);
+      cameraRig.control.save();
+      output.textContent = `${Number(input.value).toFixed(2)}${suffix}`;
+    });
+  },
+);
+labInvert.addEventListener('change', () => {
+  cameraRig.control.settings.invertX = labInvert.checked;
+  cameraRig.control.save();
+});
+$('#lab-calibrate').addEventListener('click', () => {
+  cameraRig.control.beginCalibration();
+  labNote.textContent = 'Kalibruję… patrz prosto w kamerę i nie ruszaj głową.';
+  window.setTimeout(() => {
+    const ok = cameraRig.control.finishCalibration();
+    labNote.textContent = ok
+      ? 'Pozycja neutralna zapisana. Teraz wykonaj trzy testy ruchu.'
+      : 'Za mało klatek twarzy — ustaw się bliżej kamery i spróbuj ponownie.';
+  }, 2300);
+});
+$('#lab-reset').addEventListener('click', () => {
+  cameraRig.control.resetTests();
+  labNote.textContent = 'Testy zresetowane. Pokaż dłonie, kiwnij głową i rozejrzyj się oczami.';
+});
+labEnable.addEventListener('click', () => {
+  const control = cameraRig.control;
+  control.settings.enabled = !control.settings.enabled;
+  control.save();
+  syncLabSettings();
+  showToast(
+    globalToast,
+    control.settings.enabled
+      ? 'Sterowanie bez klawiatury WŁĄCZONE: głowa = ruch, oczy = kamera, palce = narzędzia.'
+      : 'Sterowanie kamerą wyłączone. Klawiatura, mysz i dotyk działają normalnie.',
+  );
+});
 
 function renderSwatches(): void {
   swatches.innerHTML = PALETTE.map(
@@ -564,9 +771,10 @@ function closeEditor(): void {
 function renderPlayerList(): void {
   const real = onlinePeers.filter((peer) => peer.mode === 'lobby');
   const entries = [
-    { name: state.nick, color: state.color, you: true, live: onlineStatus === 'online' },
-    ...real.map((peer) => ({ name: peer.nick, color: peer.color, you: false, live: true })),
-    ...BOTS.map((bot) => ({ name: bot.name, color: bot.color, you: false, live: false })),
+    { name: state.nick, color: state.color, you: true, live: onlineStatus === 'online', verified: Boolean(accountSession) },
+    ...real.map((peer) => ({
+      name: peer.nick, color: peer.color, you: false, live: true, verified: Boolean(peer.verified),
+    })),
   ];
   playerList.innerHTML = entries
     .map(
@@ -576,13 +784,139 @@ function renderPlayerList(): void {
           <span class="player__name">${escapeHtml(entry.name)}</span>
           ${entry.you ? '<span class="player__you">Ty</span>' : ''}
           ${entry.live ? '<span class="player__live" title="Gracz online">●</span>' : ''}
+          ${entry.verified ? '<span class="player__live" title="Konto rejson59.github.io">✓</span>' : ''}
         </li>`,
     )
     .join('');
   playerCount.textContent = String(entries.length);
-  onlineCount.textContent = `${real.length + 1} ${real.length ? 'graczy' : 'gracz'} online · ${BOTS.length} boty demo`;
+  onlineCount.textContent = partyState
+    ? `Drużyna ${partyState.code} · ${real.length + 1} ${real.length ? 'graczy' : 'gracz'}`
+    : `${real.length + 1} ${real.length ? 'graczy' : 'gracz'} online · bez botów`;
+  chatScope.textContent = partyState ? `Drużyna ${partyState.code}` : 'Atrium · wszyscy';
   renderLive();
+  renderFriends();
 }
+
+/** Przycisk konta w górnym pasku — jedno konto na całą stronę rejson59. */
+function renderAccount(): void {
+  const signed = Boolean(accountSession);
+  accountChip.classList.toggle('is-signed', signed);
+  accountName.textContent = signed ? accountSession!.username : 'Zaloguj się';
+  accountChip.title = signed
+    ? `Konto rejson59.github.io: ${accountSession!.username}`
+    : 'Zaloguj się lub zarejestruj na rejson59.github.io (jedno konto na wszystkie projekty)';
+}
+
+function loginInfo(): string {
+  return 'Logowanie i rejestracja są na <b>rejson59.github.io</b> — to jedno konto na wszystkie projekty. Po powrocie RejPlay odczyta tę samą sesję.';
+}
+
+async function joinPartyByCode(code: string): Promise<void> {
+  const clean = code.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 10);
+  if (clean.length < 4) {
+    showToast(lobbyToast, 'Kod drużyny ma 4–10 znaków.');
+    return;
+  }
+  if (!accountSession) {
+    pendingParty = clean;
+    try { localStorage.setItem('rejplay:pending-party', clean); } catch { /* opcjonalne */ }
+    showToast(lobbyToast, 'Najpierw zaloguj się kontem rejson59.github.io, potem dołączysz do drużyny.');
+    return;
+  }
+  const result = await online.joinParty(clean);
+  if (!result.ok) showToast(lobbyToast, result.error ?? 'Nie udało się dołączyć.');
+  else {
+    try { localStorage.removeItem('rejplay:pending-party'); } catch { /* jw. */ }
+    showToast(lobbyToast, `Dołączyłeś do drużyny ${result.code}.`);
+  }
+}
+
+function renderParty(state: PartyState | null): void {
+  partyState = state;
+  partyCodeLabel.textContent = state ? state.code : 'brak';
+  if (!accountSession) {
+    partyBody.innerHTML = `
+      <p class="party__hint">${loginInfo()}</p>
+      <div class="party__actions">
+        <button type="button" data-party-action="login">Zaloguj / zarejestruj</button>
+      </div>
+      ${pendingParty ? `<p class="party__hint">Zaproszenie do drużyny <b>${escapeHtml(pendingParty)}</b> czeka na zalogowanie.</p>` : ''}`;
+  } else if (!state) {
+    partyBody.innerHTML = `
+      <div class="party__row">
+        <input id="party-input" type="text" maxlength="10" placeholder="Kod drużyny" aria-label="Kod drużyny" />
+        <button type="button" data-party-action="join">Dołącz</button>
+      </div>
+      <div class="party__actions">
+        <button type="button" data-party-action="create">Utwórz drużynę</button>
+        <button type="button" data-party-action="logout">Wyloguj</button>
+      </div>
+      <p class="party__hint">Kodem zaproszenia możesz podzielić się ze znajomymi. Czat i Atrium zawężają się wtedy tylko do Waszej drużyny.</p>`;
+  } else {
+    const members = state.members ?? [];
+    partyBody.innerHTML = `
+      <div class="party__code">${escapeHtml(state.code)}</div>
+      <ul class="party__members">
+        ${members.map((member) => `<li><i style="background:${escapeHtml(member.color)}"></i>${escapeHtml(member.nick)}${member.userId === state.leader ? ' ★' : ''}</li>`).join('')}
+      </ul>
+      <div class="party__actions">
+        <button type="button" data-party-action="invite">Kopiuj zaproszenie</button>
+        ${state.userId === state.leader ? '<button type="button" data-party-action="start">Rozpocznij razem</button>' : ''}
+        <button type="button" data-party-action="leave">Opuść</button>
+      </div>
+      <p class="party__hint">Zalogowany: <b>${escapeHtml(accountSession!.username)}</b>. Token jest sprawdzany w bazie, nie w przeglądarce.</p>`;
+  }
+  renderPlayerList();
+}
+
+partyBody.addEventListener('click', (event) => {
+  const button = (event.target as HTMLElement).closest<HTMLElement>('[data-party-action]');
+  if (!button) return;
+  const action = button.dataset.partyAction;
+  button instanceof HTMLButtonElement && button.blur();
+  if (action === 'login') {
+    if (!account.sharedOrigin) {
+      showToast(globalToast, 'Logowanie działa na rejson59.github.io — tu (localhost) nie ma współdzielonej sesji.');
+      return;
+    }
+    account.open();
+  } else if (action === 'logout') {
+    account.logout();
+    try { localStorage.removeItem('rejplay:pending-party'); } catch { /* jw. */ }
+    showToast(lobbyToast, 'Wylogowano z konta głównej strony.');
+  } else if (action === 'join') {
+    const value = partyBody.querySelector<HTMLInputElement>('#party-input')?.value ?? '';
+    void joinPartyByCode(value);
+  } else if (action === 'create') {
+    void online.createParty('Drużyna').then((result) => {
+      if (!result.ok) showToast(lobbyToast, result.error ?? 'Nie utworzono drużyny.');
+      else showToast(lobbyToast, `Drużyna ${result.code} · wyślij kod znajomym.`);
+    });
+  } else if (action === 'leave') {
+    void online.leaveParty().then(() => showToast(lobbyToast, 'Opuściłeś drużynę. Wracasz do wspólnego Atrium.'));
+  } else if (action === 'invite') {
+    const url = online.inviteUrl();
+    if (url) {
+      void navigator.clipboard?.writeText(url).then(
+        () => showToast(lobbyToast, 'Link z kodem skopiowany do schowka.'),
+        () => showToast(lobbyToast, `Zaproszenie: ${url}`),
+      );
+    }
+  } else if (action === 'start') {
+    online.startPartyRound();
+    showToast(lobbyToast, 'Wysłano sygnał „rozpocznij razem”.');
+  }
+});
+
+accountChip.addEventListener('click', () => {
+  if (accountSession) {
+    showToast(globalToast, `Zalogowano jako ${accountSession.username} · konto z rejson59.github.io.`);
+  } else if (!account.sharedOrigin) {
+    showToast(globalToast, 'Logowanie działa na rejson59.github.io — w podglądzie localhost sesja nie jest współdzielona.');
+  } else {
+    account.open();
+  }
+});
 
 /** Panel „Na żywo” na stronie głównej — wyłącznie prawdziwe dane z presence. */
 function renderLive(): void {
@@ -628,7 +962,7 @@ function seedChat(): void {
   addChatMessage(
     'RejPlay',
     onlineStatus === 'online'
-      ? 'Czat jest współdzielony przez Supabase — widzą go wszyscy w Atrium.'
+      ? `Czat przez Supabase${partyState ? ` · tylko drużyna ${partyState.code}` : ' · całe Atrium'}.`
       : 'Brak połączenia z bazą — wiadomości zostają w tej karcie.',
   );
 }
@@ -642,15 +976,14 @@ function triggerWave(): void {
   );
 }
 
-/** Foto-dowód z wnętrza domu — ta sama klatka, inny kontekst. */
+/**
+ * Foto-dowód zostaje WYŁĄCZNIE w grze: licznik w notatniku + uspokojenie
+ * nerwów / przerwanie nalotu. Nie tworzymy pliku PNG ani pobierania — zgodnie
+ * z decyzją użytkownika „zapisywanie dowodu jako PNG jest niepotrzebne”.
+ */
 function captureGamePhoto(): void {
-  const dataUrl = world.capturePhoto();
-  const link = document.createElement('a');
-  link.href = dataUrl;
-  link.download = `demonofobia-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.png`;
-  link.click();
   online.event('photo');
-  showToast(gameToast, 'Foto-dowód zapisany jako PNG');
+  showToast(gameToast, 'Foto-dowód zanotowany · bez zapisywania pliku');
 }
 
 function enterLobby(): void {
@@ -712,11 +1045,15 @@ function renderHorrorState(state: HorrorState): void {
   hudNervesBar.style.background = state.nerves < 32 ? 'var(--danger)' : 'var(--accent)';
 
   const tool = state.tools[state.toolIndex];
-  hudToolName.textContent = tool.name;
+  hudToolName.textContent = state.held < 0 ? 'Pusta dłoń' : tool.name;
+  cameraRig.control.setHeld(state.held);
+  const slotEl = $('#lab-slot');
+  slotEl.dataset.slot = String(state.aimedSlot);
+  slotEl.textContent = String(state.aimedSlot + 1);
   hudReading.textContent = `${Math.round(state.reading * 100)}%`;
   hudReadingBar.style.width = `${Math.round(state.reading * 100)}%`;
   hudScanBar.style.width = `${Math.round(state.scan * 100)}%`;
-  hudHint.textContent = `${state.hunting ? 'NALOT · ' : ''}${state.hint}`;
+  hudHint.textContent = `${state.hunting ? 'NALOT · ' : ''}${state.nearBase ? 'BAZA · ' : ''}${state.hint}`;
   const photoCount = $('#game-photo-count');
   if (photoCount) photoCount.textContent = String(state.photos);
 
@@ -734,7 +1071,11 @@ function renderHorrorState(state: HorrorState): void {
   }
 
   gameTools.querySelectorAll<HTMLButtonElement>('[data-tool]').forEach((button) => {
-    button.classList.toggle('is-active', Number(button.dataset.tool) === state.toolIndex);
+    const index = Number(button.dataset.tool);
+    button.classList.toggle('is-active', index === state.held);
+    button.classList.toggle('is-aimed', index === state.aimedSlot);
+    const label = button.querySelector<HTMLElement>('.belt-state');
+    if (label) label.textContent = index === state.held ? 'w dłoni' : 'na pasie';
   });
   const lightButton = gameTools.querySelector<HTMLButtonElement>('[data-game-action="light"]');
   if (lightButton) lightButton.classList.toggle('is-active', state.flashlight);
@@ -805,22 +1146,19 @@ function renderHorrorState(state: HorrorState): void {
 }
 
 function renderGameTools(): void {
-  const tools = [
-    { name: 'Termometr', key: '1' },
-    { name: 'Miernik pola', key: '2' },
-    { name: 'Rejestrator', key: '3' },
-  ];
+  // Pas na biodrach: te same sloty co w modelu 3D (src/tool-belt.ts).
   gameTools.innerHTML =
-    tools
+    TOOLS
       .map(
         (tool, i) => `
-        <button type="button" class="tool-btn" data-tool="${i}">
-          <kbd>${tool.key}</kbd><b>${escapeHtml(tool.name)}</b>odczyt śladu
+        <button type="button" class="tool-btn tool-btn--belt" data-tool="${i}">
+          <kbd>${tool.key}</kbd><b>${escapeHtml(tool.name)}</b><span class="belt-state">na pasie</span>
         </button>`,
       )
       .join('') +
-    `<button type="button" class="tool-btn" data-game-action="light"><kbd>F</kbd><b>Latarka</b>włącz / wyłącz</button>
-     <button type="button" class="tool-btn" data-game-action="photo"><kbd>P</kbd><b>Foto-dowód</b>zapisz klatkę · <span id="game-photo-count">0</span></button>
+    `<button type="button" class="tool-btn" data-game-action="drop"><kbd>Q</kbd><b>Odłóż</b>na pas</button>
+     <button type="button" class="tool-btn" data-game-action="light"><kbd>F</kbd><b>Latarka</b>włącz / wyłącz</button>
+     <button type="button" class="tool-btn" data-game-action="photo"><kbd>P</kbd><b>Foto-dowód</b>tylko w grze · <span id="game-photo-count">0</span></button>
      <button type="button" class="tool-btn" data-game-action="journal"><kbd>J</kbd><b>Notatnik</b>złóż raport</button>`;
 }
 
@@ -845,6 +1183,13 @@ interface TutorialStep {
 
 const TUTORIAL_STEPS: TutorialStep[] = [
   {
+    tag: 'VR bez VR',
+    title: 'Najpierw laboratorium kamery',
+    text: 'Otwórz Laboratorium kamery (lewy pasek albo ekran startowy gry), skalibruj patrząc prosto i wykonaj trzy testy: dłonie, głowa, oczy. Potem przechył głowy prowadzi postać, źrenice obracają kamerę, a palce biorą narzędzia z pasa — klawiatura i mysz nie są potrzebne.',
+    glyph: '◉  ✋  ◎',
+    caption: 'jedna kamerka · trzy tory sterowania',
+  },
+  {
     tag: 'Ruch',
     title: 'Wejdź do domu i rozejrzyj się',
     text: 'Klawisze W A S D prowadzą postać. Po starcie gra przechwytuje kursor, więc myszką obrócisz się o dowolny kąt — także przy dwóch monitorach. Esc zwalnia kursor do klikania HUD-u, klik w widok przejmuje go z powrotem. Shift to sprint, [ i ] zmieniają czułość. Na telefonie użyj joysticka i przeciągnij palcem.',
@@ -852,25 +1197,25 @@ const TUTORIAL_STEPS: TutorialStep[] = [
     caption: 'pełny obrót 360° z blokadą kursora',
   },
   {
-    tag: 'Narzędzia',
-    title: 'Zabierz trzy przyrządy',
-    text: 'Termometr (1) szuka zimnego punktu, miernik pola (2) zakłóceń prądu, a rejestrator (3) szeptów. Każdy ślad ma własne miejsce w domu — zmieniaj narzędzia w trakcie obchodu.',
-    glyph: '1  2  3',
-    caption: 'trzy narzędzia, trzy ślady',
+    tag: 'Pas na biodrach',
+    title: 'Weź narzędzie z pasa',
+    text: 'Startujesz przy samochodzie-bazie. Na pasie jest sześć przyrządów: klawisze 1–6 (albo spójrz w dół i zaciśnij palce) biorą wybrany, Q lub otwarta dłoń odkłada. Termometr, miernik pola, rejestrator, latarka UV, czujnik ruchu i kamera nocna szukają sześciu różnych śladów.',
+    glyph: '1 … 6',
+    caption: 'sześć narzędzi, sześć śladów',
   },
   {
     tag: 'Skan',
     title: 'Przytrzymaj E przy śladzie',
-    text: 'Podejdź do punktu z aktywnym narzędziem i przytrzymaj E około sekundy. Pasek skanu się zapełni, a w notatniku pojawi się „wykryto" albo „brak". Zbadaj wszystkie trzy rodzaje śladów, zanim zgadujesz.',
+    text: 'Podejdź do punktu z aktywnym narzędziem i przytrzymaj E (albo zaciśnij palce) około sekundy. Pasek skanu się zapełni, a w notatniku pojawi się „wykryto" albo „brak". Zbadaj wszystkie sześć śladów, zanim zgadujesz.',
     glyph: 'E',
     caption: 'przytrzymaj ~1 s',
   },
   {
     tag: 'Foto-dowód',
     title: 'Zrób zdjęcie klawiszem P',
-    text: 'Foto-dowód zapisuje aktualną klatkę jako plik PNG. Zdjęcie zrobione przy silnym odczycie trochę uspokaja nerwy, a podczas nalotu potrafi go przerwać, jeśli uchwycisz sylwetkę.',
+    text: 'Foto-dowód działa tylko wewnątrz rozgrywki — bez pliku PNG i bez pobierania. Zdjęcie zrobione przy silnym odczycie trochę uspokaja nerwy, a podczas nalotu potrafi go przerwać, jeśli uchwycisz sylwetkę.',
     glyph: 'P',
-    caption: 'zapis do pliku PNG',
+    caption: 'bez pliku PNG, bez pobierania',
   },
   {
     tag: 'Nalot',
@@ -1204,6 +1549,12 @@ document.addEventListener('click', (event) => {
     case 'open-info':
       $('#how').scrollIntoView({ behavior: 'smooth', block: 'start' });
       break;
+    case 'open-camera-lab':
+      void openCameraLab();
+      break;
+    case 'close-camera-lab':
+      closeCameraLab();
+      break;
   }
 });
 
@@ -1334,7 +1685,8 @@ gameTools.addEventListener('click', (event) => {
   const button = (event.target as HTMLElement).closest<HTMLButtonElement>('button');
   if (!button) return;
   button.blur();
-  if (button.dataset.tool !== undefined) world.horror.selectTool(Number(button.dataset.tool));
+  if (button.dataset.tool !== undefined) world.horror.takeTool(Number(button.dataset.tool));
+  else if (button.dataset.gameAction === 'drop') world.horror.dropTool();
   else if (button.dataset.gameAction === 'light') world.horror.toggleFlashlight();
   else if (button.dataset.gameAction === 'photo') world.horror.photo();
   else if (button.dataset.gameAction === 'journal') world.horror.toggleJournal();
@@ -1361,6 +1713,10 @@ gameResult.addEventListener('click', (event) => {
 });
 
 window.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && cameraLab.classList.contains('is-active')) {
+    closeCameraLab();
+    return;
+  }
   if (
     event.key === 'Escape' &&
     handPanel.classList.contains('is-active') &&
@@ -1609,7 +1965,20 @@ async function boot(): Promise<void> {
   online.onChat = (message) => {
     addChatMessage(message.nick, message.offline ? `${message.content} · (tylko u Ciebie)` : message.content, message.color);
   };
+  online.onParty = (state) => renderParty(state);
+  online.onPartyStart = (by) => {
+    showToast(lobbyToast, `${by} rozpoczyna dochodzenie razem z Tobą.`);
+    if (lobby.classList.contains('is-active')) openGame('lobby');
+    else showToast(globalToast, `${by} wzywa Cię do drużyny — wejdź do Atrium.`);
+  };
+  try {
+    pendingParty = pendingParty || localStorage.getItem('rejplay:pending-party')?.toUpperCase() || null;
+    if (pendingParty) localStorage.setItem('rejplay:pending-party', pendingParty);
+  } catch { /* jw. */ }
+  renderAccount();
+  renderParty(null);
   void online.connect();
+  void account.refresh();
   window.setInterval(() => {
     online.update({
       nick: state.nick,
@@ -1634,7 +2003,6 @@ async function boot(): Promise<void> {
   $('#tile-nick').textContent = state.nick;
   renderFeatured();
   renderGames();
-  renderFriends();
   renderRecent();
   renderSwatches();
   renderPlayerList();

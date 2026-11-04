@@ -67,7 +67,7 @@ export interface HumanAssets {
   maleClips: THREE.AnimationClip[];
   hairMaps: THREE.Texture[];
   /** Tekstura korpusu z przebarwioną skórą (dłonie/ramiona = wybrany odcień). */
-  bodyTexture(name: string, skin: string): THREE.Texture;
+  bodyTexture(name: string, skin: string, modelName?: string): THREE.Texture;
   bodyNormal(name: string): THREE.Texture;
   headTexture(name: string, skin: string, hair: string): THREE.Texture;
 }
@@ -209,6 +209,7 @@ async function makeHeadBase(name: string): Promise<HeadBase> {
   for (let i = 0, p = 0; i < data.length; i += 4, p += 1) {
     const r = data[i], g = data[i + 1], b = data[i + 2];
     const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+    const rg = r - g;
     const nx = (p % width) / width;
     const ny = Math.floor(p / width) / height;
     const isSkin = skinLikeness(r, g, b, skinRef);
@@ -216,8 +217,16 @@ async function makeHeadBase(name: string): Promise<HeadBase> {
     const hairZone =
       (ny < 0.62 && (nx < 0.29 || nx > 0.71 || ny < 0.145)) ||
       (ny < 0.34 && (nx < 0.38 || nx > 0.62)) ||
-      (ny >= 0.62 && nx > 0.47);
-    const isHair = hairZone && !isSkin && luminance > 0.075;
+      (ny >= 0.62 && nx > 0.82);
+    // Środek atlasu to TWARZ. Nawet jeśli cień pod okiem, brwi, zarost albo
+    // ciemniejszy odcień skóry nie przejdą heurystyki `skinLikeness`, nie wolno
+    // zamalować ich kolorem włosów: przy ciemnym brązie (#4b3020) dawało to
+    // niemal czarną twarz, mimo wybranej jasnej karnacji.
+    const faceZone = nx > 0.30 && nx < 0.70 && ny > 0.135 && ny < 0.63;
+    // Włosy są ciemne LUB pozbawione ciepłego odcienia skóry. Jasny, różowy
+    // fragment policzka w strefie fryzury nie jest fryzurą.
+    const hairLike = luminance < 0.62 || rg < 7;
+    const isHair = hairZone && !faceZone && !isSkin && hairLike && luminance > 0.075;
     skin[p] = isSkin ? 1 : 0;
     hair[p] = isHair ? 1 : 0;
     if (isSkin) {
@@ -327,12 +336,15 @@ export async function loadHumanAssets(): Promise<HumanAssets> {
   const bodyCache = new Map<string, THREE.CanvasTexture>();
 
   /** Gotowa tekstura ubrania + dłonie w kolorze skóry wybranym w edytorze. */
-  const bodyTexture = (name: string, skinHex: string): THREE.Texture => {
-    const key = `${name}|${skinHex}`;
+  const bodyTexture = (name: string, skinHex: string, modelName = AVATAR_NAMES[0]): THREE.Texture => {
+    const key = `${name}|${skinHex}|${modelName}`;
     const cached = bodyCache.get(key);
     if (cached) return cached;
     const look = bodyLooks.get(name) ?? bodyLookEntries[0][1];
-    const base = bases.get(name) ?? headBases[0];
+    // `name` to nazwa TEKSTURY ubrania, a `bases` jest kluczowane nazwami
+    // MODELU. Wcześniej zawsze brano headBases[0], więc odcień referencyjny
+    // skóry nie pasował do danej postaci i ręce/nogi zostawały ciemne.
+    const base = bases.get(modelName) ?? headBases[0];
     const [tr, tg, tb] = hexRgb(skinHex);
     const [rr, rg, rb] = base.skinRef;
     const refLuma = Math.max(0.2, (0.299 * rr + 0.587 * rg + 0.114 * rb) / 255);
@@ -358,7 +370,7 @@ export async function loadHumanAssets(): Promise<HumanAssets> {
       const weight = Math.max(0, Math.min(1, (105 - distance) / 70));
       if (weight <= 0) continue;
       const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
-      const f = Math.max(0.45, Math.min(1.5, 0.28 + 0.72 * (luminance / refLuma)));
+      const f = Math.max(0.62, Math.min(1.5, 0.45 + 0.72 * (luminance / refLuma)));
       const blend = 0.86 * weight;
       data[i] = clamp255(r + (tr * f - r) * blend);
       data[i + 1] = clamp255(g + (tg * f - g) * blend);
@@ -396,17 +408,21 @@ export async function loadHumanAssets(): Promise<HumanAssets> {
       if (base.skin[p] > 0) {
         // Zachowujemy rysunek twarzy i ciepły odcień oryginału: bez domieszki
         // skóra wychodziła kredowo-biała niezależnie od wybranego koloru.
-        const f = Math.max(0.5, Math.min(1.16, 0.3 + 0.7 * (luminance / base.skinLuma)));
+        // Podłoga 0.72: cienie oczodołów i broda zachowują rysunek, ale jasna
+        // karnacja nie zapada się do ciemnego brązu w połowie twarzy.
+        const f = Math.max(0.72, Math.min(1.18, 0.55 + 0.55 * (luminance / base.skinLuma)));
         output.data[i] = clamp255(0.84 * sr * f + 0.16 * r);
         output.data[i + 1] = clamp255(0.84 * sg * f + 0.16 * g);
         output.data[i + 2] = clamp255(0.84 * sb * f + 0.16 * b);
       } else if (base.hair[p] > 0) {
         // Bez normalizacji ciemna, wypieczona fryzura zawsze dawała brąz,
         // nawet przy wybranym blondzie. Teraz kolor jest kolorem bazowym.
-        const f = Math.max(0.32, Math.min(1.65, 0.25 + 0.75 * (luminance / base.hairLuma)));
-        output.data[i] = clamp255(hr * f);
-        output.data[i + 1] = clamp255(hg * f);
-        output.data[i + 2] = clamp255(hb * f);
+        const f = Math.max(0.42, Math.min(1.65, 0.25 + 0.75 * (luminance / base.hairLuma)));
+        // Niewielka domieszka światła otoczenia: ciemny brąz nie robi się
+        // jednolitą, czarną plamą przy słabym oświetleniu podglądu.
+        output.data[i] = clamp255(hr * f + 13);
+        output.data[i + 1] = clamp255(hg * f + 11);
+        output.data[i + 2] = clamp255(hb * f + 9);
       } else {
         output.data[i] = r;
         output.data[i + 1] = g;
@@ -442,12 +458,24 @@ const Q_SPREAD = new THREE.Quaternion();
 const Q_ARM = new THREE.Quaternion();
 const Q_LIFT = new THREE.Quaternion();
 const Q_SWING = new THREE.Quaternion();
+const Q_WPITCH = new THREE.Quaternion();
+const Q_WYAW = new THREE.Quaternion();
+const Q_WROLL = new THREE.Quaternion();
 
 interface FingerRig {
   bone: THREE.Object3D;
   rest: THREE.Quaternion;
   curlAxis: THREE.Vector3;
   normalAxis: THREE.Vector3;
+}
+
+/** Obrót nadgarstka: osie świata przeliczone na przestrzeń lokalną kości. */
+interface WristRig {
+  bone: THREE.Object3D;
+  rest: THREE.Quaternion;
+  pitchAxis: THREE.Vector3;
+  yawAxis: THREE.Vector3;
+  rollAxis: THREE.Vector3;
 }
 
 /** Kość ramienia poddawana pozycji dłoni (podnoszenie / odwodzenie). */
@@ -496,6 +524,7 @@ export class HumanAvatar implements Avatar {
   };
   private readonly handRigs: Record<'L' | 'R', FingerRig[]> = { L: [], R: [] };
   private readonly armRigs: Record<'L' | 'R', ArmRig[]> = { L: [], R: [] };
+  private readonly wristRigs: Partial<Record<'L' | 'R', WristRig>> = {};
   private handOverride = false;
   /** Po zniknięciu dłoni palce wracają do animacji płynnie, nie skokiem. */
   private handFade = 0;
@@ -601,7 +630,20 @@ export class HumanAvatar implements Avatar {
       const wrist = find('Hand');
       const indexBase = find('Finger1');
       const pinkyBase = find('Finger4');
-      if (!wrist || !indexBase || !pinkyBase) continue;
+      const middleBase = find('Finger2');
+      if (!wrist || !indexBase || !pinkyBase || !middleBase) continue;
+
+      // Obrót nadgarstka (pitch / yaw / roll) dokładamy na kości Hand.
+      // Osie świata → przestrzeń lokalna kości, żeby działało dla obu rigów.
+      const wristWorldQuat = wrist.getWorldQuaternion(new THREE.Quaternion());
+      const wristInverse = wristWorldQuat.clone().invert();
+      this.wristRigs[side] = {
+        bone: wrist,
+        rest: wrist.quaternion.clone(),
+        pitchAxis: new THREE.Vector3(1, 0, 0).applyQuaternion(wristInverse),
+        yawAxis: new THREE.Vector3(0, 1, 0).applyQuaternion(wristInverse),
+        rollAxis: new THREE.Vector3(0, 0, 1).applyQuaternion(wristInverse),
+      };
 
       // Pozycja dłoni w kadrze steruje też ramieniem: podniesienie ręki
       // unosi całe ramię, przesunięcie w bok odwodzi je. Osie wyliczamy z
@@ -622,13 +664,15 @@ export class HumanAvatar implements Avatar {
         });
       }
 
-      wrist.getWorldPosition(wristPos);
       indexBase.getWorldPosition(indexPos);
       pinkyBase.getWorldPosition(pinkyPos);
       const normal = new THREE.Vector3()
         .crossVectors(indexPos.clone().sub(wristPos), pinkyPos.clone().sub(wristPos))
         .normalize();
       if (normal.lengthSq() < 0.5) normal.set(0, 1, 0);
+
+      const middlePos = middleBase.getWorldPosition(new THREE.Vector3());
+      const middleDirWorld = middlePos.clone().sub(wristPos).normalize();
 
       for (let f = 0; f < 5; f += 1) {
         for (let j = 0; j < 3; j += 1) {
@@ -638,11 +682,27 @@ export class HumanAvatar implements Avatar {
           const worldQuat = bone.getWorldQuaternion(new THREE.Quaternion());
           const inverse = worldQuat.clone().invert();
           const direction = new THREE.Vector3(1, 0, 0).applyQuaternion(worldQuat).normalize();
-          const curlAxis = new THREE.Vector3()
-            .crossVectors(direction, normal)
-            .normalize()
-            .applyQuaternion(inverse);
-          const normalAxis = normal.clone().applyQuaternion(inverse);
+          const worldCurl = new THREE.Vector3().crossVectors(direction, normal).normalize();
+          // Lustrzany rig: iloczyn wektorowy obu rąk wychodzi tak samo, ale
+          // palce lewej dłoni muszą zginać się w PRZECIWNĄ stronę. Testujemy
+          // geometrycznie: dodatni kąt ma przybliżać opuszkę do wnętrza dłoni.
+          const bonePos = bone.getWorldPosition(new THREE.Vector3());
+          const towardPalm = wristPos.clone().sub(bonePos).normalize();
+          const before = direction.dot(towardPalm);
+          const after = direction.clone().applyAxisAngle(worldCurl, 0.3).dot(towardPalm);
+          if (after < before) worldCurl.negate();
+          const curlAxis = worldCurl.clone().applyQuaternion(inverse);
+
+          // Rozstawienie: dodatni kąt ma ODDALAĆ palec od środkowego, nigdy
+          // wywijać go na zewnątrz dłoni (zgłoszony błąd lewej ręki).
+          const worldSpread = normal.clone();
+          if (j === 0) {
+            const radial = bonePos.clone().sub(wristPos).normalize();
+            const beforeSpread = radial.dot(middleDirWorld);
+            const afterSpread = radial.clone().applyAxisAngle(worldSpread, 0.3).dot(middleDirWorld);
+            if (afterSpread > beforeSpread) worldSpread.negate();
+          }
+          const normalAxis = worldSpread.applyQuaternion(inverse);
           this.handRigs[side].push({
             bone,
             rest: bone.quaternion.clone(),
@@ -682,7 +742,7 @@ export class HumanAvatar implements Avatar {
           Q_REST.copy(rig.rest);
           Q_REST.multiply(Q_CURL.setFromAxisAngle(rig.curlAxis, pose.curl[f][j]));
           if (j === 0) {
-            Q_REST.multiply(Q_SPREAD.setFromAxisAngle(rig.normalAxis, -pose.spread[f] * 0.7));
+            Q_REST.multiply(Q_SPREAD.setFromAxisAngle(rig.normalAxis, pose.spread[f] * 0.7));
           }
           rig.bone.quaternion.copy(Q_REST);
         }
@@ -694,6 +754,14 @@ export class HumanAvatar implements Avatar {
       const fade = pose.presence;
       const lift = -pose.wrist.y * 1.05 * fade;
       const swing = pose.wrist.x * 0.52 * fade;
+      const wristRig = this.wristRigs[side];
+      if (wristRig) {
+        Q_REST.copy(wristRig.rest);
+        Q_REST.multiply(Q_WPITCH.setFromAxisAngle(wristRig.pitchAxis, pose.pitch * 1.15 * fade));
+        Q_REST.multiply(Q_WYAW.setFromAxisAngle(wristRig.yawAxis, pose.yaw * 1.05 * fade));
+        Q_REST.multiply(Q_WROLL.setFromAxisAngle(wristRig.rollAxis, pose.roll * 0.85 * fade));
+        wristRig.bone.quaternion.copy(Q_REST);
+      }
       for (const rig of this.armRigs[side]) {
         Q_ARM.copy(rig.rest);
         Q_ARM.multiply(Q_LIFT.setFromAxisAngle(rig.liftAxis, lift * rig.weight));
@@ -712,7 +780,7 @@ export class HumanAvatar implements Avatar {
     const outfit = getOutfit(appearance.outfit);
     // Damski i męski korpus mają różne UV — zawsze bierzemy wariant dla płci.
     const bodyName = outfitBody(outfit, this.female);
-    const bodyMap = this.assets.bodyTexture(bodyName, appearance.skin);
+    const bodyMap = this.assets.bodyTexture(bodyName, appearance.skin, this.modelName);
     const headMap = this.assets.headTexture(this.modelName, appearance.skin, appearance.hair);
 
     for (const material of this.bodyMaterials) {
@@ -724,7 +792,15 @@ export class HumanAvatar implements Avatar {
     for (const material of this.headMaterials) {
       material.map = headMap;
       material.color.set(0xffffff);
+      // Minimalna, ciepła emisja: twarz nigdy nie znika do czerni, gdy podgląd
+      // obraca się tyłem do kluczowego światła (problem ze zgłoszenia).
+      material.emissive.set(0x241c15);
+      material.emissiveIntensity = 0.14;
       material.needsUpdate = true;
+    }
+    for (const material of this.bodyMaterials) {
+      material.emissive.set(0x1d1712);
+      material.emissiveIntensity = 0.1;
     }
     for (const material of this.hairMaterials) {
       material.color.set(appearance.hair);

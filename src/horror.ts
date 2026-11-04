@@ -5,6 +5,8 @@ import type { HumanAssets } from './human';
 import type { Appearance } from './character';
 import { CHARACTER_MODELS } from './games';
 import { loadRealProps } from './real-props';
+import { buildBaseCamp } from './real-scenery';
+import { ToolBelt } from './tool-belt';
 import { neutralHandPosePair, type HandMotion, type HandPosePair } from './hand-pose';
 import type { QualityProfile } from './performance';
 
@@ -62,6 +64,12 @@ export interface HorrorState {
   canReport: boolean;
   hunting: boolean;
   photos: number;
+  /** Indeks narzędzia TRZYMANEGO w dłoni; −1 = pusta dłoń, narzędzie na pasie. */
+  held: number;
+  /** Gracz stoi przy samochodzie (bezpieczna strefa). */
+  nearBase: boolean;
+  /** Slot pasa, na który patrzy gracz (do chwytania wzrokiem / palcem). */
+  aimedSlot: number;
 }
 
 export interface HorrorOptions {
@@ -74,25 +82,37 @@ export interface HorrorOptions {
   onPhoto?: () => void;
 }
 
-const TOOLS: ToolInfo[] = [
+/** Sześć oryginalnych narzędzi na pasie (klawisze 1–6, Q odkłada). */
+export const TOOLS: ToolInfo[] = [
   { id: 'cold', name: 'Termometr', key: '1' },
   { id: 'field', name: 'Miernik pola', key: '2' },
   { id: 'voice', name: 'Rejestrator', key: '3' },
+  { id: 'uv', name: 'Latarka UV', key: '4' },
+  { id: 'motion', name: 'Czujnik ruchu', key: '5' },
+  { id: 'camera', name: 'Kamera nocna', key: '6' },
 ];
 
 const EVIDENCE: Array<{ id: string; name: string }> = [
   { id: 'cold', name: 'Zimny punkt' },
   { id: 'field', name: 'Zakłócenia pola' },
   { id: 'voice', name: 'Szepty' },
+  { id: 'uv', name: 'Odciski dłoni' },
+  { id: 'motion', name: 'Kroki bez źródła' },
+  { id: 'camera', name: 'Cienie w kadrze' },
 ];
 
+/** Dziesięć autorskich zjaw; żadna nie kopiuje nazw / lore z komercyjnych gier. */
 const GHOSTS: GhostInfo[] = [
   { id: 'mara', name: 'Mara', hint: 'Unika prądu. Zostawia zimno i szepty.', signature: ['cold', 'voice'] },
   { id: 'iskra', name: 'Iskra', hint: 'Nie obniża temperatury. Pole i szepty.', signature: ['field', 'voice'] },
   { id: 'szron', name: 'Szron', hint: 'Milczy. Zostawia zimno i pole.', signature: ['cold', 'field'] },
-  { id: 'cisza', name: 'Cisza', hint: 'Zostawia wszystkie trzy ślady naraz.', signature: ['cold', 'field', 'voice'] },
+  { id: 'cisza', name: 'Cisza', hint: 'Zimno, pole i szepty naraz, bez odcisków.', signature: ['cold', 'field', 'voice'] },
   { id: 'popiol', name: 'Popiół', hint: 'Zimno bez żadnego dźwięku. Tylko jeden ślad.', signature: ['cold'] },
   { id: 'nic', name: 'Nić', hint: 'Same szepty. Nie rusza temperatury ani prądu.', signature: ['voice'] },
+  { id: 'odcien', name: 'Odcień', hint: 'Zostawia odciski i cienie, ale nie zmienia temperatury.', signature: ['uv', 'camera'] },
+  { id: 'kurz', name: 'Kurz', hint: 'Odciski oraz kroki. Nie wydaje dźwięków.', signature: ['uv', 'motion'] },
+  { id: 'kompas', name: 'Kompas', hint: 'Zakłócenia pola i kroki. Zimno go nie zdradza.', signature: ['field', 'motion'] },
+  { id: 'glebia', name: 'Głębia', hint: 'Zimno, odciski, kroki i cienie — cztery ślady.', signature: ['cold', 'uv', 'motion', 'camera'] },
 ];
 
 /**
@@ -122,6 +142,7 @@ const CLUE_SPOTS: Array<[number, number]> = [
   [5.3, -5.9], [3.2, -7.2], [7.1, -3.1],
   [-5.6, 5.5], [-3.0, 7.3], [-7.0, 3.0],
   [5.6, 5.4], [3.1, 7.2], [7.0, 3.1],
+  [-2.0, -7.8], [2.0, -7.8], [-2.2, 7.9], [2.2, 7.9],
 ];
 
 interface Box {
@@ -158,6 +179,7 @@ export class HorrorGame {
   private leftHand!: AvatarViewHand | FallbackViewHand;
   private rightHand!: AvatarViewHand | FallbackViewHand;
   private toolView!: ToolViewmodel;
+  private belt!: ToolBelt;
   private assets: HumanAssets | null;
   private appearance: Appearance;
   private skin = '#d3a377';
@@ -194,6 +216,12 @@ export class HorrorGame {
   private yawTarget = 0;
   private pitchTarget = 0;
   private toolIndex = 0;
+  /** −1 = pusta dłoń; 0..5 = narzędzie wzięte z pasa. */
+  private held = 0;
+  private aimedSlot = 0;
+  private nearBase = false;
+  /** Ruch z przechyłu głowy (sterowanie bez klawiatury) sumowany z klawiszami. */
+  private cameraJoystick = { x: 0, y: 0 };
   private reading = 0;
   private scan = 0;
   private interacting = false;
@@ -277,6 +305,9 @@ export class HorrorGame {
       });
     }
     this.decor = buildDecor(this.scene, WALL_SEGMENTS);
+    // Podwórko z samochodem-bazą: gotowy model CC0/MIT + stanowisko
+    // monitoringu. Ładuje się asynchronicznie, nie blokuje startu rundy.
+    buildBaseCamp(this.scene);
     // Gotowe modele CC0 (Poly Haven) ładujemy dopiero przy pierwszej rundzie:
     // nie dokładamy 8 requestów do startu strony głównej.
   }
@@ -303,7 +334,9 @@ export class HorrorGame {
     this.toolView.root.scale.setScalar(0.7);
     this.toolView.root.rotation.set(0.04, 0.05, -0.22);
     this.rightHand.root.add(this.toolView.root);
-    this.viewCamera.add(this.leftHand.root, this.rightHand.root);
+    this.belt = new ToolBelt(TOOLS);
+    this.belt.setViewport(this.viewportAspect, this.viewFov);
+    this.viewCamera.add(this.leftHand.root, this.rightHand.root, this.belt.root);
   }
 
   private makeHands(): void {
@@ -343,10 +376,10 @@ export class HorrorGame {
     if (this.leftHand instanceof FallbackViewHand) this.leftHand.setSkin(this.skin);
     if (this.rightHand instanceof FallbackViewHand) this.rightHand.setSkin(this.skin);
     if (modelChanged || (template && assets)) {
-      this.viewCamera.remove(this.leftHand.root, this.rightHand.root);
+      this.viewCamera.remove(this.leftHand.root, this.rightHand.root, this.belt.root);
       this.makeHands();
       this.rightHand.root.add(this.toolView.root);
-      this.viewCamera.add(this.leftHand.root, this.rightHand.root);
+      this.viewCamera.add(this.leftHand.root, this.rightHand.root, this.belt.root);
     }
   }
 
@@ -381,6 +414,7 @@ export class HorrorGame {
     }
     this.leftHand.setViewport(aspect, this.viewFov);
     this.rightHand.setViewport(aspect, this.viewFov);
+    this.belt?.setViewport(aspect, this.viewFov);
   }
 
   /** Jakość renderingu ustawiana przez World (adaptacyjnie lub ręcznie). */
@@ -454,9 +488,10 @@ export class HorrorGame {
       if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.code)) {
         event.preventDefault();
       }
-      if (event.code === 'Digit1') this.selectTool(0);
-      if (event.code === 'Digit2') this.selectTool(1);
-      if (event.code === 'Digit3') this.selectTool(2);
+      for (let i = 0; i < TOOLS.length; i += 1) {
+        if (event.code === `Digit${i + 1}`) this.takeTool(i);
+      }
+      if (event.code === 'KeyQ' && !event.repeat) this.dropTool();
       if (event.code === 'KeyF') this.toggleFlashlight();
       if (event.code === 'KeyP' && !event.repeat) this.photo();
       if (event.code === 'KeyJ' || event.code === 'Tab') {
@@ -601,8 +636,9 @@ export class HorrorGame {
     this.statuses.clear();
     for (const evidence of EVIDENCE) this.statuses.set(evidence.id, 'unknown');
 
-    this.position.set(0, 1.65, 7.0);
-    this.yaw = 0;
+    // Runda zaczyna się PRZY SAMOCHODZIE: trzeba dojść do frontowych drzwi.
+    this.position.set(0, 1.65, 12.4);
+    this.yaw = Math.PI;
     this.pitch = 0;
     this.yawTarget = 0;
     this.pitchTarget = 0;
@@ -610,6 +646,12 @@ export class HorrorGame {
     this.bob = 0;
     this.lastStep = 0;
     this.toolIndex = 0;
+    this.held = 0;
+    this.aimedSlot = 0;
+    this.cameraJoystick.x = 0;
+    this.cameraJoystick.y = 0;
+    this.belt.setHeld(0);
+    this.belt.setAimed(0);
     this.reading = 0;
     this.scan = 0;
     this.interacting = false;
@@ -635,7 +677,7 @@ export class HorrorGame {
     this.keys.clear();
     this.joystick.x = 0;
     this.joystick.y = 0;
-    this.hint = 'Dom przy Wrzosowej 12. Znajdź trzy ślady i rozpoznaj zjawę.';
+    this.hint = 'Wysiadłeś z samochodu-bazy. Wejdź frontowymi drzwiami, zbierz sześć odczytów i rozpoznaj zjawę.';
     this.unlockAudio();
     this.emit();
   }
@@ -646,6 +688,8 @@ export class HorrorGame {
     this.syncFlashlightShadow();
     if (!active) {
       this.keys.clear();
+      this.cameraJoystick.x = 0;
+      this.cameraJoystick.y = 0;
       this.interacting = false;
       this.hunting = false;
       this.huntTimer = 0;
@@ -656,18 +700,62 @@ export class HorrorGame {
     }
   }
 
-  selectTool(index: number): void {
+  /** Weź narzędzie z pasa do dłoni (klawisz 1–6, palec albo spojrzenie). */
+  takeTool(index: number): void {
     if (!this.active || this.result || this.journal) return;
     this.toolIndex = THREE.MathUtils.clamp(index, 0, TOOLS.length - 1);
+    this.held = this.toolIndex;
+    this.aimedSlot = this.toolIndex;
     this.toolView.setTool(this.toolIndex);
+    this.toolView.root.visible = true;
+    this.belt.setHeld(this.held);
     this.scan = 0;
-    this.hint = `${TOOLS[this.toolIndex].name} w dłoni. Przytrzymaj E, żeby skanować.`;
-    this.beep(520, 0.06, 0.025);
+    this.hint = `${TOOLS[this.toolIndex].name} w dłoni. Przytrzymaj E albo zaciśnij palce, żeby skanować.`;
+    this.beep(560, 0.07, 0.025);
     this.emit();
   }
 
+  /** Odłóż narzędzie z powrotem na pas (Q / otwarta dłoń). */
+  dropTool(): void {
+    if (!this.active || this.result || this.journal) return;
+    if (this.held < 0) return;
+    this.held = -1;
+    this.interacting = false;
+    this.scan = 0;
+    this.toolView.root.visible = false;
+    this.belt.setHeld(-1);
+    this.hint = 'Pusta dłoń. Weź coś z pasa: klawisze 1–6, wskaż palcem albo spójrz w dół i zaciśnij dłoń.';
+    this.beep(320, 0.08, 0.025);
+    this.emit();
+  }
+
+  selectTool(index: number): void {
+    this.takeTool(index);
+  }
+
   cycleTool(): void {
-    this.selectTool((this.toolIndex + 1) % TOOLS.length);
+    this.takeTool((this.toolIndex + 1) % TOOLS.length);
+  }
+
+  /** Slot pasa podany wzrokiem / palcem (0 = skrajnie lewy). */
+  aimSlot(slot: number): void {
+    this.aimedSlot = THREE.MathUtils.clamp(Math.round(slot), 0, TOOLS.length - 1);
+    this.belt.setAimed(this.aimedSlot);
+  }
+
+  /** Chwyć z pasa to, na co patrzy gracz. */
+  grabAimed(): void {
+    this.takeTool(this.aimedSlot);
+  }
+
+  get heldTool(): number {
+    return this.held;
+  }
+
+  /** Sterowanie bez klawiatury: ruch z przechyłu głowy + rozglądanie oczami. */
+  setCameraJoystick(x: number, y: number): void {
+    this.cameraJoystick.x = THREE.MathUtils.clamp(x, -1, 1);
+    this.cameraJoystick.y = THREE.MathUtils.clamp(y, -1, 1);
   }
 
   toggleFlashlight(): void {
@@ -700,9 +788,9 @@ export class HorrorGame {
       this.nerves = Math.min(100, this.nerves + 8);
     } else if (this.reading > 0.5) {
       this.nerves = Math.min(100, this.nerves + 3);
-      this.hint = 'Foto-dowód zapisany. Nerwy trochę wracają do równowagi.';
+      this.hint = 'Foto-dowód zanotowany w notatniku (bez pliku). Nerwy trochę wracają.';
     } else {
-      this.hint = 'Zdjęcie zapisane. Tu nic nie ma — szukaj dalej.';
+      this.hint = 'Zdjęcie zanotowane bez pliku. Tu nic nie ma — szukaj dalej.';
     }
     this.emit();
   }
@@ -711,7 +799,7 @@ export class HorrorGame {
     this.hunting = true;
     this.huntTimer = 13;
     this.huntCooldown = 30 + Math.random() * 18;
-    this.hint = 'NALOT. Zjawa idzie w Twoją stronę — wyjdź frontowymi drzwiami albo zrób jej zdjęcie (P).';
+    this.hint = 'NALOT. Wracaj do samochodu-bazy frontowymi drzwiami albo zrób jej zdjęcie (P).';
     this.flicker = 1.2;
     this.knock();
     this.showApparition();
@@ -766,9 +854,18 @@ export class HorrorGame {
 
   private beginInteract(): void {
     if (!this.active || this.result || this.journal) return;
-    // Wyjście znajduje się w szczelinie frontowej ściany.
-    if (this.position.z > 8.35 && Math.abs(this.position.x) < 1.15) {
-      this.leave();
+    // Przy samochodzie E nie skanuje: to bezpieczna baza z monitoringiem.
+    if (this.nearBase) {
+      this.nerves = Math.min(100, this.nerves + 12);
+      if (this.hunting) this.endHunt('Jesteś w samochodzie. Nalot się cofnął.');
+      this.hint = 'Baza: nerwy wracają, ekran monitoringu pokazuje dom. Weź narzędzie z pasa i wracaj do środka.';
+      this.beep(660, 0.12, 0.035);
+      this.emit();
+      return;
+    }
+    if (this.held < 0) {
+      this.hint = 'Najpierw weź narzędzie z pasa (1–6 lub gest chwytu).';
+      this.emit();
       return;
     }
     this.interacting = true;
@@ -785,11 +882,20 @@ export class HorrorGame {
 
   private blocked(x: number, z: number): boolean {
     const r = 0.33;
-    if (x < -8.7 || x > 8.7 || z < -8.7 || z > 8.7) return true;
+    // Podwórko: wąski dojazd od frontowych drzwi (z=9) do samochodu-bazy.
+    const inYard = z > 8.7;
+    const limitX = inYard ? 3.8 : 8.7;
+    const limitZ = inYard ? 17.4 : 8.7;
+    if (x < -limitX || x > limitX || z < -8.7 || z > limitZ) return true;
     for (const wall of this.walls) {
       if (x > wall.minX - r && x < wall.maxX + r && z > wall.minZ - r && z < wall.maxZ + r) {
         return true;
       }
+    }
+    if (inYard) {
+      // Samochód stoi po prawej, blat monitoringu przy nim.
+      if (x > 1.35 - r && z > 11.1 - r && z < 16.6 + r) return true;
+      if (x > 0.25 - r && x < 1.75 + r && z > 12.6 - r && z < 13.4 + r) return true;
     }
     return false;
   }
@@ -814,8 +920,8 @@ export class HorrorGame {
     this.yaw += (this.yawTarget - this.yaw) * lookK;
     this.pitch += (this.pitchTarget - this.pitch) * lookK;
 
-    let ix = this.joystick.x;
-    let iy = this.joystick.y;
+    let ix = this.joystick.x + this.cameraJoystick.x;
+    let iy = this.joystick.y + this.cameraJoystick.y;
     if (this.keys.has('KeyW') || this.keys.has('ArrowUp')) iy += 1;
     if (this.keys.has('KeyS') || this.keys.has('ArrowDown')) iy -= 1;
     if (this.keys.has('KeyD') || this.keys.has('ArrowRight')) ix += 1;
@@ -896,6 +1002,7 @@ export class HorrorGame {
     this.toolView.root.position.y = 0.23 + this.scan * 0.05 + Math.sin(this.elapsed * 2) * 0.003;
     this.toolView.root.position.x = -0.055 - THREE.MathUtils.clamp(turn * 0.007, -0.025, 0.025);
     this.toolView.root.rotation.z = -0.22 + sway * 0.035 + THREE.MathUtils.clamp(turn * 0.012, -0.06, 0.06);
+    this.belt.update(this.elapsed);
     this.screenTimer -= realDt;
     if (this.screenTimer <= 0) {
       this.screenTimer = 0.12;
@@ -980,8 +1087,18 @@ export class HorrorGame {
       if (this.apparitionTimer <= 0) this.apparition.visible = false;
     }
 
+    // Bezpieczna strefa przy samochodzie: nerwy wracają, nalot się cofa.
+    const wasNearBase = this.nearBase;
+    this.nearBase = this.position.z > 11.3 && this.position.z < 17.4
+      && this.position.x > -2.0 && this.position.x < 2.2;
+    if (this.nearBase && this.hunting) this.endHunt('Dopadłeś do samochodu-bazy. Nalot się cofnął.');
+    if (this.nearBase && !wasNearBase) {
+      this.hint = 'Baza. Monitoring działa, nerwy powoli wracają. Narzędzia są na pasie przy biodrze.';
+      this.emit();
+    }
+
     const drain = (this.flashlightOn ? 0.28 : 0.62) + (this.hunting ? 1.5 : 0);
-    this.nerves = Math.max(0, this.nerves - drain * dt);
+    this.nerves = Math.min(100, Math.max(0, this.nerves - (this.nearBase ? -1.4 : drain) * dt));
     if (this.nerves <= 0 && !this.result) {
       this.finish(false, 'Nerwy nie wytrzymały. Musiałeś wyjść z domu.');
     }
@@ -1155,6 +1272,9 @@ export class HorrorGame {
       canReport,
       hunting: this.hunting,
       photos: this.photos,
+      held: this.held,
+      nearBase: this.nearBase,
+      aimedSlot: this.aimedSlot,
     });
   }
 }

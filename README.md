@@ -14,6 +14,17 @@ i drobnych ruchów nadgarstka, first-person w Atrium, przechwycenie kursora
 z pełnym obrotem 360° dla wielu monitorów, adaptacyjne wygładzanie i czułość
 ruchu do ustawienia na żywo.
 
+**v0.6 — „VR bez VR”:** jedna kamerka zasila trzy niezależne tory: MediaPipe
+Hands (dłonie 1:1) **oraz** FaceMesh z `refineLandmarks` (głowa + źrenice).
+**Laboratorium kamery** na starcie robi kalibrację neutralnej pozycji i trzy
+testy (dłonie, głowa, oczy); po nich lekki przechył głowy w przód porusza
+postacią z prędkością wprost proporcjonalną do kąta, przechył w tył cofa,
+przechył na bok strafuje, a źrenice sterują kamerą. Palce chwytają, odkładają
+i używają narzędzi z **pasu na biodrach**. Klawiatura, mysz i dotyk zostają
+wyłącznie jako zapasowe sterowanie. Do tego: konta współdzielone z
+`rejson59.github.io`, drużyny z kodem zaproszenia, zero botów demo, samochód-baza
+i 25 darmowych assetów CC0/MIT, 6 narzędzi, 6 śladów, 10 autorskich zjaw.
+
 ---
 
 ## Co działa teraz
@@ -41,8 +52,9 @@ momentu załadowania modeli.
 Siedmiokrokowy modal (strona główna, lewy pasek, baner, start gry). Nawigacja:
 `Dalej` / `Wstecz`, kropki, strzałki, `Esc`. Ilustracje to czysty CSS i tekst.
 
-Kroki: ruch z przechwyconym kursorem (pełny obrót 360°) → trzy narzędzia →
-skanowanie `E` → foto-dowód `P` → nalot → notatnik `J` → raport i wyjście.
+Kroki: ruch z przechwyconym kursorem (pełny obrót 360°) → sześć narzędzi na
+pasie → skanowanie `E` → foto-dowód `P` (bez pliku) → nalot → notatnik `J` →
+raport i wyjście.
 
 ### Edytor postaci
 
@@ -53,7 +65,7 @@ postać — kamera i światła stoją nieruchomo.
 | Grupa | Opcje |
 | --- | --- |
 | Sylwetka | **13 postaci Rocketbox: 9 męskich + 4 żeńskie** (Marek…Gustaw, Alicja, Ewa, Nina, Iza) |
-| Odcień skóry | 6 ciepłych tonów; **domyślnie „Średnia”** dla wszystkich postaci, botów i dłoni w grze |
+| Odcień skóry | 6 ciepłych tonów; **domyślnie „Średnia”** dla wszystkich postaci i dłoni w grze |
 | Kolor włosów | czarny, ciemny brąz, brąz, blond, rudy, siwy |
 | Ubranie | **8 gotowych strojów**, każdy w wariancie męskim i damskim |
 
@@ -205,7 +217,9 @@ Spokojna, filmowa scena: beton, ciepłe latarnie, księżyc, obelisk, brama.
   wygładzanymi interpolacją,
 - **wspólny czat** zapisywany w `rejplay_chat` i dostarczany przez
   `postgres_changes` (historia 12 ostatnich wiadomości),
-- 4 boty demonstracyjne, lista graczy z odznaką „online”,
+- **zero botów demonstracyjnych** — lista graczy to wyłącznie Presence,
+- **drużyny (party)**: utwórz kod, wyślij link, czat i Presence zawężają się
+  do `rejplay:party:<kod>`, a „Rozpocznij razem” wysyła broadcast do całej ekipy,
 - `WASD` / strzałki, `Spacja`, przeciąganie myszą lub pointer lock, dotyk,
 - `V` — pierwszoosobowy widok z oczu ↔ kamera trzecioosobowa,
 - `E` / **Machaj** — emote bez VR; kamerka steruje palcami **i pozycją 3D**.
@@ -222,10 +236,22 @@ trafiają do kodu ani do bundla. Konfigurację można nadpisać zmiennymi
 | `rejplay_profiles` | nick, kolor, wygląd JSON, `client_id` z localStorage |
 | `rejplay_chat` | wiadomości Atrium (max 180 znaków) |
 | `rejplay_events` | `game_open`, `game_start`, `game_win`, `game_fail`, `photo`, `lobby_enter` |
+| `rejplay_parties` | kod, nazwa, lider (UUID konta głównej strony), wygaśnięcie |
+| `rejplay_party_members` | `client_id`, `user_id`, nick, kolor, wygląd, `last_seen_at` |
 
-Migracja (RLS dla `anon`, indeksy, dodanie tabel do publikacji
-`supabase_realtime`) leży w `supabase/migrations/20261102190000_rejplay_multiplayer.sql`
-i została zastosowana w projekcie. **Jeśli baza jest niedostępna**, wskaźnik na
+**Konta:** RejPlay nie ma własnej rejestracji ani haseł. W `<head>` ładuje
+`/js/rejson-account.js?v=1` TYLKO na `rejson59.github.io` (wspólny origin =
+wspólny `localStorage`). Sesja `rejson_community_session_v1` jest potwierdzana
+przez `community_whoami`, a każda funkcja drużyny dodatkowo waliduje
+`session.token` po stronie serwera przez `community_session_user(p_token)`.
+Token nigdy nie trafia do URL, czatu, Presence ani `postMessage`. Tabele
+drużyn mają włączone RLS i **brak polityk dla anon** — dostęp wyłącznie przez
+funkcje `SECURITY DEFINER`.
+
+Migracje (RLS, indeksy, publikacja `supabase_realtime`, funkcje RPC) leżą w
+`supabase/migrations/20261102190000_rejplay_multiplayer.sql`,
+`20261104190000_rejplay_parties.sql` oraz
+`20261104191000_rejplay_party_auth_fix.sql` i zostały zastosowane w projekcie. **Jeśli baza jest niedostępna**, wskaźnik na
 stronie przechodzi w „Tryb offline”, czat zostaje w karcie, a gra, lobby i
 kamerka działają normalnie — brak połączenia nie blokuje rozgrywki.
 
@@ -237,8 +263,10 @@ nazwy, opisy zjaw, dowody, dźwięki (WebAudio) i geometria domu są napisane od
 zera. Podobieństwo dotyczy **mechaniki gatunku**: first-person, ręczne zbieranie
 dowodów, dedukcja typu zjawy, notatnik, narastające zagrożenie, ucieczka.
 
-Pierwszoosobowe dochodzenie przy Wrzosowej 12: cztery pokoje, korytarz, latarka,
-trzy narzędzia, sześć zjaw.
+Pierwszoosobowe dochodzenie przy Wrzosowej 12: cztery pokoje, korytarz,
+podwórko z **samochodem-bazą** (start, monitoring, bezpieczna strefa, regeneracja
+nerwów, przerwanie nalotu), latarka, **sześć narzędzi**, **sześć śladów**,
+**dziesięć zjaw** i 16 miejsc z poszlakami.
 
 **Wygląd i realizm:**
 
@@ -246,9 +274,12 @@ trzy narzędzia, sześć zjaw.
   tkanina, glazura, dywan) z mapami wypukłości,
 - meble z zaokrąglonych krawędzi i toczenia: stół, krzesła, regał z książkami,
   fotel, łóżko, szafki, zlew, czajnik, wieszak, lustro, zegar, obrazy, kurz,
-- **8 gotowych, fotorealistycznych rekwizytów CC0 z Poly Haven** (ławka,
-  drewniany stół, donica, paproć, kosz, skrzynka, latarnia, głaz) z wbudowanymi
-  teksturami 1K — ładują się asynchronicznie, nie blokują startu gry,
+- **25 gotowych, fotorealistycznych assetów CC0 / MIT** w `public/assets/props/`:
+  oryginalne 8 rekwizytów Poly Haven plus 17 modeli z GridFall (drzewa, ławki,
+  latarnie, fontanna, donice, hydrant, bariera, kontener, klimatyzator,
+  `van_white.glb` jako baza). Tekstury 1K są osadzone w GLB — bez CDN, bez
+  połączenia. Noty: `LICENSE-polyhaven-cc0.txt`, `LICENSE-gridfall-MIT.txt`,
+
 - statyczna geometria łączona wg materiału (`mergeGeometries`),
 - latarka z cieniami, księżyc, migotanie, mgła, winyeta i ziarno,
 - **oryginalne dłonie awatara** first-person na osobnej scenie z własnym
@@ -260,11 +291,13 @@ trzy narzędzia, sześć zjaw.
 
 | Element | Opis |
 | --- | --- |
-| Narzędzia | `1` Termometr · `2` Miernik pola · `3` Rejestrator |
-| Skan | przytrzymaj `E` przez ~1,2 s — `wykryto` albo `brak śladu` |
-| Dowody | Zimny punkt, Zakłócenia pola, Szepty |
-| Zjawy | Mara, Iskra, Szron, Cisza, Popiół, Nić — 6 zestawów śladów |
-| Foto-dowód | `P` zapisuje PNG; przy silnym odczycie uspokaja nerwy, przerywa nalot |
+| Pas na biodrach | 6 slotów 3D przypiętych do kamery + te same sloty w HUD; weź `1`–`6`, odłóż `Q`, wskaż palcem lub spojrzeniem |
+| Narzędzia | `1` Termometr · `2` Miernik pola · `3` Rejestrator · `4` Latarka UV · `5` Czujnik ruchu · `6` Kamera nocna |
+| Gesty | zaciśnięcie palców = chwyć / użyj, dłoń otwarta ~0,9 s = odłóż, palec wskazujący = wybierz slot |
+| Skan | przytrzymaj `E` (albo zaciśnij palce) przez ~1,2 s — `wykryto` albo `brak śladu` |
+| Dowody | Zimny punkt, Zakłócenia pola, Szepty, Odciski dłoni, Kroki bez źródła, Cienie w kadrze |
+| Zjawy | Mara, Iskra, Szron, Cisza, Popiół, Nić, Odcień, Kurz, Kompas, Głębia |
+| Foto-dowód | `P` zaznacza dowód w notatniku; **nie zapisuje PNG ani nie pobiera pliku** |
 | Nalot | co ~30–48 s; wyjście frontowymi drzwiami, `P` lub przeczekanie kończy go |
 | Nerwy | maleją z czasem, szybciej po ciemku, podczas zjawisk i nalotu |
 | Raport | `J` / `Tab` → wybierz zjawę; pomyłka kosztuje 24 nerwy |
@@ -274,6 +307,26 @@ pełny obrót 360°), `Shift` bieg, `F` latarka, `Esc` najpierw zwalnia kursor,
 ponowne `Esc` / `← Wyjdź` wychodzi z gry. Na dotyku: joystick + `Skanuj`, `Bieg`,
 `Foto`, `Narzędzie`, `Notatnik`, `Latarka` (przyciski trzymane palcem mają
 wizualny stan wciśnięcia).
+
+### Laboratorium kamery — konfiguracja wstępna
+
+Dostęp z lewego paska, ekranu startowego gry i przycisku w górnym pasku.
+Jeden element `<video>` jest współdzielony przez Hands i FaceMesh — nie ma
+drugiej zgody na kamerę. Obraz nie opuszcza przeglądarki.
+
+1. **Kalibracja** — patrz prosto przez ~2 s: zapisujemy neutralny yaw/pitch/roll
+   oraz neutralne spojrzenie (każda twarz ma inną geometrię).
+2. **Test dłoni** — obie dłonie z prostymi palcami, potem zaciśnięcie i otwarcie.
+3. **Test głowy** — kiwnięcie przód/tył i przechył na bok (mierzony zakres sygnału).
+4. **Test oczu** — spojrzenie lewo/prawo/góra/dół bez ruchu głowy (10 punktów
+   tęczówki na oko dzięki `refineLandmarks`), alternatywnie mrugnięcie.
+
+Suwaki: czułość oczu, czułość przechyłu, martwa strefa, wygładzanie, odwrócenie
+poziomu. Gdy cztery warunki są zielone, przycisk **„Włącz grę bez klawiatury”**
+odblokowuje sterowanie: `lookX/lookY` wchodzą do tej samej ścieżki co ruch
+myszą (`world.applyCameraControl` → `horror.look` / `yaw`), a `moveX/moveY`
+sumują się z `WASD` i joystickiem. Ustawienia i kalibracja zapisują się w
+`localStorage` (`rejplay:camera-control-v1`).
 
 ---
 
@@ -328,21 +381,28 @@ SPA bez routingu po stronie serwera, więc nie potrzebuje `404.html`.
 index.html                     strona główna, lobby, gra, edytor, samouczek, boot overlay
 src/style.css                  jasny/ciemny katalog + widoki pełnoekranowe
 src/main.ts                    stan UI, motyw, samouczek, HUD, kamerka, online, boot
-src/games.ts                   jedna gra + lobby, 13 modeli, 8 strojów (męskie/damskie), boty
+src/games.ts                   jedna gra + lobby, 13 modeli, 8 strojów (męskie/damskie)
 src/world.ts                   jeden renderer, 3 sceny + viewmodel, awatary zdalnych graczy
 src/performance.ts             adaptacyjna jakość: profile, EMA klatek, DPR, cienie, limit fps
 src/character.ts               slot gracza: rigowana postać + zastępnik
 src/human.ts                   13 GLB, maski głowy/ubrania, retarget dłoni, kolory skóry
-src/hand-tracking.ts           getUserMedia + MediaPipe Hands: 21 punktów obu dłoni
+src/hand-tracking.ts           MediaPipe Hands: 21 punktów obu dłoni (lub strumień z rigu)
+src/face-tracking.ts           MediaPipe FaceMesh: 478 punktów, źrenice, głowa, mruganie
+src/camera-rig.ts              jeden strumień → Hands + FaceMesh + sterowanie + gesty
+src/camera-control.ts          kalibracja, 3 testy, mapowanie głowa/oczy/palce
+src/community-account.ts       wspólne konto rejson59.github.io (bez własnej bazy użytkowników)
+src/tool-belt.ts               pas na biodrach: 6 slotów 3D w viewmodelu
+src/real-scenery.ts            13 rekwizytów lobby + 10 podwórka + samochód-baza
 src/hand-pose.ts               21 punktów → 15 kątów, rozstaw, obroty, pozycja dłoni 3D
 src/view-hands.ts              prawdziwe dłonie awatara (SkinnedMesh) + narzędzie LCD
 src/first-person-hands.ts      wspólny viewmodel dłoni first-person dla Atrium
 src/online.ts                  Supabase Realtime Presence / czat / profile / zdarzenia
-src/real-props.ts              gotowe rekwizyty CC0 Poly Haven
+src/real-props.ts              17 gotowych rekwizytów CC0 / MIT w grze
 src/horror-decor.ts            proceduralne tekstury, meble, światła i kurz
 src/horror.ts                  Demonofobia: silnik, ruch, nalot, dźwięk, first-person
 src/avatar.ts                  wspólny interfejs awatara i etykiety
-supabase/migrations/           migracja tabel rejplay_* + RLS + realtime
+supabase/migrations/           multiplayer + drużyny (RLS, RPC z walidacją tokenu)
+public/mediapipe/face/         lokalny runtime FaceMesh (Apache-2.0)
 .github/workflows/             build + deploy na GitHub Pages
 public/characters/             13 GLB + animacje + gotowe tekstury + licencja MIT
 public/mediapipe/              lokalne pliki MediaPipe Hands
