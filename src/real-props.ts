@@ -33,13 +33,23 @@ const PROPS: Prop[] = [
   { file: 'mailbox', scale: 12, position: [2.25, 0, 10.15], rotation: -Math.PI / 2 },
   { file: 'lamp_classic', scale: 12, position: [-3.4, 0, 10.6] },
   { file: 'rock_boulder', scale: 10, position: [5.4, 0, 10.5] },
+  // v0.6: kolejne darmowe modele CC0/MIT z GridFall (tekstury Poly Haven).
+  { file: 'planter_round', scale: 15, position: [-7.9, 0, 3.6] },
+  { file: 'tree_bush', scale: 15, position: [7.9, 0, -3.9] },
+  { file: 'utility_box', scale: 13, position: [-8.1, 0, -5.4], rotation: Math.PI / 2 },
+  { file: 'bollard', scale: 15, position: [-1.6, 0, 9.7] },
+  { file: 'bollard', scale: 15, position: [1.6, 0, 9.7] },
+  { file: 'cone', scale: 15, position: [2.9, 0, 11.7] },
+  { file: 'trash_bin_wheelie', scale: 13, position: [-3.0, 0, 12.1] },
+  { file: 'hydrant', scale: 15, position: [3.1, 0, 15.4] },
+  { file: 'aircon_unit', scale: 12, position: [-8.0, 1.1, 7.2], rotation: -Math.PI / 2 },
 ];
 
 export async function loadRealProps(scene: THREE.Scene): Promise<THREE.Group> {
   const loader = new GLTFLoader();
   const group = new THREE.Group();
   group.name = 'real-props-cc0';
-  // Równolegle: 8 małych plików nie może układać się w 8 następujących po
+  // Równolegle: kilkanaście małych plików nie może układać się w następujące po
   // sobie round-tripów. Kolejność w grupie jest stała dzięki Promise.all.
   const roots = await Promise.all(PROPS.map(async (prop) => {
     try {

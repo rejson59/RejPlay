@@ -3,10 +3,11 @@ import { createLabel, scaleLabelToDistance, type LabelHandle } from './avatar';
 import { Character, type Appearance } from './character';
 import type { HumanAssets } from './human';
 import { HorrorGame, type HorrorResult, type HorrorState } from './horror';
-import { BOTS, GAMES, PALETTE } from './games';
+import { GAMES, PALETTE } from './games';
 import { neutralHandPosePair, posesFromHands, type HandPosePair, type TrackedHand } from './hand-pose';
 import type { OnlinePeer } from './online';
 import { FirstPersonHands } from './first-person-hands';
+import { loadLobbyScenery } from './real-scenery';
 import {
   QualityManager,
   deviceHints,
@@ -15,15 +16,6 @@ import {
 } from './performance';
 
 export type Mode = 'home' | 'lobby' | 'game';
-
-interface Bot {
-  avatar: Character;
-  name: string;
-  target: THREE.Vector3;
-  timer: number;
-  speed: number;
-  waveTimer: number;
-}
 
 interface Portal {
   hit: THREE.Mesh;
@@ -79,12 +71,6 @@ function shadowTexture(): THREE.CanvasTexture {
   return new THREE.CanvasTexture(canvas);
 }
 
-function randomPoint(minRadius = 2, maxRadius = 8): THREE.Vector3 {
-  const angle = Math.random() * Math.PI * 2;
-  const radius = minRadius + Math.random() * (maxRadius - minRadius);
-  return new THREE.Vector3(Math.sin(angle) * radius, 0, Math.cos(angle) * radius);
-}
-
 function approachAngle(current: number, target: number, factor: number): number {
   const delta = Math.atan2(Math.sin(target - current), Math.cos(target - current));
   return current + delta * Math.min(1, factor);
@@ -105,7 +91,6 @@ export class World {
 
   private readonly heroAvatar: Character;
   private readonly player: Character;
-  private readonly bots: Bot[] = [];
   private readonly assets: HumanAssets | null;
   /** Prawdziwi gracze z Supabase Realtime — awatary w lobby 3D. */
   private readonly remote = new Map<string, {
@@ -134,6 +119,8 @@ export class World {
   private readonly resizeObserver: ResizeObserver;
   private readonly keys = new Set<string>();
   private readonly joystick = { x: 0, y: 0 };
+  /** Ruch z przechyłu głowy (CameraRig), sumowany z klawiaturą / dotykiem. */
+  private readonly cameraMove = { x: 0, y: 0 };
   private readonly camTarget = new THREE.Vector3();
   private readonly qualityManager: QualityManager;
   private readonly shadowLights: THREE.DirectionalLight[] = [];
@@ -188,8 +175,8 @@ export class World {
       antialias: initial.antialias,
       alpha: true,
       powerPreference: 'high-performance',
-      // Zdjęcie zapisujemy po własnym, jawnym renderze w capturePhoto(),
-      // więc nie musimy trzymać bufora klatki przy każdym rysowaniu.
+      // Foto-dowód jest wyłącznie zdarzeniem w grze (bez pliku PNG), więc
+      // nie musimy trzymać bufora klatki przy każdym rysowaniu.
       preserveDrawingBuffer: false,
     });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, initial.maxDpr));
@@ -301,6 +288,31 @@ export class World {
   /** Atrium: widok z oczu (domyślny) albo klasyczna kamera za plecami. */
   get firstPersonView(): boolean {
     return this.firstPerson;
+  }
+
+  /**
+   * Sterowanie bez klawiatury i myszy. Sygnały z CameraRig mają dokładnie
+   * tę samą semantykę co ruch myszą (lookX/lookY w px/s) i joystick
+   * (moveX/moveY w −1..1), więc nie omijamy istniejących zabezpieczeń.
+   */
+  applyCameraControl(ctrl: {
+    lookX: number; lookY: number; moveX: number; moveY: number;
+  }, dt: number): void {
+    this.cameraMove.x = ctrl.moveX;
+    this.cameraMove.y = ctrl.moveY;
+    if (this.mode === 'game') {
+      if (this.horror) {
+        this.horror.look(ctrl.lookX * dt, ctrl.lookY * dt);
+        this.horror.setCameraJoystick(ctrl.moveX, ctrl.moveY);
+      }
+      return;
+    }
+    if (this.mode === 'lobby' && this.firstPerson) {
+      this.yaw -= ctrl.lookX * dt * 0.005;
+      this.lookPitch = THREE.MathUtils.clamp(
+        this.lookPitch - ctrl.lookY * dt * 0.002, -1.1, 1.1,
+      );
+    }
   }
 
   setFirstPerson(enabled: boolean): void {
@@ -434,32 +446,9 @@ export class World {
 
   private setLabelsVisible(visible: boolean): void {
     this.player.setLabelVisible(visible);
-    for (const bot of this.bots) bot.avatar.setLabelVisible(visible);
   }
 
   /** Zwraca gotowe zdjęcie (data URL PNG) z aktualnej klatki. */
-  capturePhoto(): string {
-    if (this.mode === 'game') {
-      this.renderer.render(this.gameScene, this.horror.camera);
-      this.renderer.autoClear = false;
-      this.renderer.clearDepth();
-      this.renderer.render(this.horror.viewScene, this.horror.viewCamera);
-      this.renderer.autoClear = true;
-    } else if (this.mode === 'lobby' && this.firstPerson) {
-      this.renderer.render(this.lobbyScene, this.lobbyCamera);
-      this.renderer.autoClear = false;
-      this.renderer.clearDepth();
-      this.renderer.render(this.lobbyHands.scene, this.lobbyHands.camera);
-      this.renderer.autoClear = true;
-    } else {
-      this.renderer.render(
-        this.mode === 'home' ? this.heroScene : this.lobbyScene,
-        this.mode === 'home' ? this.heroCamera : this.lobbyCamera,
-      );
-    }
-    return this.renderer.domElement.toDataURL('image/png');
-  }
-
   onPortalSelect(handler: (id: string) => void): void {
     this.portalHandler = handler;
   }
@@ -520,8 +509,14 @@ export class World {
     document.body.classList.toggle('is-low-quality', profile.level === 'low');
   }
 
+  /** Delikatne światło wypełniające, zawsze od strony kamery podglądu. */
+  private readonly heroFill = new THREE.DirectionalLight(0xfff0dc, 1.15);
+
   private buildHero(): void {
     this.heroScene.add(new THREE.AmbientLight(0xb9c0c4, 0.75));
+    // Podgląd obraca POSTAĆ, a nie światła. Bez doświetlenia od kamery twarz
+    // wpadała w cień kluczowego reflektora i wyglądała na prawie czarną.
+    this.heroScene.add(this.heroFill);
 
     const key = new THREE.DirectionalLight(0xffe0bd, 2.1);
     key.position.set(3, 6, 5);
@@ -770,36 +765,8 @@ export class World {
     this.player.root.position.set(0, 0, 2.4);
     this.lobbyScene.add(this.player.root);
 
-    // Boty — docelowo podmieniane na prawdziwych graczy z serwera
-    BOTS.forEach((bot, i) => {
-      const avatar = new Character({
-        color: bot.color,
-        label: bot.name,
-        assets: this.assets,
-        templateIndex: (i + 1) % 6,
-        });
-      avatar.root.position.copy(this.pickBotTarget());
-      avatar.root.rotation.y = (i / BOTS.length) * Math.PI * 2;
-      this.lobbyScene.add(avatar.root);
-      this.bots.push({
-        avatar,
-        name: bot.name,
-        target: this.pickBotTarget(),
-        timer: 2 + Math.random() * 4,
-        speed: 1.1 + Math.random() * 0.9,
-        waveTimer: 6 + i * 4 + Math.random() * 8,
-      });
-    });
-  }
-
-  /** Boty trzymają się poza polem widzenia kamery, żeby nie zasłaniać placu. */
-  private pickBotTarget(): THREE.Vector3 {
-    const camera = this.lobbyCamera.position;
-    for (let attempt = 0; attempt < 16; attempt++) {
-      const point = randomPoint(2, 8.5);
-      if (Math.hypot(point.x - camera.x, point.z - camera.z) > 5) return point;
-    }
-    return new THREE.Vector3(0, 0, -3);
+    // Gotowe assety CC0/MIT dokładamy asynchronicznie, bez blokowania startu.
+    void loadLobbyScenery(this.lobbyScene);
   }
 
   // -------------------------------------------------------------------- input
@@ -836,7 +803,9 @@ export class World {
       const dx = THREE.MathUtils.clamp(event.movementX || 0, -600, 600);
       const dy = THREE.MathUtils.clamp(event.movementY || 0, -600, 600);
       this.yaw -= dx * 0.005;
-      this.lookPitch = THREE.MathUtils.clamp(this.lookPitch + dy * 0.002, -1.1, 1.1);
+      // Ruch myszą W GÓRĘ ma unosić wzrok: movementY jest wtedy ujemne,
+      // a dodatni rotation.x kamery Three.js oznacza patrzenie w górę.
+      this.lookPitch = THREE.MathUtils.clamp(this.lookPitch - dy * 0.002, -1.1, 1.1);
     });
 
     canvas.addEventListener('pointerdown', (event: PointerEvent) => {
@@ -869,7 +838,7 @@ export class World {
         else this.heroAngle -= dx * 0.008;
       } else if (this.firstPerson) {
         this.yaw -= dx * 0.005;
-        this.lookPitch = THREE.MathUtils.clamp(this.lookPitch + dy * 0.002, -1.1, 1.1);
+        this.lookPitch = THREE.MathUtils.clamp(this.lookPitch - dy * 0.002, -1.1, 1.1);
       } else {
         this.yaw -= dx * 0.005;
         this.pitch = THREE.MathUtils.clamp(this.pitch + dy * 0.002, -0.12, 0.8);
@@ -995,13 +964,18 @@ export class World {
       Math.cos(cameraAngle) * heroDistance,
     );
     this.heroCamera.lookAt(0, this.previewClose ? 1.18 : 0.95, 0);
+    this.heroFill.position.set(
+      this.heroCamera.position.x * 0.8,
+      this.heroCamera.position.y + 0.9,
+      this.heroCamera.position.z + 1.4,
+    );
   }
 
   private updateLobby(dt: number): void {
     const turn = dt > 0 ? THREE.MathUtils.clamp((this.yaw - this.lastLobbyYaw) / dt, -6, 6) : 0;
     this.lastLobbyYaw = this.yaw;
-    let ix = this.joystick.x;
-    let iy = this.joystick.y;
+    let ix = this.joystick.x + this.cameraMove.x;
+    let iy = this.joystick.y + this.cameraMove.y;
     if (this.keys.has('KeyW') || this.keys.has('ArrowUp')) iy += 1;
     if (this.keys.has('KeyS') || this.keys.has('ArrowDown')) iy -= 1;
     if (this.keys.has('KeyD') || this.keys.has('ArrowRight')) ix += 1;
@@ -1064,70 +1038,6 @@ export class World {
       entry.avatar.update(this.elapsed, 0.12);
     }
 
-    for (const bot of this.bots) {
-      bot.timer -= dt;
-      bot.waveTimer -= dt;
-      if (bot.waveTimer <= 0) {
-        bot.avatar.wave();
-        this.waveHandler?.(bot.name);
-        bot.waveTimer = 20 + Math.random() * 30;
-      }
-      const botPosition = bot.avatar.root.position;
-      const radialBot = Math.hypot(botPosition.x, botPosition.z);
-      if (radialBot > 9.2) {
-        const scale = 9.2 / radialBot;
-        botPosition.x *= scale;
-        botPosition.z *= scale;
-      }
-      const cameraDistance = Math.hypot(
-        botPosition.x - this.lobbyCamera.position.x,
-        botPosition.z - this.lobbyCamera.position.z,
-      );
-      if (cameraDistance < 4) {
-        bot.target = this.pickBotTarget();
-        bot.timer = 3 + Math.random() * 3;
-      }
-      const toTarget = this.vToTarget.copy(bot.target).sub(botPosition);
-      toTarget.y = 0;
-      const distance = toTarget.length();
-      let moving = 0;
-      if (distance > 0.2 && bot.timer > 0) {
-        toTarget.normalize();
-        botPosition.addScaledVector(toTarget, Math.min(bot.speed * dt, distance));
-        bot.avatar.root.rotation.y = approachAngle(
-          bot.avatar.root.rotation.y,
-          Math.atan2(toTarget.x, toTarget.z),
-          dt * 4,
-        );
-        moving = 0.8;
-      } else {
-        bot.target = this.pickBotTarget();
-        bot.timer = 2.5 + Math.random() * 4;
-      }
-      bot.avatar.update(this.elapsed, moving);
-    }
-
-    // Proste odpychanie: boty nie stają w jednym punkcie (i nicki się nie zlepiają).
-    for (let i = 0; i < this.bots.length; i++) {
-      for (let j = i + 1; j < this.bots.length; j++) {
-        const a = this.bots[i].avatar.root.position;
-        const b = this.bots[j].avatar.root.position;
-        const dx = b.x - a.x;
-        const dz = b.z - a.z;
-        const gap = Math.hypot(dx, dz);
-        const minGap = 2.8;
-        if (gap > 0.001 && gap < minGap) {
-          const push = (minGap - gap) * Math.min(1, dt * 4);
-          const nx = (dx / gap) * push;
-          const nz = (dz / gap) * push;
-          a.x -= nx;
-          a.z -= nz;
-          b.x += nx;
-          b.z += nz;
-        }
-      }
-    }
-
     this.centerpiece.rotation.y = Math.sin(this.elapsed * 0.08) * 0.05;
 
     if (this.firstPerson) {
@@ -1177,9 +1087,6 @@ export class World {
     // Etykiety trzymają stały rozmiar na ekranie, nawet gdy ktoś podejdzie blisko.
     const camera = this.lobbyCamera.position;
     this.player.scaleLabel(camera.distanceTo(this.player.root.position));
-    for (const bot of this.bots) {
-      bot.avatar.scaleLabel(camera.distanceTo(bot.avatar.root.position));
-    }
     for (const entry of this.remote.values()) {
       entry.avatar.scaleLabel(camera.distanceTo(entry.avatar.root.position));
     }

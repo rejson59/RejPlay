@@ -475,7 +475,8 @@ export class ToolViewmodel {
   private readonly probe: THREE.Group;
   private readonly antenna: THREE.Group;
   private readonly microphone: THREE.Group;
-  private readonly labels = ['TERMOMETR', 'MIERNIK POLA', 'REJESTRATOR'];
+  private readonly labels = ['TERMOMETR', 'MIERNIK POLA', 'REJESTRATOR', 'LATARKA UV', 'CZUJNIK RUCHU', 'KAMERA NOCNA'];
+  private readonly lens: THREE.Group = new THREE.Group();
   private toolIndex = 0;
   private reading = 0;
 
@@ -554,6 +555,19 @@ export class ToolViewmodel {
     }
     this.root.add(this.microphone);
 
+    // Optyka dla trzech nowych narzędzi: UV, czujnik ruchu, kamera nocna.
+    const lensShell = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.022, 0.045, 16), shell);
+    lensShell.rotation.x = Math.PI / 2;
+    lensShell.position.set(0, 0.15, 0.012);
+    this.lens.add(lensShell);
+    const lensGlass = new THREE.Mesh(
+      new THREE.CircleGeometry(0.016, 16),
+      new THREE.MeshStandardMaterial({ color: 0x1a2a33, emissive: 0x2d6f8a, emissiveIntensity: 0.7, roughness: 0.25 }),
+    );
+    lensGlass.position.set(0, 0.15, 0.036);
+    this.lens.add(lensGlass);
+    this.root.add(this.lens);
+
     this.setTool(0);
   }
 
@@ -562,8 +576,11 @@ export class ToolViewmodel {
     this.probe.visible = index === 0;
     this.antenna.visible = index === 1;
     this.microphone.visible = index === 2;
-    this.accent.color.set([0x9ad8c4, 0xb7a4e8, 0xe0b678][index] ?? 0x9ad8c4);
-    this.accent.emissive.set([0x4fb79a, 0x7b63c4, 0xb8863c][index] ?? 0x4fb79a);
+    this.lens.visible = index >= 3;
+    const colors = [0x9ad8c4, 0xb7a4e8, 0xe0b678, 0x9f86e0, 0x95c9e8, 0xd08f92];
+    const glows = [0x4fb79a, 0x7b63c4, 0xb8863c, 0x6544b8, 0x3f83ad, 0xa34e58];
+    this.accent.color.set(colors[index] ?? colors[0]);
+    this.accent.emissive.set(glows[index] ?? glows[0]);
     this.drawScreen();
   }
 

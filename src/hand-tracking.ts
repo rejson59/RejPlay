@@ -87,6 +87,7 @@ export class HandTracker {
   private readonly lowPower = lowPowerDevice();
   private overlay = true;
   private lastSend = 0;
+  private ownsStream = true;
 
   constructor(options: HandTrackerOptions) {
     this.video = options.video;
@@ -110,23 +111,35 @@ export class HandTracker {
     this.onStatus?.(message, kind);
   }
 
-  async start(): Promise<void> {
+  /**
+   * `stream` pozwala współdzielić JEDEN strumień z FaceTracker (CameraRig) —
+   * bez drugiej prośby o zgodę na kamerę. Bez argumentu tracker działa sam,
+   * dokładnie tak jak w v0.5.
+   */
+  async start(stream?: MediaStream): Promise<void> {
     if (this.running) return;
-    if (!navigator.mediaDevices?.getUserMedia) {
+    if (!stream && !navigator.mediaDevices?.getUserMedia) {
       throw new Error('Kamerka wymaga bezpiecznego połączenia (HTTPS) i zgody przeglądarki.');
     }
-    this.status('Czekam na zgodę na kamerę…');
-    const width = this.lowPower ? 480 : 640;
-    const height = this.lowPower ? 360 : 480;
-    this.stream = await navigator.mediaDevices.getUserMedia({
-      video: {
-        width: { ideal: width }, height: { ideal: height },
-        frameRate: { ideal: 30, max: 30 }, facingMode: 'user',
-      },
-      audio: false,
-    });
-    this.video.srcObject = this.stream;
-    await this.video.play();
+    this.ownsStream = !stream;
+    if (stream) {
+      this.stream = stream;
+      this.video.srcObject = stream;
+      await this.video.play();
+    } else {
+      this.status('Czekam na zgodę na kamerę…');
+      const width = this.lowPower ? 480 : 640;
+      const height = this.lowPower ? 360 : 480;
+      this.stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          width: { ideal: width }, height: { ideal: height },
+          frameRate: { ideal: 30, max: 30 }, facingMode: 'user',
+        },
+        audio: false,
+      });
+      this.video.srcObject = this.stream;
+      await this.video.play();
+    }
     this.canvas.width = this.video.videoWidth || 640;
     this.canvas.height = this.video.videoHeight || 480;
 
@@ -214,9 +227,11 @@ export class HandTracker {
   stop(): void {
     this.running = false;
     cancelAnimationFrame(this.frame);
-    this.stream?.getTracks().forEach((track) => track.stop());
+    if (this.ownsStream) {
+      this.stream?.getTracks().forEach((track) => track.stop());
+      this.video.srcObject = null;
+    }
     this.stream = null;
-    this.video.srcObject = null;
     if (this.hands) void this.hands.close().catch(() => undefined);
     this.hands = null;
     this.sending = false;
