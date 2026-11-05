@@ -3,6 +3,10 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import { clone as cloneSkeleton } from 'three/addons/utils/SkeletonUtils.js';
 import { lowPowerDevice } from './performance';
+import { diagnostics } from './diagnostics';
+import {
+  LOBBY_PROPS, YARD_PROPS, MAX_PROP_HEIGHT, type SceneryProp,
+} from './scenery-layout';
 
 /**
  * Gotowe, darmowe assety 3D (CC0 / CC-BY 4.0 / MIT) dla całej platformy.
@@ -19,90 +23,18 @@ import { lowPowerDevice } from './performance';
  *
  * GridFall (MIT) + tekstury Poly Haven (CC0); Khronos glTF Sample Assets
  * (CC0 / CC-BY 4.0, tekstury zmniejszone do 512 px, bufory meshopt).
- * Wszystkie pliki mają tekstury OSADZONE — działają bez CDN i offline.
+ * Wszystkie pliki mają tekstury OSADZONE — działają bez CDN i bez pobierania z zewnątrz.
  */
 
 const BASE = import.meta.env.BASE_URL;
 
-interface SceneryProp {
-  /** Ścieżka względem public/assets/ — jedno źródło prawdy dla obu katalogów. */
-  file: string;
-  scale: number;
-  position: [number, number, number];
-  rotation?: number;
-  /** Podmienia plakat w gotowym modelu (tablica „Lobby"). */
-  poster?: string;
-  /** Ładujemy także na słabszych urządzeniach, gdzie bierzemy tylko podzbiór. */
-  essential?: boolean;
-}
 
 /**
- * Układ parku: alejki i trawniki są w `park.ts`, a KAŻDY widoczny obiekt to
- * gotowy model GLB. Kolejność ma znaczenie: początek listy to elementy, bez
- * których park wyglądałby pusto nawet na słabym urządzeniu.
+ * Układ obiektów jest w `src/scenery-layout.ts` (czyste dane). Dzięki temu
+ * test `tests/scenery-scale.test.ts` może przeliczyć rzeczywisty rozmiar
+ * każdego GLB i wyłapać model w złych jednostkach, zanim trafi do parku.
  */
-const LOBBY_PROPS: SceneryProp[] = [
-  // Fontanna na środku, wiata, tablica i ławki — dawne „bryły" zastąpione GLB.
-  { file: 'props/fountain.glb', scale: 9, position: [0, 0, 0], essential: true },
-  { file: 'library/ulica/billboard.glb', scale: 7, position: [-7.8, 0, 0.8], rotation: 1.2, poster: 'Lobby', essential: true },
-  { file: 'library/ulica/bus_shelter.glb', scale: 16, position: [6.6, 0, -4.4], rotation: 0.5, essential: true },
-  { file: 'props/bench_park.glb', scale: 16, position: [-3.2, 0, 5.8], rotation: -0.5, essential: true },
-  { file: 'props/bench_park.glb', scale: 16, position: [3.2, 0, 5.8], rotation: 0.5 },
-  { file: 'props/bench_park.glb', scale: 16, position: [-5.4, 0, -3.4], rotation: 1.1 },
-  { file: 'props/bench_park.glb', scale: 16, position: [5.4, 0, -3.4], rotation: -1.1 },
-  { file: 'props/planter_round.glb', scale: 15, position: [-4.4, 0, 2.4] },
-  { file: 'props/planter_round.glb', scale: 15, position: [4.4, 0, -2.4] },
-  { file: 'library/przedmioty/DiffuseTransmissionPlant.glb', scale: 1.5, position: [7.5, 0, -2.2] },
-  { file: 'library/przedmioty/GlassVaseFlowers.glb', scale: 2.6, position: [-8.9, 0, 2.1] },
-  { file: 'library/przedmioty/Lantern.glb', scale: 2.2, position: [-2.7, 0, 2.7] },
-  { file: 'library/przedmioty/Lantern.glb', scale: 2.2, position: [2.7, 0, -2.7] },
-  { file: 'props/rock_boulder.glb', scale: 16, position: [-7.4, 0, 0.7], rotation: 0.3 },
-  { file: 'props/rock_boulder.glb', scale: 14, position: [-8.1, 0, 1.5], rotation: 1.2 },
-  { file: 'props/rock_boulder.glb', scale: 12, position: [-6.7, 0, 1.6], rotation: 2.1 },
-  { file: 'props/picnic_table.glb', scale: 14, position: [-8.8, 0, 3.9], rotation: 0.4 },
-  { file: 'props/picnic_table.glb', scale: 14, position: [8.6, 0, 3.6], rotation: -0.4 },
-  // Korony drzew wokół polany.
-  { file: 'props/tree_oak.glb', scale: 15, position: [-9.4, 0, -2.6], essential: true },
-  { file: 'props/tree_birch.glb', scale: 14, position: [9.6, 0, 1.8], essential: true },
-  { file: 'props/tree_round.glb', scale: 13, position: [-6.4, 0, 8.4] },
-  { file: 'library/roslinnosc/tree_conifer.glb', scale: 14, position: [7.6, 0, -7.8] },
-  { file: 'library/roslinnosc/tree_poplar.glb', scale: 13, position: [-9.8, 0, 6.8] },
-  { file: 'library/roslinnosc/tree_small.glb', scale: 15, position: [9.8, 0, 8.0] },
-  { file: 'props/tree_bush.glb', scale: 15, position: [4.4, 0, -4.8] },
-  { file: 'props/tree_bush.glb', scale: 15, position: [-4.2, 0, -8.6] },
-  { file: 'library/roslinnosc/tree_hedge.glb', scale: 15, position: [-8.4, 0, -7.4], rotation: 0.4 },
-  { file: 'library/roslinnosc/tree_hedge.glb', scale: 15, position: [8.6, 0, 5.8], rotation: 1.2 },
-  // Woda, ławki i donice.
-  { file: 'props/fountain.glb', scale: 12, position: [-6.8, 0, -5.6] },
-  { file: 'props/bench_modern.glb', scale: 16, position: [-5.6, 0, 3.4], rotation: -0.5 },
-  { file: 'props/bench_modern.glb', scale: 16, position: [5.7, 0, 6.0], rotation: 2.7 },
-  { file: 'props/planter_round.glb', scale: 16, position: [-4.7, 0, 4.4] },
-  { file: 'props/planter_round.glb', scale: 16, position: [4.7, 0, -4.4] },
-  // Światła i mała architektura miejska.
-  { file: 'props/lamp_double.glb', scale: 11, position: [-10.0, 0, 1.2], rotation: 0.3 },
-  { file: 'props/lamp_street.glb', scale: 11, position: [10.0, 0, -6.2], rotation: -0.4 },
-  { file: 'props/lamp_classic.glb', scale: 11, position: [3.4, 0, 9.4] },
-  { file: 'library/ulica/bike_rack.glb', scale: 16, position: [-2.9, 0, 9.6] },
-  { file: 'library/ulica/street_sign.glb', scale: 16, position: [2.9, 0, 9.4], rotation: -0.5 },
-  { file: 'library/ulica/parking_meter.glb', scale: 16, position: [9.4, 0, 4.6] },
-  { file: 'props/trash_bin.glb', scale: 14, position: [-7.2, 0, 6.4] },
-  { file: 'props/bollard.glb', scale: 16, position: [-2.2, 0, 6.7] },
-  { file: 'props/bollard.glb', scale: 16, position: [2.2, 0, 6.7] },
-];
 
-/** Podwórko Demonofobii pozostaje nocne i ciasne — to osobny świat gry. */
-const YARD_PROPS: SceneryProp[] = [
-  { file: 'props/lamp_street.glb', scale: 11, position: [-3.3, 0, 11.2], rotation: Math.PI / 2 },
-  { file: 'props/tree_birch.glb', scale: 13, position: [-3.5, 0, 16.4] },
-  { file: 'props/tree_bush.glb', scale: 16, position: [-2.9, 0, 10.6] },
-  { file: 'props/tree_bush.glb', scale: 16, position: [3.3, 0, 16.9] },
-  { file: 'props/barrier_concrete.glb', scale: 13, position: [-3.4, 0, 17.4], rotation: Math.PI / 2 },
-  { file: 'props/cone.glb', scale: 16, position: [-1.9, 0, 10.1] },
-  { file: 'props/cone.glb', scale: 16, position: [1.9, 0, 10.1] },
-  { file: 'props/trash_bin_wheelie.glb', scale: 14, position: [3.3, 0, 10.4] },
-  { file: 'props/aircon_unit.glb', scale: 13, position: [7.9, 0.9, 8.6], rotation: Math.PI },
-  { file: 'props/hydrant.glb', scale: 16, position: [-3.4, 0, 13.4] },
-];
 
 /**
  * Jeden odczyt każdego pliku GLB dla całej aplikacji. Ten sam model bywa
@@ -131,7 +63,7 @@ function cloneModel(source: THREE.Group): THREE.Group {
   return (skinned ? cloneSkeleton(source) : source.clone(true)) as THREE.Group;
 }
 
-async function mount(scene: THREE.Scene, props: SceneryProp[], name: string): Promise<THREE.Group> {
+async function mount(scene: THREE.Scene, props: readonly SceneryProp[], name: string): Promise<THREE.Group> {
   const group = new THREE.Group();
   group.name = name;
   const list = lowPowerDevice() ? props.filter((prop) => prop.essential) : props;
@@ -139,10 +71,30 @@ async function mount(scene: THREE.Scene, props: SceneryProp[], name: string): Pr
     list.map(async (prop) => {
       try {
         const root = cloneModel(await sharedModel(prop.file));
-        root.scale.setScalar(prop.scale);
-        root.position.set(...prop.position);
-        root.rotation.y = prop.rotation ?? 0;
-        root.traverse((object) => {
+        // Skala z PRAWIDŁOWYCH jednostek: niektóre GLB (Khronos Lantern) mają
+        // 25 m w pliku, inne (GridFall) 0,2 m. Mierzymy bbox i albo ustawiamy
+        // jawną wysokość w metrach, albo twardo tnąc do MAX_PROP_HEIGHT.
+        root.updateMatrixWorld(true);
+        const box = new THREE.Box3().setFromObject(root);
+        const size = box.getSize(new THREE.Vector3());
+        const center = box.getCenter(new THREE.Vector3());
+        const nativeHeight = Math.max(0.001, size.y);
+        let scale = prop.height ? prop.height / nativeHeight : prop.scale;
+        if (!Number.isFinite(scale) || scale <= 0) scale = prop.scale;
+        if (!prop.height && nativeHeight * scale > MAX_PROP_HEIGHT) {
+          scale = MAX_PROP_HEIGHT / nativeHeight;
+          diagnostics.push('warn', 'assety',
+            `${prop.file}: skala ograniczona do ${MAX_PROP_HEIGHT} m wysokości.`);
+        }
+        root.scale.setScalar(scale);
+        // Modele z początkiem układu w środku (a nie przy ziemi) stawiamy na
+        // podłożu i centrujemy w poziomie, żeby nie „pływały" obok alejki.
+        root.position.set(-center.x * scale, -box.min.y * scale, -center.z * scale);
+        const holder = new THREE.Group();
+        holder.position.set(...prop.position);
+        holder.rotation.y = prop.rotation ?? 0;
+        holder.add(root);
+        holder.traverse((object) => {
           if (!(object instanceof THREE.Mesh)) return;
           object.castShadow = true;
           object.receiveShadow = true;
@@ -166,13 +118,13 @@ async function mount(scene: THREE.Scene, props: SceneryProp[], name: string): Pr
             material.needsUpdate = true;
           }
         });
-        return root;
+        return holder;
       } catch {
         return null;
       }
     }),
   );
-  for (const root of roots) if (root) group.add(root);
+  for (const holder of roots) if (holder) group.add(holder);
   scene.add(group);
   return group;
 }

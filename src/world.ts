@@ -11,6 +11,7 @@ import {
   loadLobbyGallery, loadLobbyScenery, loadPortalFrame, updateLobbyGallery,
 } from './real-scenery';
 import { buildPark } from './park';
+import { combineMovement } from './movement';
 import {
   QualityManager,
   deviceHints,
@@ -824,12 +825,18 @@ export class World {
   private updateLobby(dt: number): void {
     const turn = dt > 0 ? THREE.MathUtils.clamp((this.yaw - this.lastLobbyYaw) / dt, -6, 6) : 0;
     this.lastLobbyYaw = this.yaw;
-    let ix = this.joystick.x + this.cameraMove.x;
-    let iy = this.joystick.y + this.cameraMove.y;
-    if (this.keys.has('KeyW') || this.keys.has('ArrowUp')) iy += 1;
-    if (this.keys.has('KeyS') || this.keys.has('ArrowDown')) iy -= 1;
-    if (this.keys.has('KeyD') || this.keys.has('ArrowRight')) ix += 1;
-    if (this.keys.has('KeyA') || this.keys.has('ArrowLeft')) ix -= 1;
+    // v0.9: świadomy ruch z klawiatury/joysticka ma pierwszeństwo przed
+    // kanałem z kamerki. Inaczej W (+1) i zatruty odczyt głowy (−1) dawały
+    // zero, więc postać stawała mimo wciśniętego klawisza.
+    let manualX = this.joystick.x;
+    let manualY = this.joystick.y;
+    if (this.keys.has('KeyW') || this.keys.has('ArrowUp')) manualY += 1;
+    if (this.keys.has('KeyS') || this.keys.has('ArrowDown')) manualY -= 1;
+    if (this.keys.has('KeyD') || this.keys.has('ArrowRight')) manualX += 1;
+    if (this.keys.has('KeyA') || this.keys.has('ArrowLeft')) manualX -= 1;
+    const move = combineMovement(manualX, manualY, this.cameraMove.x, this.cameraMove.y);
+    let ix = move.x;
+    let iy = move.y;
 
     const magnitude = Math.hypot(ix, iy);
     const intensity = Math.min(1, magnitude);

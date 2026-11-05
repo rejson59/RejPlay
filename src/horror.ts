@@ -10,8 +10,8 @@ import { ToolBelt } from './tool-belt';
 import { neutralHandPosePair, type HandMotion, type HandPosePair } from './hand-pose';
 import type { QualityProfile } from './performance';
 import {
-  WALL_SEGMENTS, GAME_SPAWN, createCollision, depenetrate, freeSpawn,
-  type Collision,
+  WALL_SEGMENTS, GAME_SPAWN, combineMovement, createCollision, depenetrate,
+  freeSpawn, pathClear, type Collision,
 } from './movement';
 import { diagnostics } from './diagnostics';
 
@@ -173,6 +173,10 @@ export class HorrorGame {
   };
   private lookVelocity = 0;
   private lastYaw = 0;
+  /** v0.9: wykrywa „W wciśnięte, a postać stoi" i zrzuca wadliwy kanał kamerki. */
+  private stuckFor = 0;
+  private lastX = 0;
+  private lastZ = 0;
   private lookScale = 1;
   /** Pierwsze ruchy po przejęciu kursora to „wyśrodkowanie” — ignorujemy je. */
   private skipLockMouse = 0;
@@ -620,6 +624,9 @@ export class HorrorGame {
       skorygowany: spawn.adjusted,
     });
     this.velocity.set(0, 0, 0);
+    this.stuckFor = 0;
+    this.lastX = spawn.x;
+    this.lastZ = spawn.z;
     this.bob = 0;
     this.lastStep = 0;
     this.toolIndex = 0;
@@ -886,14 +893,20 @@ export class HorrorGame {
     this.yaw += (this.yawTarget - this.yaw) * lookK;
     this.pitch += (this.pitchTarget - this.pitch) * lookK;
 
-    let ix = this.joystick.x + this.cameraJoystick.x;
-    let iy = this.joystick.y + this.cameraJoystick.y;
-    if (this.keys.has('KeyW') || this.keys.has('ArrowUp')) iy += 1;
-    if (this.keys.has('KeyS') || this.keys.has('ArrowDown')) iy -= 1;
-    if (this.keys.has('KeyD') || this.keys.has('ArrowRight')) ix += 1;
-    if (this.keys.has('KeyA') || this.keys.has('ArrowLeft')) ix -= 1;
+    // v0.9: KLAWIATURA / DOTYK MA PIERWSZEŃSTWO. Dawniej sumowano joystick
+    // z kamerki z klawiszami: W dawało +1, a zatruty kanał głowy −1, więc
+    // wypadkowa była zerem i „nie dało się ruszyć". Gdy gracz świadomie
+    // naciska klawisz, sygnał z kamerki nie może go zatrzymać.
+    let manualX = this.joystick.x;
+    let manualY = this.joystick.y;
+    if (this.keys.has('KeyW') || this.keys.has('ArrowUp')) manualY += 1;
+    if (this.keys.has('KeyS') || this.keys.has('ArrowDown')) manualY -= 1;
+    if (this.keys.has('KeyD') || this.keys.has('ArrowRight')) manualX += 1;
+    if (this.keys.has('KeyA') || this.keys.has('ArrowLeft')) manualX -= 1;
+    const move = combineMovement(manualX, manualY, this.cameraJoystick.x, this.cameraJoystick.y);
+    let ix = move.x;
+    let iy = move.y;
     const magnitude = Math.hypot(ix, iy);
-    if (magnitude > 1) { ix /= magnitude; iy /= magnitude; }
 
     const sprint = this.keys.has('ShiftLeft') || this.keys.has('ShiftRight') || this.touchSprint;
     const speed = sprint ? 3.9 : 2.45;
@@ -916,10 +929,37 @@ export class HorrorGame {
 
     const dx = this.velocity.x * dt;
     const dz = this.velocity.z * dt;
-    if (!this.isBlocked(this.position.x + dx, this.position.z)) this.position.x += dx;
+    // Próbkujemy CAŁY odcinek, nie tylko cel: przy niższym FPS krok potrafi
+    // przeskoczyć cienką deskę / słupek i gracz „wjeżdżał" w rekwizyt.
+    if (pathClear(this.isBlocked, this.position.x, this.position.z,
+      this.position.x + dx, this.position.z, 6)) this.position.x += dx;
     else this.velocity.x *= 0.35;
-    if (!this.isBlocked(this.position.x, this.position.z + dz)) this.position.z += dz;
+    if (pathClear(this.isBlocked, this.position.x, this.position.z,
+      this.position.x, this.position.z + dz, 6)) this.position.z += dz;
     else this.velocity.z *= 0.35;
+
+    // Watchdog zacięcia: jeśli gracz chce iść, a pozycja stoi dłużej niż
+    // 0,7 s, wyłączamy kanał kamerki i wypychamy go z collidera. Bez tego
+    // zewnętrzny, stale niezerowy joystick trzymał go przy blacie w nieskończoność.
+    const travelled = Math.hypot(this.position.x - this.lastX, this.position.z - this.lastZ);
+    this.lastX = this.position.x;
+    this.lastZ = this.position.z;
+    if (magnitude > 0.15 && travelled < 0.002 && dt > 0) {
+      this.stuckFor += dt;
+      if (this.stuckFor > 0.7) {
+        this.cameraJoystick.x = 0;
+        this.cameraJoystick.y = 0;
+        this.velocity.set(0, 0, 0);
+        const freed = depenetrate(this.isBlocked, this.position.x, this.position.z);
+        this.position.x = freed.x;
+        this.position.z = freed.z;
+        this.stuckFor = 0;
+        diagnostics.push('warn', 'ruch',
+          'Postać była przytrzymana przez collider — odcięto sterowanie z kamerki i wypchnięto na wolną pozycję.');
+      }
+    } else {
+      this.stuckFor = 0;
+    }
 
     this.moving = Math.hypot(this.velocity.x, this.velocity.z) > 0.22;
     const stride = sprint ? 12.4 : 9.1;

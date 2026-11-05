@@ -5,12 +5,29 @@ jest autorska *Demonofobia*, a wspólnym punktem zbiórki jest park **Lobby**
 (dokładnie taka nazwa — bez dopisków i bez „3D”). Frontend jest w pełni
 statyczny (Vite + Three.js, jeden kontekst WebGL) i działa na **GitHub Pages**.
 Multiplayer, czat i profile korzystają z istniejącego projektu
-**Supabase `rejson-widgets`** — nie mamy własnego serwera, a bez połączenia
-z bazą interfejs i podgląd przechodzą w jawny tryb offline (bez czatu,
-Presence i zapisu w bazie). **Zagranie wymaga konta.**
+**Supabase `rejson-widgets`** — nie mamy własnego serwera. **Nie ma trybu
+offline**: bez połączenia klient ponawia próby, a czat i Presence czekają na
+serwer (nie udajemy lokalnych graczy ani wiadomości „tylko u Ciebie").
+**Zagranie wymaga konta.**
 
 Nie ma zapowiedzi gier ani zmyślonych metryk: katalog pokazuje tylko to, co
 naprawdę działa. W `public/art/` jest jeden plik: `house.jpg` (kafelek gry).
+
+**v0.9 — pewny STOP, kalibracja punktowa i czyste przejścia:** sterowanie bez
+klawiatury nie włącza się już samo (`enabled` nie jest zapisywane, stary wpis z
+`localStorage` jest ignorowany), znika stały dryf głowy, a brak twarzy daje
+natychmiastowe zero we wszystkich kanałach — także `onControl(0)` w silniku.
+Jeden, zawsze dostępny hamulec: przycisk **„Zatrzymaj"** i klawisz **C**.
+Dodano kreator **9 punktów na ekranie**: dopasowanie afiniczne spojrzenia
+(`src/gaze-calibration.ts`), punkt neutralny głowy i automatyczne wykrywanie
+odwróconych osi dłoni (lewo/prawo, góra/dół, przód/tył), z ręcznymi
+przełącznikami w laboratorium. W Demonofobii W/dotyk mają pierwszeństwo przed
+kanałem z kamerki (`combineMovement()`), ruch próbkuje cały odcinek zamiast
+tylko celu, collidery mają widoczne rekwizyty podwórka, a skrzydło drzwi
+zostało odsunięte od osi spawnu. Usunięto tryb offline, zmieniono tekst hero,
+a lampy w Lobby są normalizowane do rzeczywistego bbox GLB (Khronos
+`Lantern.glb` miał 25,66 m × `scale 2.2` = 56 m w parku o promieniu 12 m).
+Testy: **82/82** (`npm test`).
 
 **v0.8 — chodzenie, park bez brył i realniejsze dłonie:** naprawiony błąd,
 po którym w Demonofobii nie dało się ruszyć z miejsca (gracz rodził się
@@ -301,8 +318,9 @@ drogowskaz i fontannę. W altanie stoi **galeria trzech nowych assetów**
   wygładzanymi interpolacją,
 - **wspólny czat** zapisywany w `rejplay_chat` i dostarczany przez
   `postgres_changes` (historia 12 ostatnich wiadomości),
-- **zero botów demonstracyjnych** — lista graczy to wyłącznie Presence;
-  w trybie offline nie pokazujemy nawet siebie jako „online”,
+- **zero botów demonstracyjnych** — lista graczy to wyłącznie Presence; bez
+  połączenia z serwerem nie pokazujemy nawet siebie jako „online” i ponawiamy
+  łączenie (nie ma trybu offline),
 - **drużyny (party)**: utwórz kod, wyślij link, czat i Presence zawężają się
   do `rejplay:party:<kod>`, a „Rozpocznij razem” wysyła broadcast do całej ekipy,
 - `WASD` / strzałki, `Spacja`, przeciąganie myszą lub pointer lock, dotyk,
@@ -349,12 +367,14 @@ polityk dla anon** — dostęp wyłącznie przez funkcje `SECURITY DEFINER`.
 Migracje (RLS, indeksy, publikacja `supabase_realtime`, funkcje RPC) leżą w
 `supabase/migrations/20261102190000_rejplay_multiplayer.sql`,
 `20261104190000_rejplay_parties.sql` oraz
-`20261104191000_rejplay_party_auth_fix.sql` i zostały zastosowane w projekcie. **Jeśli baza jest niedostępna**, wskaźnik na
-stronie przechodzi w „Tryb offline”, czat zostaje w karcie, a podgląd
-postaci i katalog assetów wciąż działają. Rozpoczęcie gry wymaga jednak
-potwierdzonego konta (`community_whoami`), więc przy niedostępnej bazie nie
-można zweryfikować sesji — zgodnie z założeniem „bez konta nie gramy”.
-Istniejąca, ważna sesja jest odczytywana ponownie po powrocie połączenia.
+`20261104191000_rejplay_party_auth_fix.sql` i zostały zastosowane w projekcie. **Jeśli baza jest niedostępna**, wskaźnik pokazuje
+„Ponawiam połączenie”, a gra nie udaje lokalnego multiplayera: czat nie
+przyjmuje wiadomości bez serwera (zamiast „tylko u Ciebie" dostaje komunikat
+systemowy), Presence nie pokazuje fikcyjnych graczy, a podgląd postaci
+i katalog assetów wciąż działają. Rozpoczęcie gry wymaga potwierdzonego konta
+(`community_whoami`), więc przy niedostępnej bazie nie można zweryfikować
+sesji — zgodnie z założeniem „bez konta nie gramy". Istniejąca, ważna sesja
+jest odczytywana ponownie po powrocie połączenia.
 
 ### Demonofobia — jedyna grywalna gra
 
@@ -648,7 +668,7 @@ w przeglądarce headless z tym samym kodem, który trafia do `dist/`.
 | Okna modalne | brama zawsze nad katalogiem, focus trap + przywrócenie fokusu, `Esc`, filtr kategorii z możliwością wyczyszczenia, puste stany z kontekstowym komunikatem, escapowanie frazy wyszukiwania (XSS) |
 | Regresja v0.6.1 | motyw ciemny (home + oba modale), start gry z 6 narzędziami, `P` bez pobierania pliku, brak automatycznego pointer locka, 0 błędów konsoli i 0 odpowiedzi 4xx |
 | Build produkcyjny | `vite preview` pod `/RejPlay/`: 30 ładowań GLB → same `200`, katalog 101 modeli, „Lobby” bez starych nazw, brak sekretów w DOM |
-| Lobby | park w świetle dnia, 1 gracz (Ty), 0 botów, czat i Presence uczciwie oznaczone jako niedostępne w trybie offline |
+| Lobby | park w świetle dnia, 1 gracz (Ty), 0 botów, bez trybu offline: czat i Presence czekają na serwer, a lampy nie przekraczają 7 m wysokości |
 
 **Niezweryfikowane w sandboxie (egres ograniczony do GitHub / npm / PyPI):**
 połączenie z realnym Supabase z dwoma niezależnymi klientami, WSS Presence
@@ -665,17 +685,20 @@ klucza `anon` i — na współdzielonym originie — gotowego bridge’a
 
 ## Roadmapa (kolejność prac)
 
-1. **v0.8 ✅ (ten release):** błąd chodzenia, park wyłącznie z gotowych GLB,
-   120 assetów, realizm ruchu i geometrii dłoni.
-2. **v0.9 — wydajność:** `import()` dla `World` / `HorrorGame` / trackerów,
+1. **v0.8 ✅:** błąd chodzenia, park wyłącznie z gotowych GLB, 120 assetów,
+   realizm ruchu i geometrii dłoni.
+2. **v0.9 ✅ (ten release):** pewny STOP i stan neutralny, kalibracja
+   oczu/głowy/dłoni 9 punktami, drożny spawn i collidery w Demonofobii,
+   usunięcie trybu offline, normalizacja skali lamp, 82 testy.
+3. **v0.10 — wydajność:** `import()` dla `World` / `HorrorGame` / trackerów,
    lazy GLB z anulowaniem, LOD, budżet rozmiaru bundla w CI. Obecnie cały
    `src` ładuje się statycznie, więc home ściąga też silnik horroru.
-3. **v1.0 — Lobby żyje:** podgląd 3D każdego z 120 assetów (turntable w
+4. **v1.0 — Lobby żyje:** podgląd 3D każdego z 120 assetów (turntable w
    katalogu + „wstaw do sceny"), profil, znajomi i postęp w bazie, limit
    graczy w pokoju i realny „start razem".
-4. **v1.1 — wielogrowość:** druga gra jako osobna scena i wpis w `GAMES`,
+5. **v1.1 — wielogrowość:** druga gra jako osobna scena i wpis w `GAMES`,
    piaskownica UGC z bezpiecznym skryptowaniem, fizyka (Rapier), i18n PL/EN.
-5. **Później:** autorytatywny stan świata, osiągnięcia, PWA/offline dla home,
+6. **Później:** autorytatywny stan świata, osiągnięcia, monitoring błędów,
    monitoring błędów, realna kamerka / dotyk / dwóch klientów WSS na fizycznych
    urządzeniach.
 

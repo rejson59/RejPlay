@@ -13,8 +13,9 @@ import { diagnostics } from './diagnostics';
  * postgres_changes na czacie + broadcast „start razem” / „machnięcie”. Drużyny (party)
  * zawężają kanał Presence i czat tylko do osób z tym samym kodem, a token
  * konta z rejson59.github.io jest walidowany w bazie (SECURITY DEFINER RPC).
- * Gdy sieć lub Supabase są niedostępne, interfejs przechodzi w jawny tryb
- * offline: bez czatu, Presence i zapisu w bazie (nigdy nie udajemy graczy).
+ * v0.9: usunięto tryb offline — RejPlay jest wyłącznie grą online. Gdy sieć
+ * lub Supabase są niedostępne, ponawiamy połączenie, a czat i Presence czekają
+ * na serwer (bez udawania lokalnych graczy i wiadomości „tylko u Ciebie").
  * Wejście do Lobby i gry i tak wymaga potwierdzonej sesji konta — brama
  * `AuthGate` nie zależy od dostępności Realtime.
  */
@@ -39,7 +40,7 @@ export const PRESENCE_PROTOCOL = 1;
 const LOBBY_CHANNEL = 'rejplay:lobby';
 
 export type OnlineMode = 'home' | 'lobby' | 'game';
-export type OnlineStatus = 'connecting' | 'online' | 'offline';
+export type OnlineStatus = 'connecting' | 'online' | 'reconnecting';
 
 export interface OnlinePeer {
   id: string;
@@ -63,7 +64,6 @@ export interface OnlineChatMessage {
   content: string;
   at: number;
   own: boolean;
-  offline?: boolean;
 }
 
 export interface LocalState {
@@ -178,7 +178,7 @@ export class OnlineClient {
 
   async connect(): Promise<void> {
     if (!URL || !KEY) {
-      this.setStatus('offline');
+      this.setStatus('reconnecting');
       return;
     }
     try {
@@ -190,14 +190,14 @@ export class OnlineClient {
       // Brak połączenia nie może blokować gry w nieskończoność.
       window.setTimeout(() => {
         if (this.status === 'connecting') {
-          this.setStatus('offline');
+          this.setStatus('reconnecting');
           if (!this.everOnline) this.stopRetrying();
         }
       }, 9000);
       void this.loadRecentChat();
     } catch {
       this.client = null;
-      this.setStatus('offline');
+      this.setStatus('reconnecting');
     }
   }
 
@@ -238,7 +238,7 @@ export class OnlineClient {
         void this.track(true);
         void this.saveProfile();
       } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
-        this.setStatus('offline');
+        this.setStatus('reconnecting');
         if (!this.everOnline) this.stopRetrying();
       }
     });
@@ -377,7 +377,7 @@ export class OnlineClient {
   // ------------------------------------------------------------------ drużyny
 
   private async rpc(fn: string, extra: Record<string, unknown> = {}): Promise<PartyResult> {
-    if (!this.client) return { ok: false, error: 'Brak połączenia z Supabase — tryb offline.' };
+    if (!this.client) return { ok: false, error: 'Serwer multiplayer niedostępny — ponawiam połączenie. Spróbuj za chwilę.' };
     if (!this.accountToken) {
       return { ok: false, error: 'Zaloguj się kontem rejson59.github.io, aby grać w drużynie.' };
     }
@@ -559,6 +559,17 @@ export class OnlineClient {
   async chat(text: string): Promise<void> {
     const content = text.trim().replace(/\s+/g, ' ').slice(0, 180);
     if (!content) return;
+    // v0.9: koniec „wiadomości tylko u Ciebie". Gra jest multiplayer, więc
+    // wiadomość bez serwera nie istnieje — nie udajemy, że została wysłana.
+    if (this.status !== 'online') {
+      this.onChat?.({
+        key: `server-${Date.now()}`,
+        nick: 'RejPlay', color: '#c8a06a',
+        content: 'Czat online łączy się z serwerem. Spróbuj ponownie za moment.',
+        at: Date.now(), own: false,
+      });
+      return;
+    }
     this.sent.set(`${this.local.nick}|${content}`, Date.now());
     this.onChat?.({
       key: `local-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
@@ -567,7 +578,6 @@ export class OnlineClient {
       content,
       at: Date.now(),
       own: true,
-      offline: this.status !== 'online',
     });
     const client = this.client;
     if (!client) return;
