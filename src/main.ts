@@ -1765,7 +1765,7 @@ const TUTORIAL_STEPS: TutorialStep[] = [
   {
     tag: 'VR bez VR',
     title: 'Najpierw laboratorium kamery',
-    text: 'Otwórz Laboratorium kamery (lewy pasek albo ekran startowy gry), skalibruj patrząc prosto i wykonaj trzy testy: dłonie, głowa, oczy. Potem przechył głowy prowadzi postać, źrenice obracają kamerę, a palce biorą narzędzia z pasa — klawiatura i mysz nie są potrzebne.',
+    text: 'Otwórz Laboratorium kamery (lewy pasek albo ekran startowy gry) i naciśnij „Kalibracja 9 punktów": patrz na świecące punkty, żeby dopasować oczy, ustawić zero głowy i sprawdzić kierunek dłoni. Potem SAM włącz sterowanie przyciskiem „Włącz grę bez klawiatury" — nigdy nie startuje samo. Przechył głowy prowadzi postać, źrenice obracają kamerę, palce biorą narzędzia z pasa. Klawisz C w każdej chwili zatrzymuje grę; klawiatura, mysz i dotyk zawsze działają.',
     glyph: '◉  ✋  ◎',
     caption: 'jedna kamerka · trzy tory sterowania',
   },
