@@ -21,6 +21,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-Dotyczy: proceduralnej geometrii rekwizytow i pojazdow skopiowanych z
-models/real/ do public/assets/props/. Tekstury na nich to Poly Haven CC0
+Dotyczy: gotowych modeli skopiowanych z `models/real/` do
+`public/assets/props/` oraz `public/assets/library/`. W v0.8 dołożono
+6 budynkow, 8 pojazdow, most i podjazd krawężnikowy z tego samego repo. Tekstury na nich to Poly Haven CC0
 (patrz LICENSE-polyhaven-cc0.txt).

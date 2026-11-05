@@ -12,6 +12,24 @@ Presence i zapisu w bazie). **Zagranie wymaga konta.**
 Nie ma zapowiedzi gier ani zmyślonych metryk: katalog pokazuje tylko to, co
 naprawdę działa. W `public/art/` jest jeden plik: `house.jpg` (kafelek gry).
 
+**v0.8 — chodzenie, park bez brył i realniejsze dłonie:** naprawiony błąd,
+po którym w Demonofobii nie dało się ruszyć z miejsca (gracz rodził się
+**wewnątrz** collidera blatu monitoringu, a `yaw = π` przy `yawTarget = 0`
+dorzucał obrót kamery o 180° na starcie). Czysta geometria kolizji trafiła do
+`src/movement.ts` z testami drogi od samochodu do frontowych drzwi, start
+sam wybiera wolne miejsce, a focus w polu tekstowym nie blokuje już WASD.
+Park **Lobby** nie ma ani jednej prymitywnej bryły: altana ze stożka, klomby z
+kulek, oczko z torusa, tablica z prostopadłościanu i mosiężny zegar zostały
+zastąpione gotowymi GLB (fontanna, wiata, billboard „Lobby", ławki, donice,
+głazy, roślina PBR, latarnie, stół piknikowy). `park.ts` odpowiada dziś
+wyłącznie za teksturowany teren, niebo i światła; portale gier też są
+billboardami GLB. Katalog urósł do **120 darmowych modeli w 9 kategoriach** —
+dodano 16 modeli GridFall (budynki, pojazdy, most) i 3 fotorealistyczne PBR
+z Khronos, z notami licencyjnymi i testem integralności w CI. Dłonie dostały
+anatomiczne minima stawów, zależność ścięgnistą nadgarstka (tenodesis),
+kaskadę czasową palców oraz stożkowate paliczki z kostkami i opuszkami
+w widoku awaryjnym. **50 testów** w `node --test`.
+
 **v0.7.1 — odporność i jakość śledzenia:** cztery realne usterki w torze
 kamerki zostały usunięte. Po zniknięciu twarzy `CameraControl` odejmował
 neutralną kalibrację od zera, więc postać jechała sama; teraz brak sygnału
@@ -96,10 +114,10 @@ zmienne kolorów. Klimat horroru pojawia się wyłącznie w kafelku gry.
   wyłącznie prawdziwe Presence,
 - hero z podglądem awatara 3D i trzema chipami: konto wymagane / dłonie 1:1 /
   zero botów,
-- pasek liczb: **101 assetów · 9 kategorii · 1 grywalny świat · 0 botów**,
+- pasek liczb: **120 assetów · 9 kategorii · 1 grywalny świat · 0 botów**,
 - baner *Demonofobia*, „Ostatnio”, szeroki kafelek gry i kafelek parku Lobby,
 - **Biblioteka assetów**: 9 kafli kategorii + modal z przeszukiwalną listą
-  101 modeli, ich licencją i rozmiarem,
+  120 modeli, ich licencją i rozmiarem,
 - panel postaci (nick, akcent, edytor) i cztery ikonowe kafle „Na start”,
 - „Trzy kroki do gry” zamiast ściany tekstu.
 
@@ -466,9 +484,10 @@ niczego z CDN. Kamerka wymaga zgody na `getUserMedia` i bezpiecznego kontekstu
 `github-pages`. `vite.config.ts` ustawia `base: '/RejPlay/'` dla produkcyjnego
 buildu, a moduły ładujące assety używają `import.meta.env.BASE_URL` — dzięki
 temu GLB, tekstury, MediaPipe i rekwizyty działają pod
-`https://rejson59.github.io/RejPlay/`. Na branchach roboczych workflow robi
-tylko build (repozytorium pozwala deployować wyłącznie z `main`). Strona jest
-SPA bez routingu po stronie serwera, więc nie potrzebuje `404.html`.
+`https://rejson59.github.io/RejPlay/`. Workflow uruchamia `typecheck`, testy
+i build na każdym pull requeście, a artefakt Pages i deploy powstają wyłącznie
+z `main`. Strona jest SPA bez routingu po stronie serwera, więc nie potrzebuje
+`404.html`.
 
 ---
 
@@ -478,8 +497,8 @@ SPA bez routingu po stronie serwera, więc nie potrzebuje `404.html`.
 index.html                     strona główna, lobby, gra, edytor, samouczek, boot overlay
 src/style.css                  jasny/ciemny katalog + widoki pełnoekranowe
 src/main.ts                    stan UI, motyw, samouczek, HUD, kamerka, online, boot
-src/games.ts                   jedna gra + lobby, 13 modeli, 8 strojów (męskie/damskie)
-src/world.ts                   jeden renderer, 3 sceny + viewmodel, awatary zdalnych graczy
+src/games.ts                   jedna gra + Lobby, 13 modeli, 8 strojów (męskie/damskie)
+src/world.ts                   jeden renderer, 3 sceny + viewmodel, portale GLB, awatary
 src/performance.ts             adaptacyjna jakość: profile, EMA klatek, DPR, cienie, limit fps
 src/character.ts               slot gracza: rigowana postać + zastępnik
 src/human.ts                   13 GLB, maski głowy/ubrania, retarget dłoni, kolory skóry
@@ -487,35 +506,34 @@ src/hand-tracking.ts           MediaPipe Hands: 21 punktów obu dłoni (lub stru
 src/face-tracking.ts           MediaPipe FaceMesh: 478 punktów, źrenice, głowa, mruganie
 src/camera-rig.ts              jeden strumień → Hands + FaceMesh + sterowanie + gesty
 src/camera-control.ts          kalibracja, 3 testy, mapowanie głowa/oczy/palce
+src/tracking-guard.ts          czyste zabezpieczenia numeryczne, etykiety dłoni, FrameWatchdog
+src/face-math.ts               głowa / oczy / mrugnięcie bez DOM (testowalne w Node)
+src/hand-pose.ts               21 punktów → 15 kątów, anatomia, tenodesis, kaskada palców
+src/view-hands.ts              dłonie FP: rig awatara + anatomiczny fallback + narzędzie LCD
+src/first-person-hands.ts      wspólny viewmodel dłoni first-person dla Lobby
+src/movement.ts                czysta kolizja i bezpieczny punkt startu Demonofobii
+src/horror.ts                  Demonofobia: silnik, ruch, nalot, dźwięk, first-person
+src/horror-decor.ts            proceduralne tekstury, meble, światła i kurz
+src/real-props.ts              17 gotowych rekwizytów CC0 / MIT w grze
+src/real-scenery.ts            42 obiekty parku z GLB + 10 podwórka + galeria + baza
+src/park.ts                    wyłącznie teren, niebo i światła Lobby (zero brył)
+src/tool-belt.ts               pas na biodrach: 6 slotów 3D w viewmodelu
 src/diagnostics.ts             bezpieczny bufor logów + raport do schowka
 src/community-account.ts       wspólne konto + bezpieczne refresh() (bez martwego pending)
 src/auth-gate.ts               ekran logowania/rejestracji + twarda blokada gry
-src/asset-catalog.ts           101 modeli w 9 kategoriach (jedno źródło dla UI)
 src/dialog.ts                  focus trap i przywracanie fokusu dla obu okien modalnych
-src/tool-belt.ts               pas na biodrach: 6 slotów 3D w viewmodelu
-src/park.ts                    park Lobby: niebo, trawnik, alejki, altana, klomby, oczko wodne
-src/auth-gate.ts               ekran logowania/rejestracji + twarda blokada gry
-src/asset-catalog.ts           101 modeli w 9 kategoriach (jedno źródło dla UI)
-src/real-scenery.ts            24 rekwizyty parku + 10 podwórka + galeria 3 assetów + baza
-src/hand-pose.ts               21 punktów → 15 kątów, rozstaw, ciągły skręt nadgarstka, pozycja 3D
-src/tracking-guard.ts          czyste zabezpieczenia numeryczne, etykiety dłoni, FrameWatchdog
-src/face-math.ts               głowa / oczy / mrugnięcie bez DOM (testowalne w Node)
-tests/                         29 testów `node --test` + hak resolucji `.ts`
-src/view-hands.ts              dłonie FP: geometryczne osie + rig obrotu nadgarstka + narzędzie LCD
-src/first-person-hands.ts      wspólny viewmodel dłoni first-person dla Lobby
+src/asset-catalog.ts           120 modeli w 9 kategoriach (jedno źródło dla UI)
 src/online.ts                  Presence / czat / profile / broadcast wave i party_start
-src/real-props.ts              17 gotowych rekwizytów CC0 / MIT w grze
-src/horror-decor.ts            proceduralne tekstury, meble, światła i kurz
-src/horror.ts                  Demonofobia: silnik, ruch, nalot, dźwięk, first-person
 src/avatar.ts                  wspólny interfejs awatara i etykiety
+tests/                         50 testów `node --test` + hak resolucji `.ts`
 supabase/migrations/           multiplayer + drużyny + autoryzacja zapisu (RLS, RPC z tokenem)
-public/mediapipe/face/         lokalny runtime FaceMesh (Apache-2.0) + bridge.html
 .github/workflows/             typecheck + testy + build na każdym PR, deploy wyłącznie z main
-public/characters/             13 GLB + animacje + gotowe tekstury + licencja MIT
+public/mediapipe/face/         lokalny runtime FaceMesh (Apache-2.0) + bridge.html
 public/mediapipe/              lokalne pliki MediaPipe Hands
+public/characters/             13 GLB + animacje + gotowe tekstury + licencja MIT
 public/assets/props/           25 GLB parkowych (MIT + CC0)
-public/assets/library/         76 GLB w 8 kategoriach (MIT/CC0/CC-BY)
-public/assets/ASSETS.json      maszynowy katalog 101 modeli + licencje
+public/assets/library/         95 GLB w 8 kategoriach (MIT / CC0 / CC-BY)
+public/assets/ASSETS.json      maszynowy katalog 120 modeli + licencje
 public/assets/LICENSE-*.txt    GridFall MIT, Poly Haven CC0, Khronos CC0/CC-BY
 public/art/                    house.jpg — jedyna okładka
 ```
@@ -539,7 +557,7 @@ public/art/                    house.jpg — jedyna okładka
   `LICENSE-khronos-cc0-ccby.txt`). Tekstury zmniejszono do 512 px, bufory
   skompresowano `EXT_meshopt_compression` (dekoder z `three/addons`); zmiany
   są opisane w nocie licencyjnej zgodnie z wymogiem CC BY 4.0.
-  Łącznie **101 darmowych modeli**; `public/assets/ASSETS.json` zawiera nazwę,
+  Łącznie **120 darmowych modeli**; `public/assets/ASSETS.json` zawiera nazwę,
   kategorię, ścieżkę, źródło, licencję i rozmiar każdego z nich. Assety NIE są
   związane tylko z horrorem — Demonofobia jest pierwszą z wielu planowanych gier.
 - **Kamerka**: `@mediapipe/hands` 0.4.1675469240 (Apache-2.0), pliki lokalnie w
@@ -560,9 +578,37 @@ public/art/                    house.jpg — jedyna okładka
 | Animacje motion capture: idle, chód, machanie | Mimiki twarzy i trackingu całego ciała |
 | Kolor skóry na twarzy i dłoniach, kolor włosów na całej głowie | Pełnego kreatora twarzy, wagi, wieku |
 | 21 punktów → 15 stawów + pozycja dłoni x/y/z + ramiona, 2 dłonie naraz | Śledzenia łokcia z osobnego sensora (kąt wyliczamy z pozycji) |
-| 101 darmowych modeli PBR (CC0 / CC BY / MIT), jeden renderer | Metahuman / silnika typu Unreal w przeglądarce |
+| 120 darmowych modeli PBR (CC0 / CC BY / MIT), jeden renderer | Metahuman / silnika typu Unreal w przeglądarce |
 | Auto jakość (DPR, cienie, kurz, fps) i układ dotykowy na telefon/tablet | Profilowania na realnym GPU, fizycznych urządzeniach i wielu realnych klientach Supabase |
 | Prawdziwych graczy, czat i profile w Supabase | Serwerowego autorytatywnego world state / anty-cheat |
+
+---
+
+## Weryfikacja v0.8
+
+Trzy fazy zrealizowane w kolejności: (1) realnie działający ruch w
+Demonofobii, (2) anatomia i model dłoni, (3) park wyłącznie z gotowych GLB
+oraz rozbudowa katalogu. Wszystkie poniższe przebiegi wykonano na tym samym
+kodzie, który trafia do `dist/`.
+
+| Zakres | Wynik |
+| --- | --- |
+| Błąd chodzenia | zreprodukowany w headless przed poprawką: `keys = ['KeyW']`, `velocity.z = -0.26`, a `position = (0, 12.4)` pozostawało bez zmiany. Po poprawce `yaw = yawTarget = 0`, start `(0, 11.6)`, 120 klatek `W` → `(0.23, 6.75)`, czyli przejście przez frontowe drzwi do wnętrza domu |
+| Focus | sztucznie ustawiony focus w `<input>` przed startem rundy → po `startGameRound()` aktywny jest `SECTION#game`; WASD dociera do silnika |
+| `npm run typecheck` | 0 błędów |
+| `npm test` | **50 / 50** — 11 testów kolizji/startu, 5 integralności katalogu, 6 realizmu dłoni + 29 z v0.7.1 |
+| `npm run build` | `index.html` 51,76 kB · CSS 91,69 kB · JS 1128,98 kB (gzip 301,34 kB) |
+| Dłonie | 6 testów: minima stawów bez wywijania, `applyTenodesis()` w obie strony, limity i `NaN`, kaskada MCP > PIP > DIP oraz palec wskazujący > mały, domknięcie do celu < 0,01 po 120 klatkach |
+| Kamerka (fake device) | laboratorium startuje, watchdog zeruje sterowanie przy braku odczytu, „Restart kamerki" bez wyjątków; raport `v0.8.0`, pola trackingowe, 0 sekretów, 0 `NaN`, `pageErrors: []` |
+| CI | workflow reaguje na `pull_request`; job `verify` = `npm ci` → `typecheck` → `test` → `build`; test integralności katalogu sprawdza nagłówki glTF 2.0 i licencje |
+| Park | `park.ts` ma wyłącznie płaskie, teksturowane powierzchnie terenu (`Sphere/Cylinder/Circle/Ring/Plane`); 0 `Box/Cone/Torus/Capsule`. Wszystkie widoczne obiekty i portale to GLB |
+| Lobby w przeglądarce | 26 unikalnych plików GLB, każdy pobrany dokładnie raz (współdzielony cache + klony) → same `200`, 0 błędów konsoli, 0 lokalnych 4xx, `liveCount: 0`, „Brak połączenia — nikt nie jest widoczny"; znak „Lobby" i okładka gry czytelne (naprawiony `flipY` dla UV glTF) |
+| Produkcja (`vite preview`) | 7 szerokości 320–1920 px: `scrollWidth = viewport`, 0 wystających elementów; katalog 120 modeli / 9 kategorii / 120 wierszy modalu; raport „Kopiuj logi" ma `v0.8.0`, 0 sekretów, 0 `NaN`; `pageErrors: []`, lokalne 4xx: `[]` |
+| Assety | 120 plików GLB zwalidowanych jako glTF 2.0 w teście CI; rozmiar każdego zgodny z `ASSETS.json`; suma < 80 MB; CC BY 4.0 zawsze ma autorstwo; 3 noty licencyjne zaktualizowane |
+
+**Nadal niezweryfikowane:** fizyczna kamerka i dotyk na urządzeniu, dwóch
+realnych klientów przez WSS Presence, profilowanie GPU. Testy headless nie
+zastąpią prawdziwego sensora — to jawnie wpisane w roadmapę poniżej.
 
 ---
 
@@ -619,19 +665,22 @@ klucza `anon` i — na współdzielonym originie — gotowego bridge’a
 
 ## Roadmapa (kolejność prac)
 
-1. **v0.8 — wydajność:** `import()` dla `World` / `HorrorGame` / trackerów,
-   budżet rozmiaru w CI, lazy GLB per model i LOD. Obecnie cały `src` ładuje
-   się statycznie, więc home ściąga też silnik horroru.
-2. **v0.9 — Lobby żyje:** podgląd 3D każdego z 101 assetów (turntable w
+1. **v0.8 ✅ (ten release):** błąd chodzenia, park wyłącznie z gotowych GLB,
+   120 assetów, realizm ruchu i geometrii dłoni.
+2. **v0.9 — wydajność:** `import()` dla `World` / `HorrorGame` / trackerów,
+   lazy GLB z anulowaniem, LOD, budżet rozmiaru bundla w CI. Obecnie cały
+   `src` ładuje się statycznie, więc home ściąga też silnik horroru.
+3. **v1.0 — Lobby żyje:** podgląd 3D każdego z 120 assetów (turntable w
    katalogu + „wstaw do sceny"), profil, znajomi i postęp w bazie, limit
    graczy w pokoju i realny „start razem".
-3. **v1.0 — wielogrowość:** druga gra jako osobna scena i wpis w `GAMES`,
+4. **v1.1 — wielogrowość:** druga gra jako osobna scena i wpis w `GAMES`,
    piaskownica UGC z bezpiecznym skryptowaniem, fizyka (Rapier), i18n PL/EN.
-4. **Później:** autorytatywny stan świata, osiągnięcia, PWA/offline dla home,
-   monitoring błędów.
+5. **Później:** autorytatywny stan świata, osiągnięcia, PWA/offline dla home,
+   monitoring błędów, realna kamerka / dotyk / dwóch klientów WSS na fizycznych
+   urządzeniach.
 
-Kolejność jest celowa: najpierw automatyczna siatka bezpieczeństwa i domknięcie
-ryzyka sensora, potem zmiana architektury ładowania, dopiero potem nowe funkcje
+Kolejność jest celowa: najpierw siatka bezpieczeństwa i zgłoszone przez gracza
+usterki, potem zmiana architektury ładowania, dopiero potem nowe funkcje
 i kolejne gry.
 
 Wspomniany luźno „CS” nie został dodany: jest jedna grywalna gra, a zakres

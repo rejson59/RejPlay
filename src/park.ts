@@ -1,95 +1,67 @@
 import * as THREE from 'three';
 
 /**
- * Sceneria Lobby: jasny, zielony park w świetle dnia.
+ * Podłoże, niebo i oświetlenie parku **Lobby** (v0.8).
  *
- * Wszystko jest geometrią proceduralną i teksturami z canvasu — zero
- * zewnętrznych plików, zero pobierania. Gotowe modele GLB (drzewa, ławki,
- * latarnie, fontanna, stojaki, znaki) dokłada `real-scenery.ts`.
- *
- * Układ: okrągła alejka wokół trawnika z altaną, cztery dojścia do bram gier,
- * klomby, oczko wodne i drewniana tablica z nazwą Lobby. Środek układu (0,0,0)
- * jest wspólny z pozycją graczy i Presence, więc nic nie trzeba przeliczać.
+ * To jedyny moduł, w którym wolno używać geometrii proceduralnej — ale
+ * wyłącznie płaskich, teksturowanych powierzchni terenu oraz kopuły nieba.
+ * Wszystkie widoczne obiekty (fontanna, ławki, donice, kwiaty, głazy, wiata,
+ * tablica „Lobby", latarnie, drzewa) to gotowe modele GLB ładowane przez
+ * `src/real-scenery.ts`. Wcześniej altana była stożkiem na sześciu walcach,
+ * klomby — sferami na patykach, oczko wodne — torusem, a zegar słoneczny —
+ * zestawem walców; użytkownik słusznie nazwał to „bryłami". Nie wracamy do
+ * tego: nowy obiekt w parku = nowy wpis w `LOBBY_PROPS`, nie nowy `Mesh`.
  */
 
-const GRASS = '#6d9c58';
-const GRAVEL = '#d8cbb1';
-const WOOD = 0x8b6440;
-const WOOD_DARK = 0x684a30;
-const STONE = 0xc9c3b4;
-
 function makeTexture(paint: (ctx: CanvasRenderingContext2D, size: number) => void, repeat: number): THREE.CanvasTexture {
-  const size = 512;
   const canvas = document.createElement('canvas');
-  canvas.width = canvas.height = size;
+  canvas.width = canvas.height = 256;
   const ctx = canvas.getContext('2d')!;
-  paint(ctx, size);
+  paint(ctx, 256);
   const texture = new THREE.CanvasTexture(canvas);
-  texture.colorSpace = THREE.SRGBColorSpace;
   texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
   texture.repeat.set(repeat, repeat);
+  texture.colorSpace = THREE.SRGBColorSpace;
   texture.anisotropy = 4;
   return texture;
 }
 
 function grassTexture(): THREE.CanvasTexture {
-  return makeTexture((ctx, s) => {
-    ctx.fillStyle = GRASS;
-    ctx.fillRect(0, 0, s, s);
-    // Dwie warstwy źdźbeł: ciemniejsze tło i jaśniejsze końcówki.
-    for (let i = 0; i < 9000; i++) {
-      const x = Math.random() * s;
-      const y = Math.random() * s;
-      const light = Math.random() > 0.55;
-      ctx.strokeStyle = light ? 'rgba(190,220,140,0.30)' : 'rgba(40,80,38,0.22)';
-      ctx.lineWidth = 0.8 + Math.random();
-      ctx.beginPath();
-      ctx.moveTo(x, y);
-      ctx.lineTo(x + (Math.random() - 0.5) * 3, y - 2 - Math.random() * 4);
-      ctx.stroke();
+  return makeTexture((ctx, size) => {
+    ctx.fillStyle = '#4f7a3e';
+    ctx.fillRect(0, 0, size, size);
+    for (let i = 0; i < 5200; i += 1) {
+      const shade = 55 + Math.floor(Math.random() * 75);
+      ctx.fillStyle = `rgba(${shade * 0.62},${shade},${shade * 0.48},${0.25 + Math.random() * 0.5})`;
+      const x = Math.random() * size;
+      const y = Math.random() * size;
+      ctx.fillRect(x, y, 1 + Math.random() * 2, 2 + Math.random() * 4);
     }
-    for (let i = 0; i < 260; i++) {
-      ctx.fillStyle = 'rgba(244,224,140,0.18)';
-      ctx.beginPath();
-      ctx.arc(Math.random() * s, Math.random() * s, 1 + Math.random() * 1.6, 0, Math.PI * 2);
-      ctx.fill();
-    }
-  }, 7);
+  }, 15);
 }
 
 function gravelTexture(): THREE.CanvasTexture {
-  return makeTexture((ctx, s) => {
-    ctx.fillStyle = GRAVEL;
-    ctx.fillRect(0, 0, s, s);
-    for (let i = 0; i < 12000; i++) {
-      const v = Math.random();
-      ctx.fillStyle = v > 0.6 ? 'rgba(255,255,255,0.22)' : v > 0.3 ? 'rgba(120,105,80,0.20)' : 'rgba(90,80,62,0.12)';
-      const r = 0.6 + Math.random() * 1.8;
-      ctx.fillRect(Math.random() * s, Math.random() * s, r, r);
+  return makeTexture((ctx, size) => {
+    ctx.fillStyle = '#a89a7e';
+    ctx.fillRect(0, 0, size, size);
+    for (let i = 0; i < 4200; i += 1) {
+      const v = 120 + Math.floor(Math.random() * 90);
+      ctx.fillStyle = `rgba(${v},${v - 8},${v - 24},${0.3 + Math.random() * 0.5})`;
+      ctx.fillRect(Math.random() * size, Math.random() * size, 1 + Math.random() * 2, 1 + Math.random() * 2);
     }
-  }, 4);
+  }, 6);
 }
 
-function signTexture(title: string, sub: string): THREE.CanvasTexture {
-  const canvas = document.createElement('canvas');
-  canvas.width = 1024;
-  canvas.height = 320;
-  const ctx = canvas.getContext('2d')!;
-  ctx.fillStyle = '#6b4d31';
-  ctx.fillRect(0, 0, 1024, 320);
-  ctx.strokeStyle = 'rgba(255,236,200,0.35)';
-  ctx.lineWidth = 8;
-  ctx.strokeRect(18, 18, 988, 284);
-  ctx.fillStyle = '#f4e6c8';
-  ctx.textAlign = 'center';
-  ctx.font = '600 128px Georgia, serif';
-  ctx.fillText(title, 512, 160);
-  ctx.font = '400 40px ui-sans-serif, system-ui, sans-serif';
-  ctx.fillStyle = '#e0cba4';
-  ctx.fillText(sub, 512, 240);
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  return texture;
+function stoneTexture(): THREE.CanvasTexture {
+  return makeTexture((ctx, size) => {
+    ctx.fillStyle = '#8d8a7c';
+    ctx.fillRect(0, 0, size, size);
+    for (let i = 0; i < 1800; i += 1) {
+      const v = 105 + Math.floor(Math.random() * 65);
+      ctx.fillStyle = `rgba(${v},${v},${v - 6},${0.2 + Math.random() * 0.45})`;
+      ctx.fillRect(Math.random() * size, Math.random() * size, 2 + Math.random() * 5, 1 + Math.random() * 3);
+    }
+  }, 5);
 }
 
 function skyTexture(): THREE.CanvasTexture {
@@ -109,6 +81,7 @@ function skyTexture(): THREE.CanvasTexture {
   return texture;
 }
 
+/** Płaski, teksturowany dysk terenu. Nigdy nie tworzy „bryły" w kadrze. */
 function disc(radius: number, material: THREE.Material, y: number, segments = 72): THREE.Mesh {
   const mesh = new THREE.Mesh(new THREE.CircleGeometry(radius, segments), material);
   mesh.rotation.x = -Math.PI / 2;
@@ -117,131 +90,20 @@ function disc(radius: number, material: THREE.Material, y: number, segments = 72
   return mesh;
 }
 
-function mat(color: number, roughness = 0.9): THREE.MeshStandardMaterial {
-  return new THREE.MeshStandardMaterial({ color, roughness, metalness: 0.02 });
-}
-
-/** Altana: sześć drewnianych słupów, dach i podest. */
-function buildGazebo(scene: THREE.Scene): void {
-  const group = new THREE.Group();
-  group.name = 'park-gazebo';
-
-  const floor = new THREE.Mesh(new THREE.CylinderGeometry(2.75, 2.85, 0.16, 6), mat(WOOD, 0.85));
-  floor.position.y = 0.1;
-  floor.rotation.y = Math.PI / 6;
-  floor.castShadow = true;
-  floor.receiveShadow = true;
-  group.add(floor);
-
-  const postGeo = new THREE.CylinderGeometry(0.11, 0.14, 2.8, 10);
-  const postMat = mat(WOOD_DARK, 0.82);
-  for (let i = 0; i < 6; i++) {
-    const a = (i / 6) * Math.PI * 2 + Math.PI / 6;
-    const post = new THREE.Mesh(postGeo, postMat);
-    post.position.set(Math.sin(a) * 2.5, 1.5, Math.cos(a) * 2.5);
-    post.castShadow = true;
-    group.add(post);
-    // Poprzeczka między słupami.
-    const next = ((i + 1) / 6) * Math.PI * 2 + Math.PI / 6;
-    const beam = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.12, 2.5), postMat);
-    beam.position.set((Math.sin(a) + Math.sin(next)) * 1.25, 2.86, (Math.cos(a) + Math.cos(next)) * 1.25);
-    beam.rotation.y = a + Math.PI / 6;
-    beam.castShadow = true;
-    group.add(beam);
-  }
-
-  const roof = new THREE.Mesh(new THREE.ConeGeometry(3.25, 1.5, 6), mat(0x5f6b4b, 0.95));
-  roof.position.y = 3.55;
-  roof.rotation.y = Math.PI / 6;
-  roof.castShadow = true;
-  group.add(roof);
-  const finial = new THREE.Mesh(new THREE.SphereGeometry(0.18, 16, 12), mat(0xc9a468, 0.45));
-  finial.position.y = 4.38;
-  group.add(finial);
-
-  scene.add(group);
-}
-
-/** Klomb z kolorowymi kwiatami — lekki, powtarzalny akcent. */
-function buildFlowerBed(scene: THREE.Scene, x: number, z: number, seed: number): void {
-  const group = new THREE.Group();
-  group.position.set(x, 0, z);
-  const soil = disc(0.92, mat(0x59452f, 1), 0.03, 24);
-  group.add(soil);
-  const rim = new THREE.Mesh(new THREE.TorusGeometry(0.92, 0.075, 6, 28), mat(STONE, 0.95));
-  rim.rotation.x = Math.PI / 2;
-  rim.position.y = 0.05;
-  group.add(rim);
-  const palette = [0xf3d06a, 0xe58f9b, 0xf2f0dc, 0xa98bd0, 0xf0a35e];
-  const petalGeo = new THREE.SphereGeometry(0.11, 7, 6);
-  const stemGeo = new THREE.CylinderGeometry(0.018, 0.018, 0.3, 5);
-  const stemMat = mat(0x3f6d38, 1);
-  for (let i = 0; i < 15; i++) {
-    const a = (i / 15) * Math.PI * 2 + seed;
-    const r = 0.2 + ((i * 37 + seed * 13) % 10) / 18;
-    const px = Math.sin(a) * r;
-    const pz = Math.cos(a) * r;
-    const stem = new THREE.Mesh(stemGeo, stemMat);
-    stem.position.set(px, 0.19, pz);
-    group.add(stem);
-    const petal = new THREE.Mesh(petalGeo, mat(palette[(i + seed) % palette.length], 0.8));
-    petal.position.set(px, 0.36, pz);
-    petal.scale.setScalar(0.8 + (i % 3) * 0.15);
-    group.add(petal);
-  }
-  scene.add(group);
-}
-
-/** Oczko wodne z kamiennym brzegiem i liliami. */
-function buildPond(scene: THREE.Scene): void {
-  const group = new THREE.Group();
-  group.position.set(-7.35, 0, 0.6);
-  const water = disc(1.55, new THREE.MeshStandardMaterial({
-    color: 0x5b9bb5, roughness: 0.16, metalness: 0.25, transparent: true, opacity: 0.92,
-  }), 0.035, 48);
-  group.add(water);
-  const rim = new THREE.Mesh(new THREE.TorusGeometry(1.58, 0.16, 8, 48), mat(STONE, 1));
-  rim.rotation.x = Math.PI / 2;
-  rim.position.y = 0.06;
-  rim.castShadow = true;
-  group.add(rim);
-  const lily = mat(0x4e8546, 0.9);
-  for (const [x, z, r] of [[-0.6, 0.3, 0.24], [0.5, -0.4, 0.2], [0.2, 0.75, 0.18]] as const) {
-    const pad = new THREE.Mesh(new THREE.CircleGeometry(r, 14), lily);
-    pad.rotation.x = -Math.PI / 2;
-    pad.rotation.z = x;
-    pad.position.set(x, 0.055, z);
-    group.add(pad);
-  }
-  scene.add(group);
-}
-
-/** Drewniana tablica przy wejściu do parku. */
-function buildWelcomeSign(scene: THREE.Scene): void {
-  const group = new THREE.Group();
-  group.position.set(-6.0, 0, 4.6);
-  group.rotation.y = 1.05;
-  group.scale.setScalar(0.86);
-  const postMat = mat(WOOD_DARK, 0.85);
-  for (const x of [-1.5, 1.5]) {
-    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.13, 2.2, 8), postMat);
-    post.position.set(x, 1.1, 0);
-    post.castShadow = true;
-    group.add(post);
-  }
-  const board = new THREE.Mesh(new THREE.BoxGeometry(3.5, 1.1, 0.12),
-    new THREE.MeshStandardMaterial({ map: signTexture('Lobby', 'RejPlay · park dla graczy'), roughness: 0.85 }));
-  board.position.set(0, 1.75, 0.01);
-  board.castShadow = true;
-  group.add(board);
-  scene.add(group);
+/** Płaski pierścień terenu (np. alejka) zamiast wystającego torusu. */
+function flatRing(inner: number, outer: number, material: THREE.Material, y: number, segments = 96): THREE.Mesh {
+  const mesh = new THREE.Mesh(new THREE.RingGeometry(inner, outer, segments), material);
+  mesh.rotation.x = -Math.PI / 2;
+  mesh.position.y = y;
+  mesh.receiveShadow = true;
+  return mesh;
 }
 
 /**
- * Buduje cały park. `centerpiece` to mosiężny zegar słoneczny w altanie —
- * jedyny element, który wolno delikatnie obracać w pętli animacji.
+ * Buduje wyłącznie tło parku. Obiekty dokłada asynchronicznie
+ * `loadLobbyScenery()` — dzięki temu start Lobby nie czeka na 30 plików GLB.
  */
-export function buildPark(scene: THREE.Scene, centerpiece: THREE.Group): void {
+export function buildPark(scene: THREE.Scene): void {
   scene.background = new THREE.Color(0xbcdcea);
   scene.fog = new THREE.Fog(0xc6dfd0, 26, 88);
   const sky = new THREE.Mesh(
@@ -267,28 +129,25 @@ export function buildPark(scene: THREE.Scene, centerpiece: THREE.Group): void {
   sun.shadow.bias = -0.0006;
   scene.add(sun);
 
-  // Trawnik rozciąga się poza wyspę, żeby nie było widać krawędzi świata.
-  const meadow = disc(46, new THREE.MeshStandardMaterial({ map: grassTexture(), roughness: 1 }), -0.42, 64);
-  scene.add(meadow);
+  const grass = new THREE.MeshStandardMaterial({ map: grassTexture(), roughness: 1 });
+  const gravel = new THREE.MeshStandardMaterial({ map: gravelTexture(), roughness: 1 });
+  const stone = new THREE.MeshStandardMaterial({ map: stoneTexture(), roughness: 0.95 });
 
-  const soil = new THREE.Mesh(new THREE.CylinderGeometry(12, 12.35, 0.45, 72), mat(0x594a36, 1));
+  // Trawnik rozciąga się poza wyspę, żeby nie było widać krawędzi świata.
+  scene.add(disc(46, grass, -0.42, 64));
+
+  // Podłoże wyspy: niski, teksturowany walec (krawędź terenu, nie obiekt).
+  const soil = new THREE.Mesh(new THREE.CylinderGeometry(12, 12.35, 0.45, 72), stone);
   soil.position.y = -0.25;
   soil.receiveShadow = true;
   scene.add(soil);
-  scene.add(disc(11.95, new THREE.MeshStandardMaterial({ map: grassTexture(), roughness: 1 }), 0.005));
-  const kerb = new THREE.Mesh(new THREE.TorusGeometry(11.9, 0.16, 8, 96), mat(STONE, 0.95));
-  kerb.rotation.x = Math.PI / 2;
-  kerb.position.y = 0.03;
-  scene.add(kerb);
+  scene.add(disc(11.95, grass, 0.005));
+  // Płaski, kamienny pierścień zamiast dawnego, wystającego torusu.
+  scene.add(flatRing(11.72, 11.95, stone, 0.012));
 
   // Okrągła alejka (3,5–4,6 m) i cztery dojścia od brzegów parku.
-  const gravel = new THREE.MeshStandardMaterial({ map: gravelTexture(), roughness: 1 });
-  const ring = new THREE.Mesh(new THREE.RingGeometry(3.5, 4.6, 72), gravel);
-  ring.rotation.x = -Math.PI / 2;
-  ring.position.y = 0.018;
-  ring.receiveShadow = true;
-  scene.add(ring);
-  for (let i = 0; i < 4; i++) {
+  scene.add(flatRing(3.5, 4.6, gravel, 0.018));
+  for (let i = 0; i < 4; i += 1) {
     const spoke = new THREE.Group();
     spoke.rotation.y = (i / 4) * Math.PI * 2;
     const path = new THREE.Mesh(new THREE.PlaneGeometry(1.5, 7.4), gravel);
@@ -298,40 +157,6 @@ export function buildPark(scene: THREE.Scene, centerpiece: THREE.Group): void {
     spoke.add(path);
     scene.add(spoke);
   }
-  // Środkowy trawnik z altaną.
-  scene.add(disc(3.48, new THREE.MeshStandardMaterial({ map: grassTexture(), roughness: 1 }), 0.024));
-  buildGazebo(scene);
-
-  for (let i = 0; i < 8; i++) {
-    const a = (i / 8) * Math.PI * 2 + Math.PI / 8;
-    buildFlowerBed(scene, Math.sin(a) * 6.5, Math.cos(a) * 6.5, i);
-  }
-  buildPond(scene);
-  buildWelcomeSign(scene);
-
-  // Zegar słoneczny: jedyny obracany element, zamiast neonowej kuli.
-  const stone = mat(0x9b9a8c, 0.95);
-  const brass = new THREE.MeshStandardMaterial({ color: 0xb49455, roughness: 0.42, metalness: 0.72 });
-  const plinth = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.55, 0.75, 12), stone);
-  plinth.position.y = 0.5;
-  plinth.castShadow = true;
-  centerpiece.add(plinth);
-  const dial = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.6, 0.07, 24), brass);
-  dial.position.y = 0.92;
-  dial.castShadow = true;
-  centerpiece.add(dial);
-  const ringA = new THREE.Mesh(new THREE.TorusGeometry(0.44, 0.035, 8, 32), brass);
-  ringA.rotation.x = Math.PI / 2.6;
-  ringA.position.y = 1.22;
-  centerpiece.add(ringA);
-  const ringB = new THREE.Mesh(new THREE.TorusGeometry(0.33, 0.03, 8, 32), brass);
-  ringB.rotation.y = Math.PI / 2;
-  ringB.position.y = 1.22;
-  centerpiece.add(ringB);
-  const needle = new THREE.Mesh(new THREE.ConeGeometry(0.09, 0.7, 8), brass);
-  needle.rotation.z = -0.5;
-  needle.position.y = 1.22;
-  centerpiece.add(needle);
-  centerpiece.position.set(0, 0, 0);
-  scene.add(centerpiece);
+  // Środkowy trawnik — na nim stoi gotowa fontanna GLB.
+  scene.add(disc(3.48, grass, 0.024));
 }

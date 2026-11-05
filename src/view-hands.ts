@@ -466,36 +466,67 @@ export class FallbackViewHand {
     this.space = makeHandSpace(16 / 9, 60, side);
     this.root.position.copy(this.base);
     this.material = new THREE.MeshStandardMaterial({ color: skin, roughness: 0.84 });
-    const segment = (radius: number, length: number): THREE.Mesh => {
-      const mesh = new THREE.Mesh(new THREE.CapsuleGeometry(radius, length, 4, 8), this.material);
-      mesh.position.y = length / 2;
-      return mesh;
-    };
-    const forearm = segment(0.039, 0.12);
-    forearm.position.y = -0.075;
+    // v0.8: anatomia zamiast jednakowych kapsułek. Paliczki są stożkowate
+    // (cieńsze przy koniuszku), mają widoczne kostki i zaokrąglone opuszki,
+    // a długości maleją proksymalnie → dystalnie jak w prawdziwej dłoni.
+    const PHALANX = [0.048, 0.032, 0.024];
+    const THUMB_PHALANX = [0.042, 0.030, 0.022];
+    const sphere = (radius: number): THREE.Mesh =>
+      new THREE.Mesh(new THREE.SphereGeometry(radius, 10, 8), this.material);
+
+    const forearm = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.044, 0.036, 0.14, 12), this.material,
+    );
+    forearm.position.y = -0.078;
     this.root.add(forearm);
-    const palm = new THREE.Mesh(new RoundedBoxGeometry(0.132, 0.145, 0.05, 3, 0.038), this.material);
+    const wristJoint = sphere(0.041);
+    wristJoint.position.y = -0.014;
+    this.root.add(wristJoint);
+
+    const palm = new THREE.Mesh(
+      new RoundedBoxGeometry(0.132, 0.145, 0.05, 3, 0.038), this.material,
+    );
     palm.position.y = 0.055;
     this.root.add(palm);
+    // Wyniosłość kłębu (mięsień kciuka) — bez niej dłoń wygląda jak deska.
+    const thenar = sphere(0.034);
+    thenar.scale.set(0.86, 1.32, 0.62);
+    thenar.position.set(this.side * 0.045, 0.052, 0.012);
+    this.root.add(thenar);
+
     for (let f = 0; f < 5; f += 1) {
       const thumb = f === 0;
+      const lengths = thumb ? THUMB_PHALANX : PHALANX;
       const base = new THREE.Group();
       if (thumb) {
         base.position.set(this.side * 0.062, 0.026, 0.004);
         base.rotation.z = -this.side * 0.92;
       } else {
-        base.position.set(this.side * (0.049 - (f - 1) * 0.032), 0.122, 0);
+        // Środkowy jest najdłuższy, mały osadzony odrobinę niżej.
+        const lift = f === 2 ? 0.004 : f === 3 ? -0.002 : f === 4 ? -0.007 : 0;
+        base.position.set(this.side * (0.049 - (f - 1) * 0.032), 0.122 + lift, 0);
       }
       this.root.add(base);
       this.bases.push(base);
       const chain: THREE.Group[] = [];
       let pivot: THREE.Object3D = base;
       for (let j = 0; j < 3; j += 1) {
-        const radius = (thumb ? 0.0165 : 0.0135) - j * 0.0018;
+        const length = lengths[j];
+        const rBottom = (thumb ? 0.019 : 0.015) - j * 0.0022;
+        const rTop = rBottom * 0.82;
         const joint = new THREE.Group();
-        joint.add(segment(radius, 0.04 - j * 0.008));
+        const bone = new THREE.Mesh(
+          new THREE.CylinderGeometry(rTop, rBottom, length, 10, 1), this.material,
+        );
+        bone.position.y = length / 2;
+        joint.add(bone);
+        const knuckle = sphere(rBottom * 1.12);
+        joint.add(knuckle);
+        const tip = sphere(rTop * 1.04);
+        tip.position.y = length;
+        joint.add(tip);
         pivot.add(joint);
-        if (j > 0) joint.position.y = 0.04 - (j - 1) * 0.008;
+        if (j > 0) joint.position.y = lengths[j - 1];
         chain.push(joint);
         pivot = joint;
       }

@@ -1,5 +1,5 @@
 /**
- * Katalog darmowych assetów 3D RejPlay (v0.7) — wygenerowany z plików w public/assets.
+ * Katalog darmowych assetów 3D RejPlay (v0.8) — wygenerowany z plików w public/assets.
  * Jeden zbiór danych dla UI i dla przyszłych gier: Demonofobia jest tylko jednym z nich.
  * Szczegóły licencyjne: public/assets/LICENSE-*.txt oraz public/assets/ASSETS.json.
  */
@@ -18,13 +18,13 @@ export interface AssetEntry {
 export const ASSET_CATEGORIES: AssetCategory[] = [
   { id: 'park', label: 'Park i zieleń', icon: 'i-tree', description: 'Małe rekwizyty parkowe używane w Lobby i w grze', count: 25 },
   { id: 'roslinnosc', label: 'Roślinność', icon: 'i-leaf', description: 'Drzewa, żywopłoty i krzewy', count: 4 },
-  { id: 'ulica', label: 'Ulica i miasto', icon: 'i-sign', description: 'Ławki, latarnie, znaki, wiaty i kosze', count: 13 },
+  { id: 'ulica', label: 'Ulica i miasto', icon: 'i-sign', description: 'Ławki, latarnie, znaki, wiaty i kosze', count: 15 },
   { id: 'meble', label: 'Meble', icon: 'i-sofa', description: 'Fotele, sofy i pufy do wnętrz', count: 5 },
-  { id: 'przedmioty', label: 'Przedmioty', icon: 'i-cube', description: 'Rekwizyty codzienne i dekoracje', count: 16 },
+  { id: 'przedmioty', label: 'Przedmioty', icon: 'i-cube', description: 'Rekwizyty codzienne i dekoracje', count: 19 },
   { id: 'postacie', label: 'Postacie', icon: 'i-person', description: 'Sylwetki ludzkie do przyszłych światów', count: 8 },
   { id: 'zwierzeta', label: 'Zwierzęta', icon: 'i-paw', description: 'Kot i psy', count: 3 },
-  { id: 'pojazdy', label: 'Pojazdy', icon: 'i-car', description: 'Rowery, auta, łodzie i maszyny', count: 15 },
-  { id: 'architektura', label: 'Budynki', icon: 'i-building', description: 'Domy, sklepy i obiekty użyteczności publicznej', count: 12 },
+  { id: 'pojazdy', label: 'Pojazdy', icon: 'i-car', description: 'Rowery, auta, łodzie i maszyny', count: 23 },
+  { id: 'architektura', label: 'Budynki', icon: 'i-building', description: 'Domy, sklepy i obiekty użyteczności publicznej', count: 18 },
 ];
 
 export const ASSETS: AssetEntry[] = [
@@ -129,6 +129,25 @@ export const ASSETS: AssetEntry[] = [
   { name: 'mini_mart', label: 'Minimarket', category: 'architektura', file: 'assets/library/architektura/mini_mart.glb', source: 'gridfall', license: 'MIT / CC0', bytes: 1192708 },
   { name: 'park', label: 'Park', category: 'architektura', file: 'assets/library/architektura/park.glb', source: 'gridfall', license: 'MIT / CC0', bytes: 1973728 },
   { name: 'school', label: 'Szkoła', category: 'architektura', file: 'assets/library/architektura/school.glb', source: 'gridfall', license: 'MIT / CC0', bytes: 2135224 },
+  { name: 'airport', label: 'Lotnisko', category: 'architektura', file: 'assets/library/architektura/airport.glb', source: 'gridfall', license: 'MIT / CC0', bytes: 1224072 },
+  { name: 'fire_station', label: 'Straż pożarna', category: 'architektura', file: 'assets/library/architektura/fire_station.glb', source: 'gridfall', license: 'MIT / CC0', bytes: 1417988 },
+  { name: 'stadium', label: 'Stadion', category: 'architektura', file: 'assets/library/architektura/stadium.glb', source: 'gridfall', license: 'MIT / CC0', bytes: 935484 },
+  { name: 'train_station', label: 'Dworzec kolejowy', category: 'architektura', file: 'assets/library/architektura/train_station.glb', source: 'gridfall', license: 'MIT / CC0', bytes: 1931420 },
+  { name: 'university', label: 'Uniwersytet', category: 'architektura', file: 'assets/library/architektura/university.glb', source: 'gridfall', license: 'MIT / CC0', bytes: 2263068 },
+  { name: 'police_station', label: 'Komisariat policji', category: 'architektura', file: 'assets/library/architektura/police_station.glb', source: 'gridfall', license: 'MIT / CC0', bytes: 1842292 },
+  { name: 'backhoe_yellow', label: 'Koparka żółta', category: 'pojazdy', file: 'assets/library/pojazdy/backhoe_yellow.glb', source: 'gridfall', license: 'MIT / CC0', bytes: 192808 },
+  { name: 'garbage_truck', label: 'Śmieciarka', category: 'pojazdy', file: 'assets/library/pojazdy/garbage_truck.glb', source: 'gridfall', license: 'MIT / CC0', bytes: 249796 },
+  { name: 'suv_black', label: 'SUV czarny', category: 'pojazdy', file: 'assets/library/pojazdy/suv_black.glb', source: 'gridfall', license: 'MIT / CC0', bytes: 341236 },
+  { name: 'coupe_yellow', label: 'Coupé żółte', category: 'pojazdy', file: 'assets/library/pojazdy/coupe_yellow.glb', source: 'gridfall', license: 'MIT / CC0', bytes: 333560 },
+  { name: 'hatchback_white', label: 'Hatchback biały', category: 'pojazdy', file: 'assets/library/pojazdy/hatchback_white.glb', source: 'gridfall', license: 'MIT / CC0', bytes: 333120 },
+  { name: 'boat_speed', label: 'Motorówka', category: 'pojazdy', file: 'assets/library/pojazdy/boat_speed.glb', source: 'gridfall', license: 'MIT / CC0', bytes: 145440 },
+  { name: 'truck', label: 'Ciężarówka', category: 'pojazdy', file: 'assets/library/pojazdy/truck.glb', source: 'gridfall', license: 'MIT / CC0', bytes: 88440 },
+  { name: 'boat_tug', label: 'Holownik', category: 'pojazdy', file: 'assets/library/pojazdy/boat_tug.glb', source: 'gridfall', license: 'MIT / CC0', bytes: 172748 },
+  { name: 'road_bridge', label: 'Most drogowy', category: 'ulica', file: 'assets/library/ulica/road_bridge.glb', source: 'gridfall', license: 'MIT / CC0', bytes: 765864 },
+  { name: 'curb_ramp', label: 'Podjazd krawężnikowy', category: 'ulica', file: 'assets/library/ulica/curb_ramp.glb', source: 'gridfall', license: 'MIT / CC0', bytes: 321872 },
+  { name: 'DiffuseTransmissionPlant', label: 'Roślina w doniczce', category: 'przedmioty', file: 'assets/library/przedmioty/DiffuseTransmissionPlant.glb', source: 'khronos', license: 'CC0', bytes: 2634212, attribution: 'Poly Haven „potted_plant_02”, edycja Khronos (CC0 / CC BY 4.0)' },
+  { name: 'GlassHurricaneCandleHolder', label: 'Szklany świecznik', category: 'przedmioty', file: 'assets/library/przedmioty/GlassHurricaneCandleHolder.glb', source: 'khronos', license: 'CC-BY 4.0', bytes: 164268, attribution: '© Khronos Group / Dassault Systèmes (CC BY 4.0)' },
+  { name: 'IridescenceLamp', label: 'Lampa iryzująca', category: 'przedmioty', file: 'assets/library/przedmioty/IridescenceLamp.glb', source: 'khronos', license: 'CC-BY 4.0', bytes: 571684, attribution: '© Wayfair, LLC / Khronos Group (CC BY 4.0)' },
 ];
 
 export const ASSET_TOTAL = ASSETS.length;

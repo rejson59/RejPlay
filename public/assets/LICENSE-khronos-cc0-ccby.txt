@@ -1,4 +1,4 @@
-RejPlay v0.7 — modele z Khronos glTF Sample Assets
+RejPlay v0.8 — modele z Khronos glTF Sample Assets
 ====================================================
 
 Źródło: https://github.com/KhronosGroup/glTF-Sample-Assets
@@ -9,7 +9,8 @@ Wszystkie poniższe pliki .glb pochodzą z katalogów
 Są to darmowe modele na licencji CC0 1.0 (domena publiczna) albo
 CC BY 4.0 (wymagane podanie autorstwa). Lista autorów i licencji
 jest zgodna z plikami `Models/<nazwa>/README.md` w repozytorium
-źródłowym, stan na 2026-11-04.
+źródłowym, stan na 2026-11-05. Trzy modele dodane w v0.8 mają tekstury
+zmniejszone do 512 px; nie zostały przemodelowane.
 
 ZMIANY WPROWADZONE PRZEZ RejPlay (wymóg CC BY 4.0):
   * osadzone tekstury zmniejszono do maks. 512 px i przekodowano
@@ -34,6 +35,10 @@ A. CC0 1.0 — Creative Commons Zero v1.0 Universal
   SheenChair.glb            © 2020, Wayfair, LLC (CC0)
   ToyCar.glb                © 2020, Public
   WaterBottle.glb           © 2017, Public
+  DiffuseTransmissionPlant.glb
+                            Poly Haven „potted_plant_02” (CC0 / CC BY 4.0),
+                            edycja 3ds Max / Khronos; dotyczy też liści
+                            z rozszerzeniem KHR_materials_diffuse_transmission
 
 
 B. CC BY 4.0 — Creative Commons Attribution 4.0 International
@@ -55,6 +60,11 @@ B. CC BY 4.0 — Creative Commons Attribution 4.0 International
   SheenWoodLeatherSofa.glb  © 2024, Darmstadt Graphics Group GmbH;
                             tekstury © 2021, domena publiczna (CC0)
   SpecularSilkPouf.glb      © 2023, Wayfair, LLC
+  IridescenceLamp.glb       © Wayfair, LLC — „Bonsell 19\" Table Lamp";
+                            model Khronos z KHR_materials_iridescence
+  GlassHurricaneCandleHolder.glb
+                            © Khronos Group / Dassault Systèmes;
+                            KHR_materials_transmission + _volume
   TrafficCone.glb           "Traffic Cone" by hinndia
                             (https://sketchfab.com/3d-models/traffic-cone-573feef839d7450cb3e12da9986e7a98),
                             CC BY 4.0; tekstury Poly Haven CC0
@@ -68,6 +78,6 @@ C. Znaki towarowe
    Logotyp RejPlay, okładka Demonofobii i interfejs są niezależne od tych modeli.
 
 
-Pełna, maszynowa lista (101 modeli z kategoriami, rozmiarami i licencjami):
+Pełna, maszynowa lista (120 modeli z kategoriami, rozmiarami i licencjami):
   public/assets/ASSETS.json
   src/asset-catalog.ts

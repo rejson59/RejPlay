@@ -1692,6 +1692,21 @@ function applyHandResponsiveness(value: number): void {
 
 // -------------------------------------------------------------- wejście do gry
 
+/**
+ * `HorrorGame.bindInput()` słusznie ignoruje klawisze, gdy focus siedzi w polu
+ * tekstowym (czat, wyszukiwarka assetów, formularz logowania). Po wejściu w grę
+ * musimy więc zdjąć focus z takiego pola i przenieść go na scenę — inaczej WASD
+ * nie dociera do silnika i wygląda to na „nie mogę chodzić".
+ */
+function focusGameStage(): void {
+  const focused = document.activeElement;
+  if (focused instanceof HTMLElement
+    && focused.matches('input, textarea, select, [contenteditable="true"]')) {
+    focused.blur();
+  }
+  game.focus({ preventScroll: true });
+}
+
 function openGame(from: 'home' | 'lobby'): void {
   if (!requireAccount('game')) return;
   closeEditor();
@@ -1727,10 +1742,11 @@ function openGame(from: 'home' | 'lobby'): void {
   lastEvidenceSignature = '';
   lastJournalSignature = '';
   lastResultSignature = '';
-  game.focus({ preventScroll: true });
+  focusGameStage();
 }
 
 function startGameRound(): void {
+  focusGameStage();
   gameIntro.hidden = true;
   gameResult.hidden = true;
   gameJournal.hidden = true;

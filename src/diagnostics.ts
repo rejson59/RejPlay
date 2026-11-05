@@ -102,7 +102,7 @@ class DiagnosticLog {
     const lines: string[] = [
       '=== RejPlay · raport z kamerki ===',
       `Data: ${now.toISOString()}`,
-      `Wersja: v0.7.1`,
+      `Wersja: v0.8.0`,
       `Adres: ${typeof location !== 'undefined' ? location.origin + location.pathname : 'n/a'} (bez parametrów)`,
       `Przeglądarka: ${typeof navigator !== 'undefined' ? navigator.userAgent : 'n/a'}`,
       `Ekran: ${typeof screen !== 'undefined' ? `${screen.width}x${screen.height}` : 'n/a'} · okno ${typeof window !== 'undefined' ? `${window.innerWidth}x${window.innerHeight}` : 'n/a'}`,
