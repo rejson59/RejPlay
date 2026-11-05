@@ -12,18 +12,26 @@
  */
 
 import { EMPTY_FACE, type FaceFrame } from './face-math';
-import type { TrackedHand } from './hand-pose';
+import { getHandAxes, setHandAxes, type HandAxes, type TrackedHand } from './hand-pose';
+import { applyGazeMapping, parseGazeMapping, type GazeMapping } from './gaze-calibration';
 import {
   clampFinite, disambiguateHandedness, finite, validLandmarks,
 } from './tracking-guard';
 
 export interface ControlSettings {
+  /** Sesyjny: NIGDY nie wczytywany z zapisu. Sterowanie włącza tylko gracz. */
   enabled: boolean;
   gazeSensitivity: number;
   headSensitivity: number;
   deadzone: number;
   smoothing: number;
   invertX: boolean;
+  /** Głowa w przód = chodzenie w przód; odwrócenie dla odwrotnego montażu. */
+  invertHeadMove: boolean;
+  /** Znaki osi dłoni (kreator lub ręczna korekta w laboratorium). */
+  handInvertX: boolean;
+  handInvertY: boolean;
+  handInvertDepth: boolean;
 }
 
 export interface ControlFrame {
@@ -69,12 +77,21 @@ export interface LabDiagnostics {
   ready: boolean;
   calibrated: boolean;
   enabled: boolean;
+  /** Czy spojrzenie ma dopasowane mapowanie z 9 punktów. */
+  gazeCalibrated: boolean;
+  gazeQuality: number;
   settings: ControlSettings;
   neutral: CalibrationSample | null;
   slot: number;
 }
 
+/**
+ * Schemat 2 (v0.9) celowo ignoruje stare wpisy: poprzednia wersja zapisywała
+ * `enabled: true` i pozycję neutralną z innej sesji, więc po odświeżeniu
+ * strony postać ruszała sama i nie dawało się jej zatrzymać.
+ */
 const STORE = 'rejplay:camera-control-v1';
+const SCHEMA = 2;
 const ZERO: CalibrationSample = { yaw: 0, pitch: 0, roll: 0, gazeX: 0, gazeY: 0 };
 const clamp = (v: number, a: number, b: number): number => Math.max(a, Math.min(b, v));
 const dead = (value: number, zone: number): number => {
@@ -89,19 +106,25 @@ function loadSettings(): ControlSettings {
   const base: ControlSettings = {
     enabled: false, gazeSensitivity: 1, headSensitivity: 1,
     deadzone: 0.07, smoothing: 0.55, invertX: false,
+    invertHeadMove: false,
+    handInvertX: false, handInvertY: false, handInvertDepth: false,
   };
   try {
     const raw = JSON.parse(localStorage.getItem(STORE) ?? 'null');
-    if (!raw) return base;
+    if (!raw || raw.schema !== SCHEMA) return base;
     return {
-      enabled: Boolean(raw.enabled),
+      // `enabled` jest zawsze false na starcie sesji — brak samoczynnej jazdy.
+      enabled: false,
       gazeSensitivity: clampFinite(raw.gazeSensitivity, 0.3, 2.5, 1),
       headSensitivity: clampFinite(raw.headSensitivity, 0.3, 2.5, 1),
       deadzone: clampFinite(raw.deadzone, 0, 0.3, 0.07),
       smoothing: clampFinite(raw.smoothing, 0, 0.95, 0.55),
       invertX: Boolean(raw.invertX),
-      neutral: raw.neutral,
-    } as ControlSettings;
+      invertHeadMove: Boolean(raw.invertHeadMove),
+      handInvertX: Boolean(raw.handInvertX),
+      handInvertY: Boolean(raw.handInvertY),
+      handInvertDepth: Boolean(raw.handInvertDepth),
+    };
   } catch {
     return base;
   }
@@ -129,16 +152,28 @@ function handSignal(hand: TrackedHand): HandSignal {
     curl += clampFinite(1 - bent / 2.2, 0, 1);
     if (full > 1.55 && bent > 1.4) extended += 1;
   }
+  // Celowanie slotem musi podążać za TYM SAMYM kierunkiem co dłoń awatara:
+  // bez tego po odwróceniu osi X palec wskazywał w lewo, a podświetlał prawy
+  // slot. Odwrócenie wokół 0.5, bo to surowa współrzędna ekranu 0..1.
+  const axes = getHandAxes();
+  const rawX = clampFinite(lm[9].x, -1, 2, 0.5);
+  const rawY = clampFinite(lm[9].y, -1, 2, 0.5);
   return {
     curl: curl / 4, open: extended / 4, pinch,
-    x: clampFinite(lm[9].x, -1, 2, 0.5), y: clampFinite(lm[9].y, -1, 2, 0.5),
+    x: axes.invertX ? 1 - rawX : rawX,
+    y: axes.invertY ? 1 - rawY : rawY,
   };
 }
 
 export class CameraControl {
   settings: ControlSettings = loadSettings();
   neutral: CalibrationSample | null = null;
+  /** Mapowanie surowe spojrzenie → ekran, z kreatora 9 punktów. */
+  gazeMapping: GazeMapping | null = null;
   private calibrating = false;
+  /** Czas (s), w którym twarz i oczy były nieruchome blisko neutralnej. */
+  private stillTime = 0;
+  private lastRaw: CalibrationSample | null = null;
   private samples: CalibrationSample[] = [];
   private readonly min = { pitch: 9, roll: 9, gazeX: 9, gazeY: 9 };
   private readonly max = { pitch: -9, roll: -9, gazeX: -9, gazeY: -9 };
@@ -163,14 +198,31 @@ export class CameraControl {
   constructor() {
     try {
       const raw = JSON.parse(localStorage.getItem(STORE) ?? 'null');
-      const n = raw?.neutral;
-      if (n && typeof n.pitch === 'number') {
+      if (raw?.schema !== SCHEMA) return;
+      const n = raw.neutral;
+      if (n && typeof n.pitch === 'number'
+        && [n.yaw, n.pitch, n.roll, n.gazeX, n.gazeY].every((v) => Number.isFinite(v))) {
         this.neutral = {
-          yaw: Number(n.yaw) || 0, pitch: Number(n.pitch) || 0, roll: Number(n.roll) || 0,
-          gazeX: Number(n.gazeX) || 0, gazeY: Number(n.gazeY) || 0,
+          yaw: clampFinite(n.yaw, -1, 1), pitch: clampFinite(n.pitch, -1, 1),
+          roll: clampFinite(n.roll, -1, 1), gazeX: clampFinite(n.gazeX, -1.6, 1.6),
+          gazeY: clampFinite(n.gazeY, -1.6, 1.6),
         };
       }
+      this.gazeMapping = parseGazeMapping(raw.gazeMapping);
     } catch { /* brak zapisanej kalibracji */ }
+    this.applyHandAxes();
+  }
+
+  /** Ustawienia osi dłoni są jednym źródłem prawdy dla całej aplikacji. */
+  applyHandAxes(): HandAxes {
+    const s = this.settings;
+    return setHandAxes({
+      invertX: s.handInvertX, invertY: s.handInvertY, invertDepth: s.handInvertDepth,
+    });
+  }
+
+  get handAxes(): HandAxes {
+    return getHandAxes();
   }
 
   setHeld(index: number): void {
@@ -179,7 +231,11 @@ export class CameraControl {
 
   save(): void {
     try {
-      localStorage.setItem(STORE, JSON.stringify({ ...this.settings, neutral: this.neutral }));
+      // `enabled` NIE trafia do zapisu: po reloadzie sterowanie jest wyłączone.
+      const { enabled: _sessionOnly, ...persisted } = this.settings;
+      localStorage.setItem(STORE, JSON.stringify({
+        ...persisted, schema: SCHEMA, neutral: this.neutral, gazeMapping: this.gazeMapping,
+      }));
     } catch { /* tryb prywatny */ }
   }
 
@@ -204,8 +260,42 @@ export class CameraControl {
       yaw: sum.yaw / n, pitch: sum.pitch / n, roll: sum.roll / n,
       gazeX: sum.gazeX / n, gazeY: sum.gazeY / n,
     };
+    // Nowy punkt zero nie może zostawić rozpędzonej postaci z poprzedniego.
+    this.zeroSmoothing();
     this.save();
     return true;
+  }
+
+  /**
+   * NATYCHMIASTOWY STOP: wyłącza sterowanie, zeruje prędkości i ustawia
+   * neutralną pozycję na aktualny odczyt twarzy. Używane przez przycisk
+   * „Zatrzymaj" oraz klawisz C — gracz zawsze ma jeden, pewny hamulec.
+   */
+  stop(): void {
+    this.settings.enabled = false;
+    this.recenter();
+    this.save();
+  }
+
+  /** Ustawia zero na to, co kamerka widzi TERAZ (bez czekania 2 s). */
+  recenter(): void {
+    if (this.lastRaw) {
+      this.neutral = { ...this.lastRaw };
+      this.stillTime = 0;
+    }
+    this.samples = [];
+    this.calibrating = false;
+    this.zeroSmoothing();
+    this.save();
+  }
+
+  setGazeMapping(mapping: GazeMapping | null): void {
+    this.gazeMapping = parseGazeMapping(mapping);
+    this.save();
+  }
+
+  private zeroSmoothing(): void {
+    this.smooth = { lookX: 0, lookY: 0, moveX: 0, moveY: 0 };
   }
 
   resetTests(): void {
@@ -259,6 +349,8 @@ export class CameraControl {
       ready: this.ready,
       calibrated: Boolean(this.neutral),
       enabled: this.settings.enabled,
+      gazeCalibrated: Boolean(this.gazeMapping),
+      gazeQuality: this.gazeMapping?.quality ?? 0,
       settings: { ...this.settings },
       neutral: this.neutral,
       slot: Math.max(0, this.lastSlot),
@@ -274,6 +366,10 @@ export class CameraControl {
     const s = this.settings;
     const step = clampFinite(dt, 0.001, 0.12, 1 / 60);
     this.time += step;
+    // Sterowanie jest WYŁĄCZONE domyślnie i po każdym resecie sesji.
+    // Nadal liczymy diagnostykę laboratorium, ale żaden kanał nie napędza
+    // postaci, dopóki gracz sam nie włączy trybu bez klawiatury.
+    const active = s.enabled;
     // Pusta klatka NIE jest „głową w pozycji zero". Odejmowanie neutralnej
     // kalibracji od zera dawało stały, niezerowy wektor ruchu: po zniknięciu
     // twarzy postać jechała sama. Rozróżniamy brak sygnału od sygnału zerowego.
@@ -283,20 +379,72 @@ export class CameraControl {
       && Number.isFinite(face.gazeY) && Number.isFinite(face.blink);
     this.lastFace = faceActive ? face : (++this.emptyStreak <= 12 ? this.lastFace : null);
 
-    // --- kalibracja i zakresy testowe
+    // --- kalibracja, kompensacja dryfu i zakresy testowe
+    let gazeSignal = { x: 0, y: 0 };
+    let headSignal = { pitch: 0, roll: 0, yaw: 0 };
     if (faceActive) {
       this.emptyStreak = 0;
       const raw: CalibrationSample = {
         yaw: face.yaw, pitch: face.pitch, roll: face.roll,
         gazeX: face.gazeX, gazeY: face.gazeY,
       };
+      this.lastRaw = raw;
       if (this.calibrating && this.samples.length < 70) this.samples.push(raw);
+      // KLUCZOWE: pierwsza poprawna klatka staje się zerem. Bez tego surowy
+      // `pitch` (np. 0.3 dla zwykłej, wyprostowanej głowy) był traktowany
+      // jako stały przechył i postać jechała w jedną stronę od pierwszej
+      // klatki — dokładnie to zgłosił gracz. Automatyczne zero działa też
+      // wtedy, gdy gracz włączy sterowanie przed zrobieniem kalibracji.
+      if (!this.neutral) {
+        this.neutral = { ...raw };
+        this.stillTime = 0;
+        this.zeroSmoothing();
+      }
+
+      // v0.9: stara kalibracja z poprzedniej sesji dawała STAŁY odchył głowy,
+      // więc postać jechała w jedną stronę i nie dawało się zatrzymać. Gdy
+      // twarz i oczy są spokojne blisko zera, delikatnie podciągamy punkt
+      // neutralny do bieżącego odczytu. Świadomy, duży przechył (chodzenie)
+      // przekracza progi i NIE jest wygaszany.
+      const base = this.neutral ?? ZERO;
+      const dev = {
+        yaw: raw.yaw - base.yaw, pitch: raw.pitch - base.pitch,
+        roll: raw.roll - base.roll, gx: raw.gazeX - base.gazeX,
+        gy: raw.gazeY - base.gazeY,
+      };
+      const still = Math.abs(dev.pitch) < 0.14 && Math.abs(dev.roll) < 0.14
+        && Math.abs(dev.yaw) < 0.18 && Math.abs(dev.gx) < 0.22 && Math.abs(dev.gy) < 0.22;
+      if (still) {
+        this.stillTime += step;
+        if (this.stillTime > 0.9 && this.neutral) {
+          const k = 1 - Math.exp(-step / 0.45);
+          this.neutral = {
+            yaw: base.yaw + dev.yaw * k, pitch: base.pitch + dev.pitch * k,
+            roll: base.roll + dev.roll * k, gazeX: base.gazeX + dev.gx * k,
+            gazeY: base.gazeY + dev.gy * k,
+          };
+        }
+      } else {
+        this.stillTime = 0;
+      }
+
       const n = this.neutral ?? ZERO;
       this.track('pitch', raw.pitch - n.pitch);
       this.track('roll', raw.roll - n.roll);
-      this.track('gazeX', raw.gazeX - n.gazeX);
-      this.track('gazeY', raw.gazeY - n.gazeY);
+      // Po kalibracji 9 punktami spojrzenie jest już we współrzędnych ekranu,
+      // więc test oczu mierzy realny ruch, a nie surowy odczyt źrenicy.
+      const mapped = applyGazeMapping(this.gazeMapping, raw.gazeX, raw.gazeY);
+      gazeSignal = this.gazeMapping
+        ? mapped
+        : { x: raw.gazeX - n.gazeX, y: raw.gazeY - n.gazeY };
+      headSignal = {
+        pitch: raw.pitch - n.pitch, roll: raw.roll - n.roll, yaw: raw.yaw - n.yaw,
+      };
+      this.track('gazeX', gazeSignal.x);
+      this.track('gazeY', gazeSignal.y);
       this.blinkSeen = Math.max(this.blinkSeen, finite(face.blink));
+    } else {
+      this.stillTime = 0;
     }
 
     // --- dłonie: sygnały i gesty
@@ -351,8 +499,8 @@ export class CameraControl {
     if (pointHand) {
       const sig = signals[pointHand === bySide.L ? 'L' : 'R'];
       slot = clamp(Math.round(((sig.x - 0.18) / 0.64) * 5), 0, 5);
-    } else if (faceActive && face.gazeY > 0.35) {
-      slot = clamp(Math.round(((face.gazeX - (this.neutral?.gazeX ?? 0) + 0.6) / 1.2) * 5), 0, 5);
+    } else if (faceActive && gazeSignal.y > 0.35) {
+      slot = clamp(Math.round(((gazeSignal.x + 0.6) / 1.2) * 5), 0, 5);
     }
     if (slot !== this.lastSlot) {
       this.lastSlot = slot;
@@ -360,20 +508,20 @@ export class CameraControl {
     }
 
     // --- mapowanie sygnałów na kamerę i ruch
-    const n = this.neutral ?? ZERO;
-    const gx = faceActive ? dead((face.gazeX - n.gazeX) * (s.invertX ? -1 : 1), s.deadzone) : 0;
-    const gy = faceActive ? dead(face.gazeY - n.gazeY, s.deadzone) : 0;
-    const headPitch = faceActive ? dead(face.pitch - n.pitch, s.deadzone * 0.8) : 0;
-    const headRoll = faceActive ? dead(face.roll - n.roll, s.deadzone * 0.8) : 0;
-    const headYaw = faceActive ? dead(face.yaw - n.yaw, s.deadzone) : 0;
+    const gx = faceActive ? dead(gazeSignal.x * (s.invertX ? -1 : 1), s.deadzone) : 0;
+    const gy = faceActive ? dead(gazeSignal.y, s.deadzone) : 0;
+    const headPitch = faceActive ? dead(headSignal.pitch, s.deadzone * 0.8) : 0;
+    const headRoll = faceActive ? dead(headSignal.roll, s.deadzone * 0.8) : 0;
+    const headYaw = faceActive ? dead(headSignal.yaw, s.deadzone) : 0;
     const gazeGain = clampFinite(s.gazeSensitivity, 0.3, 2.5, 1);
     const headGain = clampFinite(s.headSensitivity, 0.3, 2.5, 1);
+    const moveSign = s.invertHeadMove ? -1 : 1;
 
     const targetLookX = (gx * 1050 + headYaw * 260) * gazeGain;
     const targetLookY = (gy * 900) * gazeGain;
     // Prędkość jest WPROST proporcjonalna do przechyłu głowy.
-    const targetMoveY = clampFinite(headPitch * 3.1 * headGain, -1, 1);
-    const targetMoveX = clampFinite(headRoll * 2.4 * headGain, -1, 1);
+    const targetMoveY = clampFinite(headPitch * 3.1 * headGain * moveSign, -1, 1);
+    const targetMoveX = clampFinite(headRoll * 2.4 * headGain * moveSign, -1, 1);
 
     const smoothing = clampFinite(s.smoothing, 0, 0.95, 0.55);
     const k = 1 - Math.exp(-step / Math.max(0.02, 0.06 + smoothing * 0.34));
@@ -381,26 +529,33 @@ export class CameraControl {
       ['lookX', targetLookX], ['lookY', targetLookY],
       ['moveX', targetMoveX], ['moveY', targetMoveY],
     ] as const) {
-      // Zatruty kanał wraca do zera, zamiast na zawsze zamrażać kamerę.
+      // Wyłączone sterowanie lub brak twarzy = twarde zero, bez wygaszania
+      // przez 0,3 s, w którym postać wciąż jechała w jedną stronę.
+      if (!active || !faceActive) {
+        this.smooth[key] = 0;
+        continue;
+      }
       this.smooth[key] = clampFinite(
         this.smooth[key] + (target - this.smooth[key]) * k, -1500, 1500, target,
       );
     }
 
     const control: ControlFrame = {
-      lookX: s.enabled ? finite(this.smooth.lookX) : 0,
-      lookY: s.enabled ? finite(this.smooth.lookY) : 0,
-      moveX: s.enabled ? finite(this.smooth.moveX) : 0,
-      moveY: s.enabled ? finite(this.smooth.moveY) : 0,
+      lookX: active ? finite(this.smooth.lookX) : 0,
+      lookY: active ? finite(this.smooth.lookY) : 0,
+      moveX: active ? finite(this.smooth.moveX) : 0,
+      moveY: active ? finite(this.smooth.moveY) : 0,
       gazeX: gx, gazeY: gy, headPitch, headRoll,
     };
-    return { control, gestures: s.enabled ? gestures : gestures.filter((g) => g.type === 'aim') };
+    return { control, gestures: active ? gestures : gestures.filter((g) => g.type === 'aim') };
   }
 
   zero(): void {
     this.handCount = 0;
-    this.smooth = { lookX: 0, lookY: 0, moveX: 0, moveY: 0 };
+    this.zeroSmoothing();
     this.lastFace = null;
+    this.lastRaw = null;
+    this.stillTime = 0;
   }
 }
 

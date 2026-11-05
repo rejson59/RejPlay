@@ -128,6 +128,61 @@ export function handResponsiveness(): number {
 }
 
 /**
+ * Kierunek ruchu dłoni (v0.9). Kamerka, podgląd lustrzany i jednostki
+ * MediaPipe dają trzy osie, z których każda może być odwrócona względem
+ * oczekiwań gracza — zwłaszcza głębokość: u części osób dłoń „uciekała
+ * do tyłu", gdy realna dłoń szła w przód. Kreator w laboratorium mierzy to
+ * na punktach i ustawia znaki automatycznie; ręczne przełączniki zostają
+ * jako awaryjna korekta. Ustawienia są czystym stanem modułu (bez DOM).
+ */
+export interface HandAxes {
+  invertX: boolean;
+  invertY: boolean;
+  invertDepth: boolean;
+}
+
+const handAxes: HandAxes = { invertX: false, invertY: false, invertDepth: false };
+
+export function setHandAxes(next: Partial<HandAxes>): HandAxes {
+  if (typeof next.invertX === 'boolean') handAxes.invertX = next.invertX;
+  if (typeof next.invertY === 'boolean') handAxes.invertY = next.invertY;
+  if (typeof next.invertDepth === 'boolean') handAxes.invertDepth = next.invertDepth;
+  return { ...handAxes };
+}
+
+export function getHandAxes(): HandAxes {
+  return { ...handAxes };
+}
+
+/** Jedna próba kreatora: gracz miał przesunąć dłoń w stronę `expected`. */
+export interface HandAxisProbe {
+  axis: 'x' | 'y' | 'z';
+  expected: -1 | 1;
+  observed: number;
+}
+
+/**
+ * Czysta decyzja o odwróceniu osi. Wymagamy wyraźnego ruchu (|observed| >
+ * 0.12), żeby szum kamerki nie wywracał sterowania; przy sprzecznych
+ * próbkach zostawiamy domyślny znak (bezpieczniej niż zgadywać).
+ */
+export function estimateHandInversions(probes: readonly HandAxisProbe[]): HandAxes {
+  const result: HandAxes = { invertX: false, invertY: false, invertDepth: false };
+  for (const axis of ['x', 'y', 'z'] as const) {
+    const votes = probes.filter((p) => p.axis === axis
+      && Number.isFinite(p.observed) && Math.abs(p.observed) > 0.12);
+    if (votes.length === 0) continue;
+    const wrong = votes.filter((p) => p.expected * p.observed < 0).length;
+    if (wrong * 2 > votes.length) {
+      if (axis === 'x') result.invertX = true;
+      else if (axis === 'y') result.invertY = true;
+      else result.invertDepth = true;
+    }
+  }
+  return result;
+}
+
+/**
  * Kalibracja obrotu nadgarstka (v0.6.1).
  *
  * Stary wzór `atan2(palm.x, -palm.y)` dawał π dla zwykłej dłoni skierowanej
@@ -313,9 +368,9 @@ export function computeHandPose(
   // zwraca z względem nadgarstka, więc sam lm.z[0] nie nadaje się do tego celu.
   const palmSpan = Math.hypot((middleBase.x - w.x) * aspect, middleBase.y - w.y);
   pose.wrist = {
-    x: clamp((0.5 - w.x) * 2, -1, 1),
-    y: clamp((0.5 - w.y) * 2, -1, 1),
-    z: clamp((palmSpan - 0.18) / 0.11, -1, 1),
+    x: clamp((0.5 - w.x) * 2, -1, 1) * (handAxes.invertX ? -1 : 1),
+    y: clamp((0.5 - w.y) * 2, -1, 1) * (handAxes.invertY ? -1 : 1),
+    z: clamp((palmSpan - 0.18) / 0.11, -1, 1) * (handAxes.invertDepth ? -1 : 1),
   };
   pose.presence = 1;
 

@@ -49,7 +49,22 @@ export const YARD_OBSTACLES: Rect[] = [
   { minX: 1.35, maxX: 3.8, minZ: 11.1, maxZ: 16.6 },
   // Blat stanowiska monitoringu: mesh 1.5 × 0.6 przy (1.0, 13.0).
   { minX: 0.25, maxX: 1.75, minZ: 12.6, maxZ: 13.4 },
+  // v0.9: widoczne rekwizyty podwórka też są colliderami. Wcześniej gracz
+  // „wjeżdżał" w deskę/słupek i wyglądało to jak zacięcie ruchu. Wszystkie
+  // leżą POZA osią korytarza x ∈ (−0,95; 0,95), więc dojście do drzwi jest
+  // zawsze wolne — pilnuje tego test `korytarz od spawnu do drzwi`.
+  { minX: -1.85, maxX: -1.35, minZ: 9.45, maxZ: 9.95 },   // słupek lewy
+  { minX: 1.35, maxX: 1.85, minZ: 9.45, maxZ: 9.95 },     // słupek prawy
+  { minX: -2.15, maxX: -1.65, minZ: 9.85, maxZ: 10.35 },  // pachołek lewy
+  { minX: 1.65, maxX: 2.15, minZ: 9.85, maxZ: 10.35 },    // pachołek prawy
+  { minX: 2.0, maxX: 2.5, minZ: 9.9, maxZ: 10.4 },        // skrzynka na listy
+  { minX: 3.0, maxX: 3.6, minZ: 10.1, maxZ: 10.7 },       // kosz na kółkach
+  { minX: -3.65, maxX: -3.05, minZ: 10.9, maxZ: 11.5 },   // latarnia
+  { minX: -3.2, maxX: -2.6, minZ: 10.3, maxZ: 10.9 },     // krzak
+  { minX: 5.15, maxX: 5.65, minZ: 10.25, maxZ: 10.75 },   // głaz
 ];
+/** Oś dojścia do frontowych drzwi — testowana w całej długości. */
+export const FRONT_DOOR = Object.freeze({ x: 0, z: 8.9 });
 
 /**
  * Start rundy: na dojeździe przed blatem, twarzą do frontowych drzwi.
@@ -100,6 +115,30 @@ export function createCollision(
 }
 
 /** Czy cały odcinek jest przechodni (próbkowanie chroni przed przeskoczeniem ściany). */
+/**
+ * Łączy świadomy ruch (klawiatura, joystick dotykowy) z sygnałem z kamerki.
+ *
+ * v0.9 — regresja „deska na spawnie": `iy = joystick + cameraJoystick`
+ * sumowało W (+1) z zatrutym kanałem głowy (−1) i dawało 0, więc gracz
+ * stał mimo wciśniętego klawisza. Klawiatura/dotyk mają PIERWSZEŃSTWO,
+ * a kamerka przejmuje ster dopiero, gdy ręce i klawisze są w spoczynku.
+ * Funkcja jest czysta, żeby tę regułę mógł egzekwować test jednostkowy.
+ */
+export interface MovementVector { x: number; y: number }
+
+export function combineMovement(
+  manualX: number, manualY: number, cameraX: number, cameraY: number,
+): MovementVector {
+  const manual = Math.hypot(manualX, manualY);
+  let x = manual > 0.02 ? manualX : cameraX;
+  let y = manual > 0.02 ? manualY : cameraY;
+  if (!Number.isFinite(x)) x = 0;
+  if (!Number.isFinite(y)) y = 0;
+  const magnitude = Math.hypot(x, y);
+  if (magnitude > 1) { x /= magnitude; y /= magnitude; }
+  return { x, y };
+}
+
 export function pathClear(
   isBlocked: Collision,
   fromX: number,
@@ -134,13 +173,33 @@ export interface SpawnPoint {
  * trafia do diagnostyki — błąd jest widoczny, zamiast znów blokować ruch.
  */
 export function freeSpawn(isBlocked: Collision, eyeHeight = EYE_HEIGHT): SpawnPoint {
+  const ringClear = (x: number, z: number): boolean => {
+    if (isBlocked(x, z)) return false;
+    for (let k = 0; k < 8; k += 1) {
+      const a = (k / 8) * Math.PI * 2;
+      if (isBlocked(x + Math.cos(a) * PLAYER_RADIUS, z + Math.sin(a) * PLAYER_RADIUS)) {
+        return false;
+      }
+    }
+    return true;
+  };
+  // Przebieg 1: kandydat wolny w całym promieniu kapsuły ORAZ ma czystą
+  // drogę do frontowych drzwi. To jedyny przypadek „start bez korekty".
   for (let i = 0; i < SPAWN_CANDIDATES.length; i += 1) {
     const [x, z] = SPAWN_CANDIDATES[i];
-    if (isBlocked(x, z)) continue;
-    return { x, y: eyeHeight, z, adjusted: i > 0 };
+    if (ringClear(x, z)
+      && pathClear(isBlocked, x, z, FRONT_DOOR.x, FRONT_DOOR.z, 24)) {
+      return { x, y: eyeHeight, z, adjusted: i > 0 };
+    }
+  }
+  // Przebieg 2: niestandardowa kolizja (testy, przyszłe poziomy) może zasłonić
+  // samą oś, ale wciąż musimy postawić gracza w wolnym miejscu — nigdy w
+  // colliderze. Droga do drzwi nie jest tu warunkiem istnienia startu.
+  for (let i = 0; i < SPAWN_CANDIDATES.length; i += 1) {
+    const [x, z] = SPAWN_CANDIDATES[i];
+    if (ringClear(x, z)) return { x, y: eyeHeight, z, adjusted: true };
   }
   // Ostatnia deska ratunku: oś korytarza tuż przed frontowymi drzwiami.
-  // Test `freeSpawn(): punkt awaryjny jest wolny` gwarantuje ten invariant.
   return { x: 0, y: eyeHeight, z: 10.2, adjusted: true };
 }
 
@@ -161,17 +220,19 @@ export function depenetrate(
 ): { x: number; z: number; moved: boolean } {
   if (!isBlocked(x, z)) return { x, z, moved: false };
   for (const [dx, dz] of ESCAPE_STEPS) {
-    // Pomijamy t = 0: punkt startowy jest z definicji zablokowany. Próbkujemy
-    // całą drogę, żeby nie przeteleportować gracza przez ścianę.
+    // Punkt startowy jest z definicji WEWNĄTRZ collidera (np. w słupku),
+    // więc wymaganie „cała droga wolna" od t = 0 skazywało nas na porażkę
+    // i gracz zostawał uwięziony. Szukamy pierwszego wyjścia, a potem
+    // pilnujemy, żeby dalej nie wejść w KOLEJNĄ ścianę (brak teleportacji).
+    let exited = false;
     let clear = true;
-    for (let i = 1; i <= 8; i += 1) {
-      const t = i / 8;
-      if (isBlocked(x + dx * t, z + dz * t)) {
-        clear = false;
-        break;
-      }
+    for (let i = 1; i <= 12; i += 1) {
+      const t = i / 12;
+      const blocked = isBlocked(x + dx * t, z + dz * t);
+      if (!blocked) exited = true;
+      else if (exited) { clear = false; break; }
     }
-    if (clear) return { x: x + dx, z: z + dz, moved: true };
+    if (clear && exited) return { x: x + dx, z: z + dz, moved: true };
   }
   return { x, z, moved: false };
 }

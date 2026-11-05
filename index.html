@@ -190,7 +190,7 @@
               <div class="hub-hero__copy">
                 <span class="hub-kicker"><svg class="ico"><use href="#i-spark" /></svg> Platforma 3D · wiele światów</span>
                 <h1>Graj razem.<br /><em>Odkrywaj więcej.</em></h1>
-                <p>Jedno konto, park Lobby i prawdziwi gracze. Wybierz świat, wejdź dłońmi z kamerki i graj bez klawiatury.</p>
+                <p>Jedno konto, wspólny park Lobby i gra online z prawdziwymi graczami. W Demonofobii wybierz sterowanie: dłonie, głowa i oczy albo klawiatura, mysz i dotyk.</p>
                 <div class="hub-hero__actions">
                   <button type="button" class="btn btn--primary" data-action="enter-lobby"><svg class="ico"><use href="#i-tree" /></svg> Wejdź do Lobby</button>
                   <button type="button" class="btn btn--ghost" id="tutorial-open" data-tutorial-open><svg class="ico"><use href="#i-play" /></svg> Samouczek</button>
@@ -665,6 +665,7 @@
           <button type="button" class="btn btn--sm btn--ghost" data-action="copy-logs">Kopiuj logi</button>
           <button type="button" class="btn btn--sm btn--ghost" data-action="show-logs">Pokaż logi</button>
           <button type="button" class="btn btn--sm btn--ghost" data-action="restart-camera">Restart kamerki</button>
+          <button type="button" class="btn btn--sm btn--ghost" data-action="stop-control">⏹ Zatrzymaj (C)</button>
         </div>
       </div>
 
@@ -680,8 +681,11 @@
             <button type="button" class="camera-lab__x" data-action="close-camera-lab" aria-label="Zamknij laboratorium">×</button>
           </header>
           <p class="camera-lab__lead">
-            Jedna kamerka, trzy testy. Po nich głowa prowadzi postać, oczy prowadzą kamerę,
-            a palce biorą i odkładają narzędzia z pasa — klawiatura i mysz zostają tylko jako zapasowe.
+            Jedna kamerka, trzy testy i kalibracja 9 punktami. Patrz na świecące punkty,
+            żeby dopasować oczy, wyznaczyć pozycję neutralną głowy i sprawdzić kierunek dłoni.
+            Sterowanie włączasz SAM przyciskiem poniżej — nigdy nie startuje samo. W każdej
+            chwili zatrzymasz je przyciskiem „Zatrzymaj" lub klawiszem <kbd>C</kbd>. Klawiatura,
+            mysz i dotyk zawsze działają jako zapasowe sterowanie.
           </p>
           <div class="camera-lab__grid">
             <div class="camera-lab__left">
@@ -727,18 +731,25 @@
               <label class="lab-slider"><span>Wygładzanie <output id="lab-smooth-value">0.55</output></span>
                 <input type="range" id="lab-smooth" min="0" max="0.95" step="0.05" value="0.55" /></label>
               <label class="lab-check"><input type="checkbox" id="lab-invert" /> Odwróć poziom spojrzenia</label>
+              <label class="lab-check"><input type="checkbox" id="lab-invert-head" /> Odwróć kierunek chodzenia głową</label>
+              <label class="lab-check"><input type="checkbox" id="lab-hand-invert-x" /> Odwróć poziom dłoni (lewo/prawo)</label>
+              <label class="lab-check"><input type="checkbox" id="lab-hand-invert-depth" /> Odwróć głębokość dłoni (przód/tył)</label>
               <div class="lab-buttons">
+                <button type="button" class="btn btn--sm btn--primary" id="lab-calibrate-points">Kalibracja 9 punktów (oczy, głowa, dłonie)</button>
                 <button type="button" class="btn btn--sm btn--ghost" id="lab-calibrate">Kalibruj pozycję neutralną</button>
+                <button type="button" class="btn btn--sm btn--ghost" data-action="stop-control" id="lab-stop">⏹ Zatrzymaj i wycentruj</button>
                 <button type="button" class="btn btn--sm btn--ghost" id="lab-reset">Powtórz testy</button>
                 <button type="button" class="btn btn--sm btn--ghost" data-action="restart-camera">Restart kamerki</button>
                 <button type="button" class="btn btn--sm btn--ghost" data-action="copy-logs">Kopiuj logi</button>
                 <button type="button" class="btn btn--sm btn--ghost" data-action="show-logs">Pokaż logi</button>
-                <button type="button" class="btn btn--sm btn--primary" id="lab-enable">Włącz grę bez klawiatury</button>
+                <button type="button" class="btn btn--sm btn--primary" id="lab-enable">Włącz / wyłącz grę bez klawiatury</button>
               </div>
               <div class="lab-progress"><span id="lab-progress-bar"></span></div>
               <p class="lab-note" id="lab-note">
-                Kalibracja: patrz prosto, trzymaj głowę nieruchomo przez ~2 sekundy. Obraz z kamerki
-                nie opuszcza przeglądarki i nie jest nigdzie zapisywany.
+                Kalibracja: naciśnij „Kalibracja 9 punktów" i patrz na punkty na ekranie.
+                Sterowanie bez klawiatury pozostaje wyłączone dopóki sam go nie włączysz;
+                <kbd>C</kbd> natychmiast zatrzymuje postać i wyłącza kamerę jako ster.
+                Obraz z kamerki nie opuszcza przeglądarki i nie jest nigdzie zapisywany.
               </p>
             </div>
           </div>
@@ -766,6 +777,36 @@
             <button type="button" class="btn btn--sm btn--primary" id="log-copy">Kopiuj do schowka</button>
             <button type="button" class="btn btn--sm btn--ghost" id="log-refresh">Odśwież</button>
             <span class="log-panel__count" id="log-count"></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============ KREATOR KALIBRACJI 9 PUNKTAMI (v0.9) ============ -->
+      <div id="gaze-calibration" class="calibration" aria-hidden="true">
+        <div class="calibration__backdrop" data-action="close-calibration"></div>
+        <div class="calibration__panel" role="dialog" aria-modal="true" aria-labelledby="calibration-title">
+          <header class="calibration__head">
+            <div>
+              <span class="section__kicker">Kalibracja · oczy, głowa i dłonie</span>
+              <h2 id="calibration-title">Patrz na świecący punkt</h2>
+            </div>
+            <button type="button" class="camera-lab__x" data-action="close-calibration" aria-label="Zamknij kalibrację">×</button>
+          </header>
+          <p class="calibration__lead" id="calibration-lead">
+            Kreator pokaże 9 punktów na ekranie. Patrz na każdy z nich, nie ruszając głową —
+            dopasujemy spojrzenie do ekranu, wyznaczymy pozycję neutralną głowy i sprawdzimy
+            kierunek ruchu dłoni. Obraz z kamerki nie opuszcza przeglądarki.
+          </p>
+          <div class="calibration__field" id="calibration-field">
+            <div class="calibration__dots" id="calibration-dots" aria-hidden="true"></div>
+            <span class="calibration__step" id="calibration-step">Krok 0 / 0</span>
+          </div>
+          <div class="calibration__progress"><span id="calibration-progress-bar"></span></div>
+          <p class="calibration__status" id="calibration-status">Naciśnij „Rozpocznij", gdy jesteś gotowy.</p>
+          <div class="calibration__buttons">
+            <button type="button" class="btn btn--sm btn--primary" id="calibration-start">Rozpocznij kalibrację</button>
+            <button type="button" class="btn btn--sm btn--ghost" id="calibration-skip">Pomiń ten krok</button>
+            <button type="button" class="btn btn--sm btn--ghost" data-action="close-calibration">Anuluj</button>
           </div>
         </div>
       </div>

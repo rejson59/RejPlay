@@ -451,8 +451,11 @@ class Builder {
     const knob = new THREE.Mesh(new THREE.SphereGeometry(0.045, 14, 10), m.brass);
     knob.position.set(0.44, 0, 0.09);
     leaf.add(knob);
-    leaf.position.set(-0.62, 1.18, 8.62);
-    leaf.rotation.y = -1.15;
+    // v0.9: skrzydło stało dotąd w samej osi wejścia (x = −0.62) i wyglądało
+    // jak deska zagradzająca przejście — gracz był pewien, że nie może ruszyć.
+    // Otwieramy je do końca, płasko przy lewej ścianie, POZA światłem drzwi.
+    leaf.position.set(-1.92, 1.18, 8.55);
+    leaf.rotation.y = -1.45;
     leaf.traverse((o) => { if (o instanceof THREE.Mesh) { o.castShadow = true; o.receiveShadow = true; } });
     this.group.add(leaf);
   }

@@ -131,6 +131,16 @@ export class CameraRig {
     return this.labOpen;
   }
 
+  /** Bieżąca, surowa klatka twarzy dla kreatora kalibracji punktowej. */
+  get currentFace(): FaceFrame {
+    return this.latestFace;
+  }
+
+  /** Bieżące, surowe dłonie dla kreatora kierunku ruchu. */
+  get currentHands(): readonly TrackedHand[] {
+    return this.latestHands;
+  }
+
   /** Pełny stan do przycisku „Kopiuj logi". */
   diagnostics(): CameraRigDiagnostics {
     const track = this.stream?.getVideoTracks()[0];
@@ -368,7 +378,10 @@ export class CameraRig {
       face = emptyFace();
     }
     const { control, gestures } = this.control.ingest(face, hands, dt);
-    if (this.control.settings.enabled) this.onControl(control, dt);
+    // WOŁAMY ZAWSZE. Dawniej przy wyłączonym sterowaniu `onControl` nie był
+    // wywoływany, więc `world.cameraMove` i `horror.cameraJoystick` zostawały
+    // na ostatniej niezerowej wartości — postać jechała dalej mimo „wyłącz".
+    this.onControl(control, dt);
     for (const gesture of gestures) this.onGesture(gesture);
     if (this.labOpen && now - this.lastDiag > 90) {
       this.lastDiag = now;

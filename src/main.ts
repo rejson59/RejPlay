@@ -14,7 +14,13 @@ import { TOOLS, type HorrorResult, type HorrorState } from './horror';
 import { World } from './world';
 import { CameraRig } from './camera-rig';
 import type { ControlFrame, GestureEvent, LabDiagnostics } from './camera-control';
-import { handResponsiveness, setHandResponsiveness } from './hand-pose';
+import {
+  estimateHandInversions, handResponsiveness, posesFromHands,
+  setHandResponsiveness, type HandAxisProbe,
+} from './hand-pose';
+import {
+  GazeCalibrator, GAZE_TARGETS, type CalibrationTarget,
+} from './gaze-calibration';
 import {
   OnlineClient, SUPABASE_URL,
   type OnlinePeer, type OnlineStatus, type PartyState,
@@ -228,7 +234,18 @@ const labDeadzone = $<HTMLInputElement>('#lab-deadzone');
 const labSmooth = $<HTMLInputElement>('#lab-smooth');
 const labInvert = $<HTMLInputElement>('#lab-invert');
 const labEnable = $<HTMLButtonElement>('#lab-enable');
-let autoEnabledHandsFree = false;
+const labInvertHead = $<HTMLInputElement>('#lab-invert-head');
+const labHandInvertX = $<HTMLInputElement>('#lab-hand-invert-x');
+const labHandInvertDepth = $<HTMLInputElement>('#lab-hand-invert-depth');
+const labCalibratePoints = $<HTMLButtonElement>('#lab-calibrate-points');
+const calibration = $('#gaze-calibration');
+const calibrationDots = $('#calibration-dots');
+const calibrationStep = $('#calibration-step');
+const calibrationStatus = $('#calibration-status');
+const calibrationProgress = $('#calibration-progress-bar');
+const calibrationStart = $<HTMLButtonElement>('#calibration-start');
+const calibrationSkip = $<HTMLButtonElement>('#calibration-skip');
+const calibrationLead = $('#calibration-lead');
 const lookSensitivityInput = $<HTMLInputElement>('#look-sensitivity');
 const lookSensitivityValue = $('#look-sensitivity-value');
 const lobbyViewToggle = $<HTMLButtonElement>('#lobby-view-toggle');
@@ -702,15 +719,10 @@ function renderLab(d: LabDiagnostics): void {
   labTestEyes.classList.toggle('is-passed', d.tests.eyes);
   const passed = Number(d.calibrated) + Number(d.tests.hands) + Number(d.tests.head) + Number(d.tests.eyes);
   labProgressBar.style.width = `${(passed / 4) * 100}%`;
-  // Po udanej konfiguracji włączamy sterowanie samoczynnie — od tego momentu
-  // klawiatura i mysz są tylko zapasowe, nie potrzebne do gry.
-  if (d.ready && !d.enabled && !autoEnabledHandsFree && cameraRig.active) {
-    autoEnabledHandsFree = true;
-    cameraRig.control.settings.enabled = true;
-    cameraRig.control.save();
-    syncLabSettings();
-    showToast(globalToast, 'Konfiguracja zakończona — grasz głową, oczami i dłońmi. Klawiatura i mysz nie są potrzebne.');
-  }
+  // v0.9: NIE włączamy sterowania samoczynnie. Automatyczny start po testach
+  // (razem z `enabled` zapisanym w localStorage) sprawiał, że po wejściu na
+  // stronę postać ruszała sama i nie dawało się jej zatrzymać. Włączenie to
+  // zawsze świadomy klik gracza w przycisk „Włącz grę bez klawiatury".
   labBadge.textContent = d.face?.present
     ? `twarz ✓ · źrenice ${d.face.iris ? '✓' : '—'} · dłonie ${d.hands}/2`
     : 'szukam twarzy i dłoni…';
@@ -725,15 +737,24 @@ function renderLab(d: LabDiagnostics): void {
       : `gotowe · klatek ${rig.hands.framesSent} · odczytów ${rig.hands.results}`;
   $('#lab-detect').textContent =
     `Dłonie: ${handState}  |  Głowa/oczy: ${faceState}  |  kadr ${rig.video}  |  ${rig.constraint}`;
-  labEnable.disabled = !d.ready && !d.enabled;
+  // v0.9: przycisk jest zawsze dostępny. Blokowanie go do czasu zaliczenia
+  // trzech testów sprawiało, że gracz nie mógł ani włączyć, ani wyłączyć
+  // sterowania wtedy, gdy najbardziej potrzebował STOP-u.
+  labEnable.disabled = false;
   labEnable.textContent = d.enabled
     ? 'Wyłącz sterowanie bez klawiatury'
-    : d.ready ? 'Włącz grę bez klawiatury' : 'Wykonaj testy i kalibrację';
+    : 'Włącz grę bez klawiatury';
   if (!d.settings.enabled) {
     labNote.textContent = d.ready
-      ? 'Wszystkie testy zaliczone. Włącz sterowanie — od teraz głowa, oczy i dłonie wystarczą.'
-      : 'Kalibracja: patrz prosto przez ~2 s. Potem pokaż dłonie, kiwnij głową i rozejrzyj się oczami.';
+      ? 'Testy zaliczone. Sterowanie jest WYŁĄCZONE — włącz je sam przyciskiem, a klawisz C zawsze natychmiast zatrzymuje postać.'
+      : 'Zrób „Kalibracja 9 punktów" (oczy, głowa, dłonie) albo pokaż dłonie, kiwnij głową i rozejrzyj się oczami. Sterowanie nie włącza się samo.';
   }
+  // Informacja o kalibracji punktowej jest widoczna także przy włączonym sterze.
+  const gaze = d.gazeCalibrated
+    ? ` Kalibracja oczu: aktywna (${Math.round(d.gazeQuality * 100)}% jakości).`
+    : ' Kalibracja oczu: nie zrobiona — użyj „Kalibracja 9 punktów".';
+  if (d.settings.enabled) labNote.textContent = `Sterowanie włączone. Klawisz C = stop.${gaze}`;
+  else labNote.textContent += gaze;
 }
 
 function syncLabSettings(): void {
@@ -743,6 +764,9 @@ function syncLabSettings(): void {
   labDeadzone.value = String(s.deadzone);
   labSmooth.value = String(s.smoothing);
   labInvert.checked = s.invertX;
+  labInvertHead.checked = s.invertHeadMove;
+  labHandInvertX.checked = s.handInvertX;
+  labHandInvertDepth.checked = s.handInvertDepth;
   $('#lab-gaze-value').textContent = `${s.gazeSensitivity.toFixed(2)}×`;
   $('#lab-head-value-out').textContent = `${s.headSensitivity.toFixed(2)}×`;
   $('#lab-deadzone-value').textContent = s.deadzone.toFixed(2);
@@ -884,16 +908,322 @@ $('#lab-reset').addEventListener('click', () => {
 });
 labEnable.addEventListener('click', () => {
   const control = cameraRig.control;
-  control.settings.enabled = !control.settings.enabled;
+  if (control.settings.enabled) {
+    // Wyłączenie to pełny STOP, nie tylko przełącznik: zerujemy kanały
+    // w silniku i wycentrowujemy punkt neutralny na bieżący odczyt.
+    stopCameraControl();
+    return;
+  }
+  // Włączenie zaczyna od zera w pozycji, w której gracz właśnie jest —
+  // bez tego stara kalibracja natychmiast pchała postać w jedną stronę.
+  control.recenter();
+  control.settings.enabled = true;
   control.save();
   syncLabSettings();
   showToast(
     globalToast,
-    control.settings.enabled
-      ? 'Sterowanie bez klawiatury WŁĄCZONE: głowa = ruch, oczy = kamera, palce = narzędzia.'
-      : 'Sterowanie kamerą wyłączone. Klawiatura, mysz i dotyk działają normalnie.',
+    'Sterowanie bez klawiatury WŁĄCZONE: głowa = ruch, oczy = kamera, palce = narzędzia. '
+    + 'Klawisz C lub „Zatrzymaj" natychmiast zatrzymuje postać.',
   );
 });
+
+// --------------------------------------------- natychmiastowy STOP (v0.9)
+
+/**
+ * Jeden, pewny hamulec. `CameraControl.stop()` wyłącza sterowanie, zeruje
+ * prędkości i przestawia punkt neutralny na bieżący odczyt; dodatkowo
+ * ręcznie zerujemy kanały w silniku, żeby nie czekać na następną klatkę rigu.
+ */
+function stopCameraControl(): void {
+  cameraRig.control.stop();
+  if (worldReady) {
+    world.applyCameraControl({ lookX: 0, lookY: 0, moveX: 0, moveY: 0 }, 1 / 60);
+  }
+  syncLabSettings();
+  renderLab(cameraRig.control.diagnostics());
+  showToast(globalToast, 'Zatrzymano. Sterowanie kamerą wyłączone i wycentrowane — klawisz C działa zawsze.');
+}
+
+for (const [input, key] of [
+  [labInvertHead, 'invertHeadMove'],
+  [labHandInvertX, 'handInvertX'],
+  [labHandInvertDepth, 'handInvertDepth'],
+] as Array<[HTMLInputElement, 'invertHeadMove' | 'handInvertX' | 'handInvertDepth']>) {
+  input.addEventListener('change', () => {
+    cameraRig.control.settings[key] = input.checked;
+    cameraRig.control.applyHandAxes();
+    cameraRig.control.save();
+  });
+}
+
+// ------------------------------------- kreator kalibracji 9 punktami (v0.9)
+
+interface CalibrationStep {
+  kind: 'neutral' | 'gaze' | 'hand' | 'done';
+  label: string;
+  target?: CalibrationTarget;
+  axis?: 'x' | 'y' | 'z';
+  expected?: -1 | 1;
+  durationMs: number;
+}
+
+const NEUTRAL_DOT: CalibrationTarget = { id: 'neutral', x: 0, y: 0 };
+const HAND_DOTS: Record<string, CalibrationTarget> = {
+  left: { id: 'hand-left', x: -0.78, y: 0 },
+  right: { id: 'hand-right', x: 0.78, y: 0 },
+  up: { id: 'hand-up', x: 0, y: -0.78 },
+  near: { id: 'hand-near', x: 0, y: 0.35 },
+};
+
+function buildCalibrationSteps(): CalibrationStep[] {
+  const steps: CalibrationStep[] = [
+    { kind: 'neutral', label: 'Patrz prosto w środek, trzymaj głowę nieruchomo.',
+      target: NEUTRAL_DOT, durationMs: 1600 },
+  ];
+  for (const target of GAZE_TARGETS) {
+    steps.push({
+      kind: 'gaze', target, durationMs: 1150,
+      label: target.id === 'center'
+        ? 'Patrz na środkowy punkt.'
+        : `Patrz na punkt: ${target.id.replace('-', ' ')}. Nie ruszaj głową, poruszaj tylko oczami.`,
+    });
+  }
+  steps.push(
+    { kind: 'hand', label: 'Przesuń dłoń w LEWO, patrząc na punkt.', target: HAND_DOTS.left,
+      axis: 'x', expected: -1, durationMs: 1500 },
+    { kind: 'hand', label: 'Przesuń dłoń w PRAWO, patrząc na punkt.', target: HAND_DOTS.right,
+      axis: 'x', expected: 1, durationMs: 1500 },
+    { kind: 'hand', label: 'Unieś dłoń w GÓRĘ.', target: HAND_DOTS.up,
+      axis: 'y', expected: 1, durationMs: 1500 },
+    { kind: 'hand', label: 'Przesuń dłoń w stronę KAMERY (do przodu).', target: HAND_DOTS.near,
+      axis: 'z', expected: 1, durationMs: 1600 },
+  );
+  return steps;
+}
+
+const calibrator = new GazeCalibrator();
+let calibrationSteps: CalibrationStep[] = [];
+let calibrationIndex = 0;
+let calibrationTimer = 0;
+let calibrationStepStart = 0;
+let calibrationRunning = false;
+let calibrationGazeSamples = 0;
+const handProbes: HandAxisProbe[] = [];
+let handBaseline: number | null = null;
+let handObserved = 0;
+
+function renderCalibrationDots(): void {
+  calibrationDots.innerHTML = GAZE_TARGETS.map((t) =>
+    `<span class="calibration__dot" data-dot="${t.id}" style="left:${((t.x + 1) / 2) * 100}%;top:${((t.y + 1) / 2) * 100}%"></span>`,
+  ).join('');
+}
+
+function markCalibrationDot(step: CalibrationStep | undefined, doneUntil: number): void {
+  // Świeża siatka co krok: dodatkowe kropki „neutral" i dłoni z poprzednich
+  // kroków nie mogą się kumulować ani zasłaniać aktualnego celu.
+  renderCalibrationDots();
+  const dots = calibrationDots.querySelectorAll<HTMLElement>('.calibration__dot');
+  for (let i = 0; i < Math.min(doneUntil, dots.length); i += 1) {
+    dots[i]?.classList.add('is-done');
+  }
+  if (!step?.target) return;
+  const found = calibrationDots.querySelector<HTMLElement>(`[data-dot="${step.target.id}"]`);
+  const dot = found ?? (() => {
+    const extra = document.createElement('span');
+    extra.className = 'calibration__dot';
+    extra.dataset.dot = step.target!.id;
+    extra.style.left = `${((step.target!.x + 1) / 2) * 100}%`;
+    extra.style.top = `${((step.target!.y + 1) / 2) * 100}%`;
+    calibrationDots.appendChild(extra);
+    return extra;
+  })();
+  dot.classList.remove('is-done');
+  dot.classList.add('is-active');
+  if (step.kind === 'hand') dot.classList.add('is-hand');
+}
+
+function openCalibration(): void {
+  calibration.classList.add('is-active');
+  calibration.setAttribute('aria-hidden', 'false');
+  renderCalibrationDots();
+  calibrator.reset();
+  calibrationSteps = buildCalibrationSteps();
+  calibrationIndex = 0;
+  calibrationRunning = false;
+  calibrationGazeSamples = 0;
+  handProbes.length = 0;
+  calibrationProgress.style.width = '0%';
+  calibrationStep.textContent = 'Gotowy do rozpoczęcia';
+  calibrationStatus.textContent = 'Naciśnij „Rozpocznij". Kamerka włączy się automatycznie.';
+  calibrationLead.textContent =
+    'Kreator pokaże 9 punktów na ekranie. Patrz na każdy z nich, nie ruszając głową — '
+    + 'dopasujemy spojrzenie do ekranu, wyznaczymy pozycję neutralną głowy i sprawdzimy '
+    + 'kierunek ruchu dłoni. Obraz z kamerki nie opuszcza przeglądarki.';
+  calibrationStart.disabled = false;
+  calibrationStart.textContent = 'Rozpocznij kalibrację';
+}
+
+function closeCalibration(): void {
+  window.clearInterval(calibrationTimer);
+  calibrationTimer = 0;
+  calibrationRunning = false;
+  calibration.classList.remove('is-active');
+  calibration.setAttribute('aria-hidden', 'true');
+}
+
+function startCalibration(): void {
+  const c = cameraRig.control;
+  // Kalibracja nie może zostawić włączonego, rozpędzonego sterowania.
+  c.stop();
+  if (worldReady) world.applyCameraControl({ lookX: 0, lookY: 0, moveX: 0, moveY: 0 }, 1 / 60);
+  calibrator.reset();
+  calibrationSteps = buildCalibrationSteps();
+  calibrationIndex = 0;
+  calibrationGazeSamples = 0;
+  handProbes.length = 0;
+  calibrationRunning = true;
+  calibrationStart.disabled = true;
+  calibrationSkip.disabled = false;
+  void (async () => {
+    if (!cameraRig.active) {
+      calibrationStatus.textContent = 'Uruchamianie kamerki…';
+      try {
+        await cameraRig.start();
+        cameraRig.setOverlayVisible(false);
+      } catch (error) {
+        calibrationRunning = false;
+        calibrationStart.disabled = false;
+        calibrationStatus.textContent = error instanceof Error
+          ? `Kamerka niedostępna: ${error.message}` : 'Kamerka niedostępna.';
+        return;
+      }
+    }
+    cameraRig.control.resetTests();
+    runCalibrationStep();
+  })();
+}
+
+function runCalibrationStep(): void {
+  window.clearInterval(calibrationTimer);
+  if (!calibrationRunning) return;
+  const step = calibrationSteps[calibrationIndex];
+  if (!step) { finishCalibrationWizard(); return; }
+  calibrationStepStart = performance.now();
+  handBaseline = null;
+  handObserved = 0;
+  calibrationStep.textContent = `Krok ${calibrationIndex + 1} / ${calibrationSteps.length}`;
+  calibrationStatus.textContent = step.label;
+  markCalibrationDot(step, Math.max(0, calibrationIndex - 1));
+  if (step.kind === 'neutral') cameraRig.recaptureNeutral();
+  calibrationTimer = window.setInterval(() => tickCalibration(step), 55);
+}
+
+function tickCalibration(step: CalibrationStep): void {
+  const face = cameraRig.currentFace;
+  if (step.kind === 'neutral' || step.kind === 'gaze') {
+    if (face.present && face.iris
+      && Number.isFinite(face.gazeX) && Number.isFinite(face.gazeY)) {
+      if (step.kind === 'gaze' && step.target) {
+        if (calibrator.capture({ x: face.gazeX, y: face.gazeY })) calibrationGazeSamples += 1;
+      }
+    }
+  } else if (step.kind === 'hand' && step.axis) {
+    const pair = posesFromHands([...cameraRig.currentHands], 4 / 3);
+    const pose = pair.L.present ? pair.L : pair.R.present ? pair.R : null;
+    if (pose) {
+      const value = pose.wrist[step.axis];
+      if (handBaseline === null) handBaseline = value;
+      else handObserved = value - handBaseline;
+    }
+  }
+  const elapsed = performance.now() - calibrationStepStart;
+  const ratio = Math.min(1, elapsed / step.durationMs);
+  calibrationProgress.style.width = `${((calibrationIndex + ratio) / calibrationSteps.length) * 100}%`;
+  if (elapsed >= step.durationMs) advanceCalibration(step);
+}
+
+function advanceCalibration(step: CalibrationStep): void {
+  window.clearInterval(calibrationTimer);
+  if (!calibrationRunning) return;
+  if (step.kind === 'neutral') {
+    cFinishNeutral();
+  }
+  if (step.kind === 'gaze') {
+    calibrator.next();
+  }
+  if (step.kind === 'hand' && step.axis && step.expected) {
+    handProbes.push({ axis: step.axis, expected: step.expected, observed: handObserved });
+  }
+  calibrationIndex += 1;
+  runCalibrationStep();
+}
+
+function cFinishNeutral(): void {
+  const ok = cameraRig.control.finishCalibration();
+  if (!ok) calibrationStatus.textContent = 'Za mało odczytów twarzy — powtórz krok w lepszym świetle.';
+}
+
+function finishCalibrationWizard(): void {
+  window.clearInterval(calibrationTimer);
+  calibrationRunning = false;
+  const result = calibrator.result();
+  const c = cameraRig.control;
+  c.setGazeMapping(result.mapping);
+  const axes = estimateHandInversions(handProbes);
+  c.settings.handInvertX = axes.invertX;
+  c.settings.handInvertY = axes.invertY;
+  c.settings.handInvertDepth = axes.invertDepth;
+  c.applyHandAxes();
+  c.recenter();
+  c.save();
+  // Po kalibracji sterowanie pozostaje WYŁĄCZONE — gracz sam decyduje,
+  // kiedy je włączyć. To koniec „sam jeździ i nie mogę się zatrzymać".
+  c.stop();
+  if (worldReady) world.applyCameraControl({ lookX: 0, lookY: 0, moveX: 0, moveY: 0 }, 1 / 60);
+  diagLog.setFact('kalibracja', {
+    punkty: result.captured, jakosc: result.mapping?.quality ?? 0,
+    osieDloni: axes, mapowanie: Boolean(result.mapping),
+  });
+  calibrationStep.textContent = 'Kalibracja zakończona';
+  calibrationProgress.style.width = '100%';
+  // Czysta siatka 9 punktów: dodatkowa kropka „dłoń" z ostatniego kroku
+  // nie może zostać na ekranie po zamknięciu kreatora.
+  renderCalibrationDots();
+  calibrationDots.querySelectorAll('.calibration__dot').forEach((dot) => {
+    dot.classList.add('is-done');
+  });
+  calibrationStatus.textContent = result.mapping
+    ? `Gotowe: ${result.captured}/9 punktów (${calibrationGazeSamples} odczytów źrenic), jakość ${(result.mapping.quality * 100).toFixed(0)}%. `
+      + `Kierunek dłoni: ${[axes.invertX ? 'poziom' : '', axes.invertY ? 'pion' : '',
+        axes.invertDepth ? 'głębokość' : ''].filter(Boolean).join(', ') || 'domyślny'}. `
+      + 'Sterowanie jest wyłączone — włącz je przyciskiem w laboratorium, a w każdej chwili zatrzymaj klawiszem C.'
+    : 'Za mało wiarygodnych odczytów źrenic. Spróbuj w lepszym świetle, bliżej kamery, i powtórz kalibrację.';
+  calibrationStart.disabled = false;
+  calibrationStart.textContent = 'Powtórz kalibrację';
+  syncLabSettings();
+  renderLab(c.diagnostics());
+  showToast(globalToast, result.mapping
+    ? 'Kalibracja zapisana. Sterowanie nadal wyłączone — włącz je świadomie.'
+    : 'Kalibracja odrzucona: za mało danych. Spróbuj ponownie.');
+}
+
+calibrationStart.addEventListener('click', () => {
+  if (calibrationRunning) return;
+  startCalibration();
+});
+calibrationSkip.addEventListener('click', () => {
+  if (!calibrationRunning) return;
+  const step = calibrationSteps[calibrationIndex];
+  calibrationStepStart = performance.now() - (step?.durationMs ?? 0);
+});
+calibrationDots.addEventListener('click', (event) => {
+  if (!calibrationRunning) return;
+  const dot = (event.target as HTMLElement).closest('.calibration__dot');
+  if (!dot?.classList.contains('is-active')) return;
+  const step = calibrationSteps[calibrationIndex];
+  calibrationStepStart = performance.now() - (step?.durationMs ?? 0);
+});
+labCalibratePoints.addEventListener('click', openCalibration);
 
 function renderSwatches(): void {
   swatches.innerHTML = PALETTE.map(
@@ -1039,8 +1369,8 @@ function renderPlayerList(): void {
   playerCount.textContent = String(entries.length);
   onlineCount.textContent = partyState
     ? `Drużyna ${partyState.code} · ${real.length + 1} ${real.length ? 'graczy' : 'gracz'}`
-    : onlineStatus === 'offline'
-      ? 'Brak połączenia · tylko Ty'
+    : onlineStatus === 'reconnecting'
+      ? 'Serwer multiplayer · ponawiam połączenie'
       : `${real.length + 1} ${real.length ? 'graczy' : 'gracz'} online · bez botów`;
   chatScope.textContent = partyState ? `Drużyna ${partyState.code}` : 'Lobby · wszyscy';
   renderLive();
@@ -1164,25 +1494,25 @@ accountChip.addEventListener('click', () => {
 function renderLive(): void {
   const real = onlinePeers.filter((peer) => peer.mode !== 'game');
   livePill.classList.toggle('is-online', onlineStatus === 'online');
-  livePill.classList.toggle('is-offline', onlineStatus === 'offline');
+  livePill.classList.toggle('is-reconnecting', onlineStatus === 'reconnecting');
   liveStatus.textContent =
     onlineStatus === 'online' ? `${real.length + 1} online` :
-    onlineStatus === 'offline' ? 'Tryb offline' : 'Łączę…';
+    onlineStatus === 'reconnecting' ? 'Ponawiam połączenie' : 'Łączę…';
   liveSub.textContent =
     onlineStatus === 'online' ? 'Supabase Realtime · Lobby' :
-    onlineStatus === 'offline' ? 'Brak połączenia · podgląd i katalog działają' : 'Supabase Realtime · łączenie…';
-  // Offline nikogo nie udajemy: nawet lokalny gracz nie jest „na żywo”.
-  const offline = onlineStatus === 'offline';
-  liveCount.textContent = String(offline ? real.length : real.length + 1);
-  const rows = offline ? [] : [
+    onlineStatus === 'reconnecting' ? 'Serwer multiplayer · ponawiam połączenie' : 'Supabase Realtime · łączenie…';
+  // Bez połączenia nikogo nie udajemy: nawet lokalny gracz nie jest „na żywo”.
+  const awaitingServer = onlineStatus !== 'online';
+  liveCount.textContent = String(awaitingServer ? real.length : real.length + 1);
+  const rows = awaitingServer ? [] : [
     `<li><i style="background:${escapeHtml(state.color)}"></i>${escapeHtml(state.nick)} (Ty)</li>`,
     ...real.map(
       (peer) => `<li><i style="background:${escapeHtml(peer.color)}"></i>${escapeHtml(peer.nick)} · ${peer.mode === 'lobby' ? 'Lobby' : 'Start'}</li>`,
     ),
   ];
   if (real.length === 0) {
-    rows.push(offline
-      ? '<li class="is-empty">Brak połączenia — nikt nie jest widoczny</li>'
+    rows.push(awaitingServer
+      ? '<li class="is-empty">Łączenie z serwerem — lista graczy pojawi się po połączeniu.</li>'
       : '<li class="is-empty">Nikogo jeszcze nie ma — wejdź pierwszy</li>');
   }
   liveList.innerHTML = rows.join('');
@@ -1209,7 +1539,7 @@ function seedChat(): void {
     'RejPlay',
     onlineStatus === 'online'
       ? `Czat przez Supabase${partyState ? ` · tylko drużyna ${partyState.code}` : ' · Lobby'}.`
-      : 'Brak połączenia z bazą — wiadomości zostają w tej karcie.',
+      : 'Łączenie z serwerem czatu online…',
   );
 }
 
@@ -1837,6 +2167,12 @@ document.addEventListener('click', (event) => {
     case 'restart-camera':
       void restartCamera();
       break;
+    case 'stop-control':
+      stopCameraControl();
+      break;
+    case 'close-calibration':
+      closeCalibration();
+      break;
   }
 });
 
@@ -1995,6 +2331,19 @@ gameResult.addEventListener('click', (event) => {
 });
 
 window.addEventListener('keydown', (event) => {
+  const tag = (event.target as HTMLElement | null)?.tagName;
+  const typing = tag === 'INPUT' || tag === 'TEXTAREA'
+    || (event.target as HTMLElement | null)?.isContentEditable === true;
+  // C = zawsze dostępny hamulec bezpieczeństwa (także w grze i w Lobby).
+  if (event.code === 'KeyC' && !typing && !event.repeat && !calibrationRunning) {
+    event.preventDefault();
+    stopCameraControl();
+    return;
+  }
+  if (event.key === 'Escape' && calibration.classList.contains('is-active')) {
+    closeCalibration();
+    return;
+  }
   if (event.key === 'Escape' && cameraLab.classList.contains('is-active')) {
     closeCameraLab();
     return;
@@ -2234,8 +2583,8 @@ async function boot(): Promise<void> {
   online.onStatus = (status) => {
     onlineStatus = status;
     renderPlayerList();
-    if (status === 'offline' && chatSeeded) {
-      addChatMessage('RejPlay', 'Połączenie z bazą niedostępne — czat i lista graczy są wyłączone. Sprawdź połączenie lub zaloguj się ponownie.');
+    if (status === 'reconnecting' && chatSeeded) {
+      addChatMessage('RejPlay', 'Serwer multiplayer niedostępny — ponawiam połączenie. Czat i lista graczy wznowią się automatycznie.');
     }
   };
   online.onPeers = (peers) => {
@@ -2244,7 +2593,7 @@ async function boot(): Promise<void> {
     renderPlayerList();
   };
   online.onChat = (message) => {
-    addChatMessage(message.nick, message.offline ? `${message.content} · (tylko u Ciebie)` : message.content, message.color);
+    addChatMessage(message.nick, message.content, message.color);
   };
   online.onParty = (state) => renderParty(state);
   online.onWave = ({ name, clientId }) => {
