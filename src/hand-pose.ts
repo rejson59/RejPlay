@@ -11,11 +11,13 @@ import {
  * Kąty są niezależne od obrotu i odbicia obrazu, więc ruch palca w świecie
  * rzeczywistym daje taki sam ruch palca awatara (także w widoku first-person).
  *
- * Warstwa „realizmu” (v0.4):
- *  - anatomiczne limity i sprzężenie ścięgien (DIP podąża za PIP),
- *  - lekka współzależność palców — prawdziwa dłoń nie zgina ich całkiem osobno,
- *  - sprężynowe wygładzanie z bezwładnością zamiast zwykłego lerp,
- *  - spoczynkowy chwyt narzędzia, mikro-drżenie i opóźnienie przy obrocie kamery.
+ * Warstwa „realizmu”:
+ *  - v0.4: sprzężenie ścięgien (DIP podąża za PIP), współzależność palców,
+ *    sprężyna z bezwładnością, spoczynkowy chwyt, mikro-drżenie, opóźnienie
+ *    przy obrocie kamery;
+ *  - v0.8: anatomiczne minima (stawy międzypaliczkowe NIE prostują się
+ *    poniżej zera), zależność ścięgnista nadgarstka (tenodesis) oraz kaskada
+ *    czasowa — MCP prowadzi, PIP i DIP doganiają, wskazujący wyprzedza mały.
  */
 
 export interface NormalizedLandmark {
@@ -86,7 +88,17 @@ const CHAINS: number[][] = [
 const JOINT_BIAS = [0.30, 0.10, 0.06];
 const THUMB_BIAS = [0.22, 0.12, 0.08];
 const JOINT_GAIN = [1.15, 1.06, 0.95];
-const JOINT_MAX = [1.55, 1.75, 1.25];
+export const JOINT_MAX = [1.55, 1.75, 1.25];
+/**
+ * Anatomiczne minima zgięcia. Staw śródręczno-paliczkowy (MCP) może się
+ * lekko wyprostować, ale PIP i DIP już nie — bez tego palce „wywijały się"
+ * na lewą stronę przy szumie detekcji i wyglądały jak gumowe.
+ */
+export const JOINT_MIN = [-0.26, -0.02, 0];
+/** Czas wygładzania: nasada palca reaguje najszybciej, koniuszek najwolniej. */
+export const JOINT_SMOOTH_TIME = [0.058, 0.082, 0.105];
+/** Kaskada sąsiednich palców przy zaciskaniu dłoni (indeks → mały palec). */
+export const FINGER_CASCADE = [0.82, 0.92, 1.0, 1.09, 1.17];
 
 /** Zrelaksowany chwyt: palce nie są ani całkiem proste, ani zaciśnięte w pięść. */
 const GRIP_CURL: number[][] = [
@@ -202,8 +214,27 @@ function jointAngle(a: THREE.Vector3, b: THREE.Vector3, j: number, thumb: boolea
   const raw = Math.acos(clampFinite(a.dot(b), -1, 1, 1));
   const bias = thumb ? THUMB_BIAS[j] : JOINT_BIAS[j];
   const gain = thumb ? 1 : JOINT_GAIN[j];
-  // Lekko ujemny dolny limit pozwala na naturalne, minimalne wyprostowanie.
-  return clamp((raw - bias) * gain, -0.07, thumb ? 1.15 : JOINT_MAX[j]);
+  // Tylko MCP (i CMC kciuka) dopuszczają minimalne wyprostowanie.
+  return clamp((raw - bias) * gain, thumb ? -0.12 : JOINT_MIN[j], thumb ? 1.15 : JOINT_MAX[j]);
+}
+
+/**
+ * Zależność ścięgnista (tenodesis): wyprost nadgarstka mimowolnie zgina
+ * palce, zgięcie nadgarstka je prostuje. Efekt jest mały, ale to właśnie on
+ * odróżnia dłoń odczytaną z kamery od dłoni z prawdziwym nadgarstkiem.
+ * Funkcja jest czysta i wywoływana po wyznaczeniu `pitch`, więc łatwo ją
+ * sprawdzić w testach bez kamery i bez DOM.
+ */
+export function applyTenodesis(pose: HandPose): void {
+  const bias = clamp(clampFinite(pose.pitch, -1.1, 1.1, 0) * 0.075, -0.09, 0.09);
+  const weight = [1, 0.8, 0.55];
+  for (let f = 0; f < 5; f += 1) {
+    for (let j = 0; j < 3; j += 1) {
+      pose.curl[f][j] = clampFinite(
+        pose.curl[f][j] + bias * weight[j], JOINT_MIN[j], JOINT_MAX[j], pose.curl[f][j],
+      );
+    }
+  }
 }
 
 /** Z wektorów między punktami dłoni liczymy kąty dla wszystkich 15 stawów. */
@@ -265,7 +296,7 @@ export function computeHandPose(
       const neighbour = f === 1
         ? measured[2][j]
         : measured[f - 1][j] * 0.6 + measured[Math.min(4, f + 1)][j] * 0.4;
-      pose.curl[f][j] = clamp(measured[f][j] * 0.88 + neighbour * 0.12, -0.07, JOINT_MAX[j]);
+      pose.curl[f][j] = clamp(measured[f][j] * 0.88 + neighbour * 0.12, JOINT_MIN[j], JOINT_MAX[j]);
     }
   }
 
@@ -317,6 +348,7 @@ export function computeHandPose(
   // palm.y — dzięki temu ruch nadgarstka w przód / tył / na bok jest widoczny.
   pose.pitch = clampFinite(Math.asin(clampFinite(fwd.z, -1, 1)) * 1.15, -1.1, 1.1);
   pose.yaw = clampFinite(Math.atan2(fwd.x, Math.max(0.08, fwd.y)) * 0.85, -1.1, 1.1);
+  applyTenodesis(pose);
   return pose;
 }
 
@@ -473,7 +505,7 @@ export class HandAnimator {
       for (let f = 0; f < 5; f += 1) {
         for (let j = 0; j < 3; j += 1) {
           const tremor = Math.sin(time * (7.3 + f * 0.6) + f * 1.9 + j) * 0.004 * idle;
-          tr.curl[f][j] = clampFinite(target.curl[f][j] + tremor, -0.07, JOINT_MAX[j]);
+          tr.curl[f][j] = clampFinite(target.curl[f][j] + tremor, JOINT_MIN[j], JOINT_MAX[j]);
         }
         tr.spread[f] = target.spread[f];
       }
@@ -491,7 +523,13 @@ export class HandAnimator {
     const out = this.pose;
     for (let f = 0; f < 5; f += 1) {
       for (let j = 0; j < 3; j += 1) {
-        out.curl[f][j] = clamp(this.integrate(this.curlV[f][j], t.curl[f][j], d, 0.085), -0.09, JOINT_MAX[j]);
+        // Kaskada: nasada palca prowadzi, ogniwa i sąsiednie palce doganiają.
+        // Dzięki temu zaciśnięcie dłoni jest falą, nie skokiem 15 kanałów naraz.
+        const smooth = JOINT_SMOOTH_TIME[j] * FINGER_CASCADE[f] / wristResponsiveness;
+        out.curl[f][j] = clamp(
+          this.integrate(this.curlV[f][j], t.curl[f][j], d, smooth),
+          JOINT_MIN[j] - 0.02, JOINT_MAX[j],
+        );
       }
       out.spread[f] = this.integrate(this.spreadV[f], t.spread[f], d, 0.11);
     }

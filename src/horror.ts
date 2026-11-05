@@ -9,14 +9,20 @@ import { buildBaseCamp } from './real-scenery';
 import { ToolBelt } from './tool-belt';
 import { neutralHandPosePair, type HandMotion, type HandPosePair } from './hand-pose';
 import type { QualityProfile } from './performance';
+import {
+  WALL_SEGMENTS, GAME_SPAWN, createCollision, depenetrate, freeSpawn,
+  type Collision,
+} from './movement';
+import { diagnostics } from './diagnostics';
 
 /**
  * „Demonofobia” — autorska, pierwszoosobowa gra dochodzeniowa.
  *
  * To ORYGINALNA interpretacja gatunku: własna nazwa, własna klasyfikacja zjaw,
  * własne dowody, teksty i dźwięki. Nie używamy nazwy, lore'u, interfejsu ani
- * assetów Phasmophobia (Kinetic Games). Cała scena jest budowana z geometrii
- * Three.js i proceduralnych tekstur, więc nie potrzebuje dodatkowych plików.
+ * assetów Phasmophobia (Kinetic Games). Tekstury i architektura powstają
+ * w canvas i Three.js, a rekwizyty w podwórku to gotowe, darmowe modele GLB
+ * z katalogu `public/assets` (MIT / CC0 / CC BY 4.0).
  */
 
 // ------------------------------------------------------------------ konfiguracja
@@ -115,27 +121,6 @@ const GHOSTS: GhostInfo[] = [
   { id: 'glebia', name: 'Głębia', hint: 'Zimno, odciski, kroki i cienie — cztery ślady.', signature: ['cold', 'uv', 'motion', 'camera'] },
 ];
 
-/**
- * Ściany [x1, z1, x2, z2]. Środkiem biegnie korytarz (x od -1.35 do 1.35),
- * po bokach leżą cztery pokoje. W ścianach korytarza są dwa przejścia
- * z każdej strony, a frontowe drzwi prowadzą prosto do wyjścia.
- */
-const WALL_SEGMENTS: Array<[number, number, number, number]> = [
-  [-9, -9, 9, -9],
-  [-9, 9, -1.25, 9],
-  [1.25, 9, 9, 9],
-  [-9, -9, -9, 9],
-  [9, -9, 9, 9],
-  [-1.35, -9, -1.35, -5.6],
-  [-1.35, -3.6, -1.35, 3.6],
-  [-1.35, 5.6, -1.35, 9],
-  [1.35, -9, 1.35, -5.6],
-  [1.35, -3.6, 1.35, 3.6],
-  [1.35, 5.6, 1.35, 9],
-  [-9, 0, -1.35, 0],
-  [1.35, 0, 9, 0],
-];
-
 /** Kandydaci na miejsca dowodów — rozsiani po czterech pokojach. */
 const CLUE_SPOTS: Array<[number, number]> = [
   [-5.4, -5.6], [-3.1, -7.4], [-6.9, -2.9],
@@ -144,13 +129,6 @@ const CLUE_SPOTS: Array<[number, number]> = [
   [5.6, 5.4], [3.1, 7.2], [7.0, 3.1],
   [-2.0, -7.8], [2.0, -7.8], [-2.2, 7.9], [2.2, 7.9],
 ];
-
-interface Box {
-  minX: number;
-  maxX: number;
-  minZ: number;
-  maxZ: number;
-}
 
 // ------------------------------------------------------------------- silnik gry
 
@@ -167,7 +145,8 @@ export class HorrorGame {
   private readonly onPhoto: (() => void) | undefined;
 
   private readonly position = new THREE.Vector3(0, 1.65, 7.0);
-  private readonly walls: Box[] = [];
+  /** Czysta funkcja kolizji z `movement.ts` — testowana w CI. */
+  private readonly isBlocked: Collision = createCollision();
   private readonly hotspots = new Map<string, THREE.Vector3>();
   private readonly keys = new Set<string>();
   private readonly joystick = { x: 0, y: 0 };
@@ -293,16 +272,8 @@ export class HorrorGame {
   // ------------------------------------------------------------------- scena 3D
 
   private buildHouse(): void {
-    // Kolizje zostają w prostych prostokątach, a wygląd ścian, podłóg i
-    // wyposażenia buduje osobny moduł z proceduralnymi teksturami.
-    for (const [x1, z1, x2, z2] of WALL_SEGMENTS) {
-      this.walls.push({
-        minX: Math.min(x1, x2) - 0.08,
-        maxX: Math.max(x1, x2) + 0.08,
-        minZ: Math.min(z1, z2) - 0.08,
-        maxZ: Math.max(z1, z2) + 0.08,
-      });
-    }
+    // Kolizje są w `movement.ts` (czyste prostokąty, współdzielone z testami),
+    // a wygląd ścian, podłóg i wyposażenia buduje osobny moduł z teksturami.
     this.decor = buildDecor(this.scene, WALL_SEGMENTS);
     // Podwórko z samochodem-bazą: gotowy model CC0/MIT + stanowisko
     // monitoringu. Ładuje się asynchronicznie, nie blokuje startu rundy.
@@ -635,12 +606,19 @@ export class HorrorGame {
     this.statuses.clear();
     for (const evidence of EVIDENCE) this.statuses.set(evidence.id, 'unknown');
 
-    // Runda zaczyna się PRZY SAMOCHODZIE: trzeba dojść do frontowych drzwi.
-    this.position.set(0, 1.65, 12.4);
-    this.yaw = Math.PI;
-    this.pitch = 0;
-    this.yawTarget = 0;
-    this.pitchTarget = 0;
+    // Runda zaczyna się PRZY SAMOCHODZIE, w wolnym korytarzu: trzeba dojść do
+    // frontowych drzwi. Nigdy nie stawiamy gracza w colliderze, a `yaw` jest
+    // równe `yawTarget` — koniec wymuszonego obrotu o 180° na starcie rundy.
+    const spawn = freeSpawn(this.isBlocked);
+    this.position.set(spawn.x, spawn.y, spawn.z);
+    this.yaw = GAME_SPAWN.yaw;
+    this.pitch = GAME_SPAWN.pitch;
+    this.yawTarget = GAME_SPAWN.yaw;
+    this.pitchTarget = GAME_SPAWN.pitch;
+    diagnostics.setFact('ruch', {
+      start: [spawn.x, spawn.z],
+      skorygowany: spawn.adjusted,
+    });
     this.velocity.set(0, 0, 0);
     this.bob = 0;
     this.lastStep = 0;
@@ -879,27 +857,16 @@ export class HorrorGame {
     return this.hotspots.get(TOOLS[this.toolIndex].id);
   }
 
-  private blocked(x: number, z: number): boolean {
-    const r = 0.33;
-    // Podwórko: wąski dojazd od frontowych drzwi (z=9) do samochodu-bazy.
-    const inYard = z > 8.7;
-    const limitX = inYard ? 3.8 : 8.7;
-    const limitZ = inYard ? 17.4 : 8.7;
-    if (x < -limitX || x > limitX || z < -8.7 || z > limitZ) return true;
-    for (const wall of this.walls) {
-      if (x > wall.minX - r && x < wall.maxX + r && z > wall.minZ - r && z < wall.maxZ + r) {
-        return true;
-      }
-    }
-    if (inYard) {
-      // Samochód stoi po prawej, blat monitoringu przy nim.
-      if (x > 1.35 - r && z > 11.1 - r && z < 16.6 + r) return true;
-      if (x > 0.25 - r && x < 1.75 + r && z > 12.6 - r && z < 13.4 + r) return true;
-    }
-    return false;
-  }
-
   private updateMovement(dt: number, realDt = dt): void {
+    // Samonaprawa: jeśli gracz znalazł się wewnątrz przeszkody, wychodzimy
+    // z niej zamiast odrzucać każdy kolejny krok (patrz v0.8).
+    const freed = depenetrate(this.isBlocked, this.position.x, this.position.z);
+    if (freed.moved) {
+      this.position.x = freed.x;
+      this.position.z = freed.z;
+      this.velocity.set(0, 0, 0);
+      diagnostics.push('warn', 'ruch', 'Pozycja gracza była wewnątrz collidera — wypchnięto na wolny korytarz.');
+    }
     // Fallback dla przeglądarek / ramek, które odmówiły pointer locku: trzymając
     // przycisk przy krawędzi okna, gracz obraca się dalej bez końca — kursor
     // nie musi (i nie może) wychodzić na drugi monitor, żeby zrobić pełne 360°.
@@ -949,9 +916,9 @@ export class HorrorGame {
 
     const dx = this.velocity.x * dt;
     const dz = this.velocity.z * dt;
-    if (!this.blocked(this.position.x + dx, this.position.z)) this.position.x += dx;
+    if (!this.isBlocked(this.position.x + dx, this.position.z)) this.position.x += dx;
     else this.velocity.x *= 0.35;
-    if (!this.blocked(this.position.x, this.position.z + dz)) this.position.z += dz;
+    if (!this.isBlocked(this.position.x, this.position.z + dz)) this.position.z += dz;
     else this.velocity.z *= 0.35;
 
     this.moving = Math.hypot(this.velocity.x, this.velocity.z) > 0.22;

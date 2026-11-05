@@ -1,10 +1,15 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
+import { clone as cloneSkeleton } from 'three/addons/utils/SkeletonUtils.js';
 import { lowPowerDevice } from './performance';
 
 /**
  * Gotowe, darmowe assety 3D (CC0 / CC-BY 4.0 / MIT) dla całej platformy.
+ *
+ * v0.8: park nie zawiera już żadnych prymitywów — altana, klomby, oczko
+ * wodne, tablica i zegar słoneczny zostały zastąpione gotowymi modelami GLB.
+ * `park.ts` odpowiada wyłącznie za teksturowany teren, niebo i światła.
  *
  * v0.7: biblioteka jest wielogrowa. `public/assets/props/` to rekwizyty
  * parkowe używane też w Demonofobii, a `public/assets/library/` zawiera
@@ -25,13 +30,40 @@ interface SceneryProp {
   scale: number;
   position: [number, number, number];
   rotation?: number;
+  /** Podmienia plakat w gotowym modelu (tablica „Lobby"). */
+  poster?: string;
+  /** Ładujemy także na słabszych urządzeniach, gdzie bierzemy tylko podzbiór. */
+  essential?: boolean;
 }
 
-/** Układ parku: alejki, klomby i altana są w park.ts, tu dokładamy modele GLB. */
+/**
+ * Układ parku: alejki i trawniki są w `park.ts`, a KAŻDY widoczny obiekt to
+ * gotowy model GLB. Kolejność ma znaczenie: początek listy to elementy, bez
+ * których park wyglądałby pusto nawet na słabym urządzeniu.
+ */
 const LOBBY_PROPS: SceneryProp[] = [
+  // Fontanna na środku, wiata, tablica i ławki — dawne „bryły" zastąpione GLB.
+  { file: 'props/fountain.glb', scale: 9, position: [0, 0, 0], essential: true },
+  { file: 'library/ulica/billboard.glb', scale: 7, position: [-7.8, 0, 0.8], rotation: 1.2, poster: 'Lobby', essential: true },
+  { file: 'library/ulica/bus_shelter.glb', scale: 16, position: [6.6, 0, -4.4], rotation: 0.5, essential: true },
+  { file: 'props/bench_park.glb', scale: 16, position: [-3.2, 0, 5.8], rotation: -0.5, essential: true },
+  { file: 'props/bench_park.glb', scale: 16, position: [3.2, 0, 5.8], rotation: 0.5 },
+  { file: 'props/bench_park.glb', scale: 16, position: [-5.4, 0, -3.4], rotation: 1.1 },
+  { file: 'props/bench_park.glb', scale: 16, position: [5.4, 0, -3.4], rotation: -1.1 },
+  { file: 'props/planter_round.glb', scale: 15, position: [-4.4, 0, 2.4] },
+  { file: 'props/planter_round.glb', scale: 15, position: [4.4, 0, -2.4] },
+  { file: 'library/przedmioty/DiffuseTransmissionPlant.glb', scale: 1.5, position: [7.5, 0, -2.2] },
+  { file: 'library/przedmioty/GlassVaseFlowers.glb', scale: 2.6, position: [-8.9, 0, 2.1] },
+  { file: 'library/przedmioty/Lantern.glb', scale: 2.2, position: [-2.7, 0, 2.7] },
+  { file: 'library/przedmioty/Lantern.glb', scale: 2.2, position: [2.7, 0, -2.7] },
+  { file: 'props/rock_boulder.glb', scale: 16, position: [-7.4, 0, 0.7], rotation: 0.3 },
+  { file: 'props/rock_boulder.glb', scale: 14, position: [-8.1, 0, 1.5], rotation: 1.2 },
+  { file: 'props/rock_boulder.glb', scale: 12, position: [-6.7, 0, 1.6], rotation: 2.1 },
+  { file: 'props/picnic_table.glb', scale: 14, position: [-8.8, 0, 3.9], rotation: 0.4 },
+  { file: 'props/picnic_table.glb', scale: 14, position: [8.6, 0, 3.6], rotation: -0.4 },
   // Korony drzew wokół polany.
-  { file: 'props/tree_oak.glb', scale: 15, position: [-9.4, 0, -2.6] },
-  { file: 'props/tree_birch.glb', scale: 14, position: [9.6, 0, 1.8] },
+  { file: 'props/tree_oak.glb', scale: 15, position: [-9.4, 0, -2.6], essential: true },
+  { file: 'props/tree_birch.glb', scale: 14, position: [9.6, 0, 1.8], essential: true },
   { file: 'props/tree_round.glb', scale: 13, position: [-6.4, 0, 8.4] },
   { file: 'library/roslinnosc/tree_conifer.glb', scale: 14, position: [7.6, 0, -7.8] },
   { file: 'library/roslinnosc/tree_poplar.glb', scale: 13, position: [-9.8, 0, 6.8] },
@@ -72,17 +104,41 @@ const YARD_PROPS: SceneryProp[] = [
   { file: 'props/hydrant.glb', scale: 16, position: [-3.4, 0, 13.4] },
 ];
 
-/** Jeden loader dla wszystkich plików: parsowanie GLB jest współdzielone. */
+/**
+ * Jeden odczyt każdego pliku GLB dla całej aplikacji. Ten sam model bywa
+ * użyty wielokrotnie (ławki, donice, latarnie, głazy, billboard, postumenty),
+ * więc cache oszczędza parsowanie i pamięć — każdy egzemplarz jest klonem.
+ * Błąd usuwa wpis, aby po ponownym połączeniu można było spróbować znowu.
+ */
+const modelCache = new Map<string, Promise<THREE.Group>>();
+function sharedModel(file: string): Promise<THREE.Group> {
+  let pending = modelCache.get(file);
+  if (!pending) {
+    const loader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
+    pending = loader.loadAsync(`${BASE}assets/${file}`).then((gltf) => gltf.scene);
+    modelCache.set(file, pending);
+    void pending.catch(() => { modelCache.delete(file); });
+  }
+  return pending;
+}
+
+/** `clone(true)` nie odtwarza kości — dla rigowanych modeli używamy SkeletonUtils. */
+function cloneModel(source: THREE.Group): THREE.Group {
+  let skinned = false;
+  source.traverse((object) => {
+    if ((object as THREE.SkinnedMesh).isSkinnedMesh) skinned = true;
+  });
+  return (skinned ? cloneSkeleton(source) : source.clone(true)) as THREE.Group;
+}
+
 async function mount(scene: THREE.Scene, props: SceneryProp[], name: string): Promise<THREE.Group> {
-  const loader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
   const group = new THREE.Group();
   group.name = name;
-  const list = lowPowerDevice() ? props.slice(0, 8) : props;
+  const list = lowPowerDevice() ? props.filter((prop) => prop.essential) : props;
   const roots = await Promise.all(
     list.map(async (prop) => {
       try {
-        const gltf = await loader.loadAsync(`${BASE}assets/${prop.file}`);
-        const root = gltf.scene;
+        const root = cloneModel(await sharedModel(prop.file));
         root.scale.setScalar(prop.scale);
         root.position.set(...prop.position);
         root.rotation.y = prop.rotation ?? 0;
@@ -90,6 +146,18 @@ async function mount(scene: THREE.Scene, props: SceneryProp[], name: string): Pr
           if (!(object instanceof THREE.Mesh)) return;
           object.castShadow = true;
           object.receiveShadow = true;
+          if (prop.poster && /poster/i.test(object.name)) {
+            // Gotowy billboard ma własny plakat; podmieniamy tylko jego mapę,
+            // żeby konstrukcja (słupy, oświetlenie,rama) została realnym GLB.
+            const map = signTexture(prop.poster, 'RejPlay · park dla graczy');
+            // UV w glTF mają początek w dole; CanvasTexture domyślnie odwraca
+            // obraz (flipY = true). Bez tego napis lądował do góry nogami.
+            map.flipY = false;
+            object.material = new THREE.MeshStandardMaterial({
+              map, roughness: 0.85, side: THREE.FrontSide,
+            });
+            return;
+          }
           const materials = Array.isArray(object.material) ? object.material : [object.material];
           for (const material of materials) {
             if (!(material instanceof THREE.MeshStandardMaterial)) continue;
@@ -107,6 +175,42 @@ async function mount(scene: THREE.Scene, props: SceneryProp[], name: string): Pr
   for (const root of roots) if (root) group.add(root);
   scene.add(group);
   return group;
+}
+
+/**
+ * Portal gry w parku: gotowy billboard GLB z własnymi słupami, ramą i
+ * oświetleniem. Plakat podmieniamy na okładkę gry — w scenie nie ma już
+ * czterech prostopadłościanów udających drewnianą bramę.
+ */
+export function loadPortalFrame(group: THREE.Group, art: string | undefined): void {
+  void sharedModel('library/ulica/billboard.glb').then((source) => {
+    const root = cloneModel(source);
+    const box = new THREE.Box3().setFromObject(root);
+    const size = box.getSize(new THREE.Vector3());
+    const center = box.getCenter(new THREE.Vector3());
+    const scale = 3.1 / (size.y || 1);
+    root.scale.setScalar(scale);
+    root.position.set(-center.x * scale, 1.55 - center.y * scale, -center.z * scale);
+    root.traverse((object) => {
+      if (!(object instanceof THREE.Mesh)) return;
+      object.castShadow = true;
+      object.receiveShadow = true;
+      if (art && /poster/i.test(object.name)) {
+        const texture = new THREE.TextureLoader().load(
+          art,
+          undefined,
+          undefined,
+          () => { /* brak okładki: zostaje neutralny plakat z GLB */ },
+        );
+        texture.colorSpace = THREE.SRGBColorSpace;
+        texture.flipY = false;
+        object.material = new THREE.MeshStandardMaterial({
+          map: texture, roughness: 0.88, side: THREE.FrontSide,
+        });
+      }
+    });
+    group.add(root);
+  }).catch(() => { /* brak pliku nie może zablokować wejścia do gry */ });
 }
 
 let lobbyPromise: Promise<THREE.Group> | null = null;
@@ -131,6 +235,31 @@ interface GalleryPiece {
   position: [number, number, number];
 }
 
+/**
+ * Postumenty galerii też są gotowym modelem GLB, a nie walcem z kodu.
+ * Jeden plik parsujemy raz, a każdy postument jest niezależnym klonem
+ * (własna widoczność liści, pozycja i cienie).
+ */
+function loadPlinth(position: [number, number, number], group: THREE.Group): void {
+  void sharedModel('props/planter_round.glb').then((source) => {
+    const root = cloneModel(source);
+    root.scale.setScalar(13);
+    root.position.set(position[0], 0, position[2]);
+    root.traverse((object) => {
+      if (!(object instanceof THREE.Mesh)) return;
+      // `planter_round` ma własny krzew: na postumencie eksponatu zostawiamy
+      // sam beton, żeby model nie wyglądał jak wyrastający z krzaka.
+      if (/foliage/i.test(object.name)) {
+        object.visible = false;
+        return;
+      }
+      object.castShadow = true;
+      object.receiveShadow = true;
+    });
+    group.add(root);
+  }).catch(() => { /* brakujący postument nie może zatrzymać Lobby */ });
+}
+
 const GALLERY: GalleryPiece[] = [
   // Trzy postumenty w altanie — przedmioty i meble z nowej biblioteki.
   { file: 'library/przedmioty/AntiqueCamera.glb', position: [-1.75, 0, -0.9] },
@@ -141,27 +270,13 @@ const GALLERY: GalleryPiece[] = [
 const gallerySpinners: THREE.Object3D[] = [];
 
 export function loadLobbyGallery(scene: THREE.Scene): Promise<THREE.Group> {
-  const loader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
   const group = new THREE.Group();
   group.name = 'lobby-asset-gallery';
-  const stone = new THREE.MeshStandardMaterial({ color: 0xd2cdbd, roughness: 0.9 });
-  const brass = new THREE.MeshStandardMaterial({ color: 0xb08d54, roughness: 0.5, metalness: 0.5 });
-  for (const piece of GALLERY) {
-    const [x, , z] = piece.position;
-    const plinth = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.5, 0.8, 16), stone);
-    plinth.position.set(x, 0.4, z);
-    plinth.castShadow = true;
-    plinth.receiveShadow = true;
-    group.add(plinth);
-    const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.45, 0.05, 16), brass);
-    cap.position.set(x, 0.83, z);
-    group.add(cap);
-  }
+  for (const piece of GALLERY) loadPlinth(piece.position, group);
   scene.add(group);
   return Promise.all(GALLERY.map(async (piece) => {
     try {
-      const gltf = await loader.loadAsync(`${BASE}assets/${piece.file}`);
-      const root = gltf.scene;
+      const root = cloneModel(await sharedModel(piece.file));
       // Normalizacja skali: modele Khronos mają bardzo różne jednostki.
       const box = new THREE.Box3().setFromObject(root);
       const size = box.getSize(new THREE.Vector3());

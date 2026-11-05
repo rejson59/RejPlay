@@ -7,7 +7,9 @@ import { GAMES, PALETTE } from './games';
 import { neutralHandPosePair, posesFromHands, type HandPosePair, type TrackedHand } from './hand-pose';
 import type { OnlinePeer } from './online';
 import { FirstPersonHands } from './first-person-hands';
-import { loadLobbyGallery, loadLobbyScenery, updateLobbyGallery } from './real-scenery';
+import {
+  loadLobbyGallery, loadLobbyScenery, loadPortalFrame, updateLobbyGallery,
+} from './real-scenery';
 import { buildPark } from './park';
 import {
   QualityManager,
@@ -82,7 +84,6 @@ export class World {
   private portalAimed = false;
   private lobbySkipMouse = 0;
   private readonly heroOrbs: Orb[] = [];
-  private readonly centerpiece = new THREE.Group();
   private readonly heroPlatform = new THREE.Group();
   /** Viewmodel first-person w Lobby (te same dłonie awatara, bez narzędzia). */
   private readonly lobbyHands: FirstPersonHands;
@@ -227,6 +228,11 @@ export class World {
     this.keys.clear();
     this.joystick.x = 0;
     this.joystick.y = 0;
+    // Wektory z kamerki nie mogą „przepłynąć" z Lobby do gry ani odwrotnie:
+    // bez tego ostatni odczyt głowy mieszał się z WASD po zmianie sceny.
+    this.cameraMove.x = 0;
+    this.cameraMove.y = 0;
+    this.horror.setCameraJoystick(0, 0);
     this.horror.setActive(mode === 'game');
     // W first-person własna sylwetka zasłaniałaby kamerę. Pozycja i tak jest
     // wysyłana do Presence, więc inni gracze widzą nasz awatar normalnie.
@@ -569,11 +575,11 @@ export class World {
   }
 
   private buildLobby(): void {
-    // v0.7: Lobby to jasny park w świetle dnia, nie nocny betonowy plac.
-    buildPark(this.lobbyScene, this.centerpiece);
+    // v0.7/v0.8: Lobby to jasny park w świetle dnia z gotowych modeli GLB.
+    buildPark(this.lobbyScene);
     this.lobbyCamera.position.set(0, 5.2, 11);
 
-    // Portale = drewniane tablice przy alejkach, z okładką świata z katalogu.
+    // Portale = gotowe billboardy GLB przy alejkach, z okładką świata z katalogu.
     const portalGames = GAMES.filter((game) => game.id !== 'lobby').slice(0, 3);
     const angles = portalGames.map((_, i) => Math.PI + (i - (portalGames.length - 1) / 2) * 0.62);
     portalGames.forEach((game, i) => {
@@ -582,38 +588,9 @@ export class World {
       group.position.set(Math.sin(angle) * 8.6, 0, Math.cos(angle) * 8.6);
       group.rotation.y = angle + Math.PI;
 
-      const wood = new THREE.MeshStandardMaterial({ color: 0x7d5a3a, roughness: 0.88, metalness: 0.02 });
-      const woodDark = new THREE.MeshStandardMaterial({ color: 0x59402a, roughness: 0.9, metalness: 0.02 });
-      for (const side of [-1, 1]) {
-        const post = new THREE.Mesh(new THREE.BoxGeometry(0.2, 2.8, 0.22), wood);
-        post.position.set(side * 1.15, 1.4, 0);
-        post.castShadow = true;
-        group.add(post);
-      }
-      const lintel = new THREE.Mesh(new THREE.BoxGeometry(2.7, 0.22, 0.3), woodDark);
-      lintel.position.set(0, 2.9, 0);
-      lintel.castShadow = true;
-      group.add(lintel);
-      const roof = new THREE.Mesh(new THREE.BoxGeometry(3.0, 0.12, 0.62), wood);
-      roof.position.set(0, 3.08, 0);
-      roof.rotation.x = 0.12;
-      roof.castShadow = true;
-      group.add(roof);
-
-      const panelMaterial = new THREE.MeshStandardMaterial({
-        color: game.color, roughness: 0.9, side: THREE.DoubleSide,
-      });
-      if (game.art) {
-        const texture = new THREE.TextureLoader().load(game.art);
-        texture.colorSpace = THREE.SRGBColorSpace;
-        panelMaterial.map = texture;
-        panelMaterial.color.set(0xb0b0b0);
-      }
-      const board = new THREE.Mesh(new THREE.BoxGeometry(2.3, 0.1, 0.16), woodDark);
-      board.position.set(0, 2.55, 0);
-      const disc = new THREE.Mesh(new THREE.PlaneGeometry(2.05, 2.35), panelMaterial);
-      disc.position.set(0, 1.5, 0.12);
-      group.add(board, disc);
+      // Rama portalu to gotowy billboard GLB z plakatem gry (v0.8): zero
+      // prostopadłościanów rysowanych z kodu w przestrzeni parku.
+      loadPortalFrame(group, game.art);
 
       const hit = new THREE.Mesh(
         new THREE.CircleGeometry(1.4, 32),
@@ -623,7 +600,7 @@ export class World {
       hit.userData.gameId = game.id;
 
       const label = createLabel(game.title);
-      label.sprite.position.set(0, 3.4, 0);
+      label.sprite.position.set(0, 3.35, 0);
 
       group.add(hit, label.sprite);
       this.lobbyScene.add(group);
@@ -911,7 +888,6 @@ export class World {
       entry.avatar.update(this.elapsed, 0.12);
     }
 
-    this.centerpiece.rotation.y = Math.sin(this.elapsed * 0.08) * 0.05;
     updateLobbyGallery(this.elapsed);
 
     if (this.firstPerson) {
