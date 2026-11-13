@@ -1,10 +1,4 @@
-/**
- * Runner testów: zbiera `tests/*.test.ts` i uruchamia wbudowany `node:test`.
- *
- * Explicitna lista plików (zamiast globu w powłoce) działa identycznie na
- * Linuxie, macOS i Windows, a `--import` rejestruje hak resolucji `.ts`.
- * Nie potrzebujemy Vitest ani żadnej dodatkowej zależności w `npm ci`.
- */
+/** Zbiera tests/*.test.ts i odpala node:test. Brak plików = czerwony wynik. */
 import { readdirSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { dirname, join } from 'node:path';

@@ -1,8 +1,9 @@
 {
-  "name": "rejplay",
+  "name": "rejplay-gabinet",
   "private": true,
-  "version": "0.1.0",
+  "version": "1.0.0",
   "type": "module",
+  "description": "RejPlay · Gabinet Osobliwości — cztery autorskie gry przeglądarkowe, zero assetów, zero zależności runtime.",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
@@ -10,13 +11,9 @@
     "typecheck": "tsc --noEmit",
     "test": "node tests/run.mjs"
   },
-  "dependencies": {
-    "@supabase/supabase-js": "^2.118.0",
-    "three": "^0.187.0"
-  },
   "devDependencies": {
-    "@types/three": "^0.187.0",
-    "typescript": "^7.0.2",
-    "vite": "^8.3.5"
+    "jsdom": "^26.1.0",
+    "typescript": "^5.9.3",
+    "vite": "^7.1.7"
   }
 }
