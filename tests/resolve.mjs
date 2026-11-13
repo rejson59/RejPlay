@@ -1,9 +1,10 @@
 /**
  * Hak resolucji dla `node --test` + natywnego strip-types w Node 22.
  *
- * Kod produkcyjny używa importów bez rozszerzenia (`./hand-pose`), co Vite
+ * Kod produkcyjny używa importów bez rozszerzenia (`./random`), co Vite
  * rozwiązuje, a goły ESM w Node już nie. Dokładamy `.ts` bez zmiany źródeł —
  * dzięki temu testy działają na tym samym kodzie, który trafia do produkcji.
+ * Import `style.css` (Vite) zostaje w testach UI pustym modułem.
  */
 export async function resolve(specifier, context, nextResolve) {
   if (/^\.{1,2}\//.test(specifier) && !/\.[a-z0-9]+$/i.test(specifier)) {
@@ -16,4 +17,11 @@ export async function resolve(specifier, context, nextResolve) {
     }
   }
   return nextResolve(specifier, context);
+}
+
+export async function load(url, context, nextLoad) {
+  if (url.endsWith('.css')) {
+    return { format: 'module', source: 'export default {};', shortCircuit: true };
+  }
+  return nextLoad(url, context);
 }

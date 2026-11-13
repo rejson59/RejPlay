@@ -1,11 +1,8 @@
-name: RejPlay · GitHub Pages
+name: verify + deploy
 
 on:
   push:
     branches: [main]
-  # v0.7.1: wcześniej workflow reagował wyłącznie na jeden, historyczny branch
-  # roboczy, więc pull requesty nie dostawały ŻADNEGO checka. Teraz każdy PR
-  # przechodzi pełną weryfikację, a wdrożenie nadal jest zarezerwowane dla main.
   pull_request:
   workflow_dispatch:
 
@@ -20,35 +17,36 @@ concurrency:
 
 jobs:
   verify:
-    name: Typecheck · testy · build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: 22
           cache: npm
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
-      # Artefakt Pages tworzymy tylko z main — PR ma udowodnić, że build
-      # przechodzi, a nie publikować swoją wersję strony.
-      - if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
-        uses: actions/configure-pages@v5
-      - if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: dist
 
   deploy:
-    needs: verify
-    # Repozytorium pozwala wdrażać do środowiska github-pages tylko z main.
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    needs: verify
     runs-on: ubuntu-latest
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
       - id: deployment
         uses: actions/deploy-pages@v4
